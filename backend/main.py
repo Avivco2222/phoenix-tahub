@@ -55,11 +55,14 @@ async def upload_typed_file(file_type: str, file: UploadFile = File(...)):
         "last_updated": "עכשיו"
     }
 
-ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000").split(",")
+origins = [
+    "http://localhost:3000",
+    "https://phoenix-tahub2.vercel.app"
+]
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=ALLOWED_ORIGINS,
+    allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
