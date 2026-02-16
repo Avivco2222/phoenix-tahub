@@ -12,7 +12,7 @@ import {
   PieChart, Pie, Cell, Legend, AreaChart, Area 
 } from 'recharts';
 
-// --- Mock Data ---
+// --- Static Data & Gauge Config ---
 const totalHeadcount = 3500;
 const currentDisabilityCount = 98; 
 const targetDisabilityCount = Math.ceil(totalHeadcount * 0.03); 
@@ -31,25 +31,36 @@ const designatedSourcesData = [
   { name: 'מרכז שיקום', cvs: 30, interviews: 8, hires: 1 },
 ];
 
+// --- MOCK DATA FOR DEMO ---
+const MOCK_INTELLIGENCE_DATA = {
+  baseline: {
+    current_hires: 28,
+    avg_days: 38
+  },
+  ghosting_risks: [
+    { candidate: "דניאל כהן", job: "מפתח Backend Java", risk_score: 85 },
+    { candidate: "שיר גולן", job: "נציגת מכירות וביטוח", risk_score: 72 },
+    { candidate: "אלכס רובין", job: "אנליסט נתונים", risk_score: 64 },
+    { candidate: "מיכל אהרוני", job: "מנהלת מוצר", risk_score: 55 }
+  ]
+};
+
 export default function IntelligenceAndReports() {
   const [data, setData] = useState<any>(null);
   const [budgetBoost, setBudgetBoost] = useState(0); 
   const [processSpeed, setProcessSpeed] = useState(0); 
 
   useEffect(() => {
-    const fetchIntel = async () => {
-      try {
-        const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/intelligence`);
-        const json = await res.json();
-        setData(json);
-      } catch (error) {
-        console.error(error);
-      }
-    };
-    fetchIntel();
+    // מפעילים טיימר קצר כדי לתת תחושה של "טעינת AI", ומזריקים את נתוני המוקאפ.
+    // הקריאה לשרת (fetch) מבוטלת למען יציבות המצגת.
+    const timer = setTimeout(() => {
+      setData(MOCK_INTELLIGENCE_DATA);
+    }, 600);
+
+    return () => clearTimeout(timer);
   }, []);
 
-  if (!data) return <div className="p-8 text-[#002649] font-bold animate-pulse">מפעיל מנוע אינטליגנציה...</div>;
+  if (!data) return <div className="p-8 text-[#002649] font-bold animate-pulse flex items-center gap-2"><Brain size={20} className="animate-bounce" /> מפעיל מנוע אינטליגנציה...</div>;
 
   const projectedHires = Math.round(data.baseline.current_hires * (1 + (budgetBoost / 100)));
   const projectedDays = Math.round(data.baseline.avg_days * (1 - (processSpeed / 100)));
@@ -116,10 +127,10 @@ export default function IntelligenceAndReports() {
           <h3 className="font-bold text-lg text-[#002649] flex items-center gap-2 mb-4"><AlertTriangle size={20} className="text-red-500" />רדאר נטישה</h3>
           <div className="space-y-4 overflow-y-auto pr-2">
             {data.ghosting_risks.map((risk: any, idx: number) => (
-              <div key={idx} className="bg-red-50/50 border border-red-100 p-3 rounded-xl">
+              <div key={idx} className="bg-red-50/50 border border-red-100 p-3 rounded-xl hover:bg-red-100 transition-colors cursor-default">
                 <div className="flex justify-between items-start">
                   <div><div className="font-bold text-red-900 text-sm">{risk.candidate}</div><div className="text-[10px] text-red-700">{risk.job}</div></div>
-                  <div className="bg-red-100 text-red-800 text-[10px] font-black px-2 py-0.5 rounded">{risk.risk_score}%</div>
+                  <div className="bg-red-100 text-red-800 text-[10px] font-black px-2 py-0.5 rounded shadow-sm">{risk.risk_score}%</div>
                 </div>
               </div>
             ))}
@@ -127,7 +138,7 @@ export default function IntelligenceAndReports() {
         </div>
       </div>
 
-      {/* --- SECTION 3: DIVISIONAL PERFORMANCE (The Bar) --- */}
+      {/* --- SECTION 3: DIVISIONAL PERFORMANCE --- */}
       <div className="bg-white p-8 rounded-3xl border border-slate-200 shadow-sm">
         <div className="flex items-center gap-3 mb-8">
           <div className="p-2 bg-blue-50 text-blue-600 rounded-lg"><Activity size={24} /></div>
@@ -167,7 +178,7 @@ export default function IntelligenceAndReports() {
           </div>
         </div>
 
-        {/* designated Sources Bar Chart */}
+        {/* Designated Sources Bar Chart */}
         <div className="xl:col-span-2 bg-white border border-slate-200 rounded-3xl p-8 shadow-sm">
           <h3 className="font-bold text-[#002649] flex items-center gap-2 mb-8">
             <Target size={20} className="text-blue-500"/> אפקטיביות מקורות גיוון ("צבועים")
@@ -196,7 +207,7 @@ export default function IntelligenceAndReports() {
 function TargetMetricCard({ label, actual, target, status, trend }: any) {
   const statusColors: any = { success: "text-green-500", warning: "text-orange-500", danger: "text-red-500" };
   return (
-    <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm">
+    <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm transition-all hover:shadow-md hover:border-[#EF6B00]/30">
       <div className="text-[10px] font-black text-slate-400 mb-2 uppercase tracking-widest">{label}</div>
       <div className="flex items-baseline gap-2">
         <div className={`text-3xl font-black ${statusColors[status]}`}>{actual}</div>
