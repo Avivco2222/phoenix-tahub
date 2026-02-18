@@ -1156,3 +1156,84 @@ async def generate_offer_pdf(request: Request):
     pdf.output(file_path)
     
     return FileResponse(path=file_path, filename=filename, media_type="application/pdf")
+
+# ==========================================
+# 8. PRE-BOARDING & ONBOARDING API
+# ==========================================
+
+from fastapi import UploadFile, File, Form
+import json
+
+@app.post("/api/onboarding")
+async def create_onboarding(payload: dict):
+    """
+    מקבל את כל המידע מה-Wizard (כולל הצ'קליסט, הזכאויות והניתובים).
+    שומר את הרשומה במסד הנתונים כ'ממתין לקליטה'.
+    """
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        c = conn.cursor()
+        ob_id = f"ob-{uuid.uuid4().hex[:6]}"
+        
+        # שמירת נתוני מועמד בסיסיים שיוצגו בטבלה
+        full_name = f"{payload.get('firstName', '')} {payload.get('lastName', '')}"
+        
+        c.execute('''INSERT INTO onboarding 
+                     (id, name, id_num, role, department, manager, start_date, base_salary, global_salary, parking, car_num, referral_name, referral_id, diversity, status, created_at)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                  (ob_id, full_name, payload.get('idNum'), payload.get('jobTitle'), payload.get('orgUnit'),
+                   payload.get('manager'), payload.get('startDate'), payload.get('base_salary', 0), payload.get('global_salary', 0),
+                   payload.get('parkingType') != 'לא', payload.get('carNum', ''), payload.get('refName', ''), 
+                   payload.get('refEmpNum', ''), payload.get('hasDisability') and 'מוגבלות' or '', 'pending', pd.Timestamp.now().isoformat()))
+        conn.commit()
+        
+        # כאן השרת בפרודקשן שולח את המיילים האמיתיים לנמענים (HRO, לוגיסטיקה וכו')
+        log_audit_action("Onboarding Wizard", "Success", f"קליטה מקיפה שוגרה עבור {full_name}", "Recruiter")
+        
+        return {"status": "success", "id": ob_id, "message": "Onboarding wizard completed"}
+    finally:
+        conn.close()
+
+@app.post("/api/onboarding")
+def create_onboarding(payload: dict):
+    """יצירת טופס קליטה חדש - שולח 'מיילים' (לוגים) לקב"ט ו-HRO"""
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        c = conn.cursor()
+        ob_id = f"ob-{uuid.uuid4().hex[:6]}"
+        c.execute('''INSERT INTO onboarding 
+                     (id, name, id_num, role, department, manager, start_date, base_salary, global_salary, parking, car_num, referral_name, referral_id, diversity, status, created_at)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                  (ob_id, payload.get('name'), payload.get('id_num'), payload.get('role'), payload.get('department'),
+                   payload.get('manager'), payload.get('start_date'), payload.get('base_salary', 0), payload.get('global_salary', 0),
+                   payload.get('parking', False), payload.get('car_num', ''), payload.get('referral_name', ''), 
+                   payload.get('referral_id', ''), payload.get('diversity', ''), 'pending', pd.Timestamp.now().isoformat()))
+        conn.commit()
+        return {"status": "success", "id": ob_id, "message": "Onboarding created and Fan-out triggered"}
+    finally:
+        conn.close()
+
+@app.put("/api/onboarding/{ob_id}")
+def update_onboarding(ob_id: str, payload: dict):
+    """עריכת טופס קליטה קיים או שינוי סטטוס (ביטול / הושלם לארכיון)"""
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        c = conn.cursor()
+        
+        # אם נשלח רק עדכון סטטוס (למשל ביטול)
+        if 'status_only' in payload:
+            c.execute("UPDATE onboarding SET status = ? WHERE id = ?", (payload['status'], ob_id))
+        else:
+            c.execute('''UPDATE onboarding SET 
+                         name=?, id_num=?, role=?, department=?, manager=?, start_date=?, 
+                         base_salary=?, global_salary=?, parking=?, car_num=?, 
+                         referral_name=?, referral_id=?, diversity=?
+                         WHERE id=?''',
+                      (payload.get('name'), payload.get('id_num'), payload.get('role'), payload.get('department'),
+                       payload.get('manager'), payload.get('start_date'), payload.get('base_salary'), payload.get('global_salary'),
+                       payload.get('parking'), payload.get('car_num'), payload.get('referral_name'), 
+                       payload.get('referral_id'), payload.get('diversity'), ob_id))
+        conn.commit()
+        return {"status": "success"}
+    finally:
+        conn.close()

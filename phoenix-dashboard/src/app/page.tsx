@@ -42,6 +42,7 @@ interface KpiCardProps {
   isPositive?: boolean;
   subtext?: string | null;
   info?: string;
+  borderColorClass?: string;
 }
 
 interface PieBreakdownCardProps {
@@ -62,10 +63,10 @@ interface StrategicSourceCardProps {
 
 // --- Roles & Meta ---
 const ROLES = [
-  { id: "admin", title: "מנהל.ת גיוס (אדמין)", icon: <ShieldCheck size={18} /> },
-  { id: "recruiter", title: "מגייס.ת (מור)", icon: <UserCheck size={18} /> },
-  { id: "hrbp", title: "HRBP / מנהל.ת מחלקה", icon: <Briefcase size={18} /> },
-  { id: "hiring_manager", title: "מנהל.ת מגייס.ת", icon: <Target size={18} /> }
+  { id: "admin", title: "מנהל.ת גיוס (אדמין)", icon: <ShieldCheck size={16} /> },
+  { id: "recruiter", title: "מגייס.ת (מור)", icon: <UserCheck size={16} /> },
+  { id: "hrbp", title: "HRBP / מנהל.ת מחלקה", icon: <Briefcase size={16} /> },
+  { id: "hiring_manager", title: "מנהל.ת מגייס.ת", icon: <Target size={16} /> }
 ];
 
 const FILTERS_META = {
@@ -118,10 +119,26 @@ const activeJobsRanking = [
   { job: "ראש צוות R&D", cvs: 4, status: "קריטי" }
 ];
 
+// --- Dynamic Slogans ---
+const SLOGANS = [
+  "כיף לראות אותך, מה יעניין אותך לחקור איתי היום?",
+  "הקפה מוכן? ☕ בוא נצלול לנתונים...",
+  "עוד יום, עוד הזדמנות לשבור שיאי גיוס!",
+  "האלגוריתם עבד כל הלילה, יש לנו תובנות חמות בשבילך 🔥",
+  "מוכן למצוא את הטאלנט הבא של הפניקס?",
+  "מספרים לא משקרים, אבל הם בהחלט מספרים סיפור 📖",
+  "מאחורי כל גרף מסתתר עובד (או מועמד שסינן אותנו 😉)",
+  "זמן מעולה לקבל החלטות מבוססות דאטה 🎯"
+];
+
 export default function DashboardPage() {
   const [currentRole, setCurrentRole] = useState("admin"); 
   const [tasks, setTasks] = useState(INITIAL_AI_TASKS);
   
+  // Greeting Engine
+  const [slogan, setSlogan] = useState("");
+  const [greeting, setGreeting] = useState({ text: "בוקר טוב", icon: "🌅" });
+
   // Slicers & Comparison Engine
   const [timeframe, setTimeframe] = useState("30days");
   const [department, setDepartment] = useState("all");
@@ -141,6 +158,18 @@ export default function DashboardPage() {
   // Manual Task
   const [isCreatingTask, setIsCreatingTask] = useState(false);
   const [newTask, setNewTask] = useState({ title: "", desc: "", assignee: "מור אהרון", severity: "medium", type: "task" });
+
+  useEffect(() => {
+    // Random Slogan
+    setSlogan(SLOGANS[Math.floor(Math.random() * SLOGANS.length)]);
+    
+    // Time of day logic
+    const hour = new Date().getHours();
+    if (hour >= 5 && hour < 12) setGreeting({ text: "בוקר טוב", icon: "🌅" });
+    else if (hour >= 12 && hour < 17) setGreeting({ text: "צהריים טובים", icon: "☀️" });
+    else if (hour >= 17 && hour < 21) setGreeting({ text: "ערב טוב", icon: "🌇" });
+    else setGreeting({ text: "לילה טוב", icon: "🌙" });
+  }, []);
 
   // --- Dynamic Live Data (Slicers Engine) - computed via useMemo (deterministic seed for purity) ---
   type ChartPoint = { name: string; candidates: number; compCandidates?: number };
@@ -193,6 +222,7 @@ export default function DashboardPage() {
     setNotifications(prev => [{ id: Date.now(), targetRole, msg, type, time: "ממש עכשיו", read: false }, ...prev]);
   };
   const activeNotifications = notifications.filter(n => n.targetRole === currentRole || n.targetRole === 'all');
+  
   useEffect(() => {
     const hasKudos = activeNotifications.find(n => n.type === 'kudos');
     if (hasKudos) {
@@ -243,18 +273,11 @@ export default function DashboardPage() {
     setCompareTarget("");
   };
 
-  // בדיקה אם יש סינון פעיל כדי להציג את כפתור האיפוס
+  // בדיקה אם יש סינון פעיל
   const isFiltered = timeframe !== "30days" || department !== "all" || job !== "all" || recruiter !== "all" || compareMode !== "none";
 
   const visibleTasks = tasks.filter(t => (viewMode === "active" ? t.status === "open" : t.status !== "open") && (currentRole === "admin" || (currentRole === "recruiter" && t.assignee === "מור אהרון")));
   const sortedJobs = [...activeJobsRanking].sort((a, b) => jobsSortDesc ? b.cvs - a.cvs : a.cvs - b.cvs);
-
-  const getDashboardTitle = () => {
-    if (currentRole === "admin") return "מנהל גיוס";
-    if (currentRole === "recruiter") return "סביבת עבודה: מגייסת";
-    if (currentRole === "hrbp") return "דשבורד חטיבתי: HRBP";
-    return "דשבורד מנהל מגייס";
-  };
 
   return (
     <div className="max-w-[1600px] mx-auto space-y-8 animate-in fade-in duration-500 relative pb-20 overflow-visible px-2 md:px-6">
@@ -277,34 +300,39 @@ export default function DashboardPage() {
       </div>
 
       {/* --- HEADER --- */}
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-4 mb-2 relative z-[60]">
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-2 relative z-[60]">
         <div>
-          <h1 className="text-3xl font-black text-[#002649] tracking-tight flex items-center gap-3">
-            {getDashboardTitle()}
+          <h1 className="text-4xl font-black text-[#002649] tracking-tight flex items-center gap-3">
+            {greeting.text}, אביב <span className="text-4xl">{greeting.icon}</span>
           </h1>
-          <p className="text-slate-500 mt-2 font-medium">דשבורד חי. כל חישוב מלווה בהסבר (העבר עכבר על ה-i).</p>
+          <p className="text-slate-500 mt-2 font-bold text-xs">
+            {slogan}
+          </p>
         </div>
         
         <div className="flex items-center gap-4">
-          <div className="flex items-center gap-2 bg-purple-50 p-1.5 rounded-xl border border-purple-200 shadow-sm relative">
-            <span className="text-[10px] font-black text-purple-800 absolute -top-2 right-2 bg-purple-200 px-2 rounded shadow-sm">סימולטור הרשאות (לא יוצג בפרודקשן)</span>
+          <div className="flex items-center gap-1 bg-purple-50 p-1 rounded-xl border border-purple-200 shadow-sm relative">
+            <span className="text-[9px] font-black text-purple-800 absolute -top-2 right-2 bg-purple-200 px-1.5 rounded shadow-sm">סימולטור הרשאות</span>
             {ROLES.map(r => (
-              <button key={r.id} onClick={() => setCurrentRole(r.id)} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${currentRole === r.id ? 'bg-white text-purple-900 shadow-sm ring-1 ring-purple-300' : 'text-purple-600 hover:bg-purple-100'}`}>
-                {r.icon} <span className="hidden lg:inline">{r.title}</span>
+              <button key={r.id} onClick={() => setCurrentRole(r.id)} className={`group relative p-2 rounded-lg text-xs transition-all ${currentRole === r.id ? 'bg-white text-purple-900 shadow-sm ring-1 ring-purple-300' : 'text-purple-600 hover:bg-purple-100'}`}>
+                {r.icon}
+                {/* Custom Tooltip */}
+                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block whitespace-nowrap bg-[#002649] text-white text-[10px] font-bold px-2 py-1 rounded shadow-lg z-[9999]">
+                   {r.title}
+                </div>
               </button>
             ))}
           </div>
         </div>
       </div>
 
-      {/* --- GLOBAL SLICERS --- */}
-      <div className="bg-white rounded-xl p-3 flex flex-wrap items-center gap-4 border-l-4 border-l-[#EF6B00] shadow-sm relative z-40 border border-slate-200">
-        <div className="flex items-center gap-2 pr-2 border-l border-slate-200 pl-4 shrink-0">
-          <Filter size={18} className="text-[#002649]" />
-          <span className="font-bold text-[#002649] text-sm">סינון וחיתוך (חי):</span>
+      {/* --- GLOBAL SLICERS (REFINED) --- */}
+      <div className="bg-white rounded-xl p-2 flex flex-wrap items-center gap-3 shadow-sm relative z-40 border border-slate-200">
+        <div className="flex items-center justify-center pl-3 border-l border-slate-100 text-[#002649]">
+          <Filter size={16} />
         </div>
         
-        <select className="bg-slate-50 border border-slate-200 text-slate-700 text-sm rounded-lg outline-none p-2 font-bold min-w-[120px] cursor-pointer" value={timeframe} onChange={(e) => setTimeframe(e.target.value)}>
+        <select className="bg-slate-50 hover:bg-slate-100 transition-colors border border-transparent text-slate-700 text-xs rounded-lg outline-none py-1.5 px-2 font-bold min-w-[120px] cursor-pointer" value={timeframe} onChange={(e) => setTimeframe(e.target.value)}>
           <option value="all">כל הזמנים</option>
           <option value="year">שנה נוכחית</option>
           <option value="q1">רבעון נוכחי</option>
@@ -312,66 +340,65 @@ export default function DashboardPage() {
           <option value="week">השבוע החולף</option>
         </select>
 
-        <select className="bg-slate-50 border border-slate-200 text-slate-700 text-sm rounded-lg outline-none p-2 min-w-[140px] cursor-pointer" disabled={currentRole === "hrbp"} value={department} onChange={(e) => setDepartment(e.target.value)}>
+        <select className="bg-slate-50 hover:bg-slate-100 transition-colors border border-transparent text-slate-700 text-xs rounded-lg outline-none py-1.5 px-2 min-w-[130px] cursor-pointer" disabled={currentRole === "hrbp"} value={department} onChange={(e) => setDepartment(e.target.value)}>
           {currentRole === "hrbp" ? <option value="sales">חטיבת שירות (נעול)</option> : <option value="all">כל המחלקות</option>}
           {currentRole !== "hrbp" && FILTERS_META.departments.map(d => <option key={d} value={d}>{d}</option>)}
         </select>
 
-        <select className="bg-slate-50 border border-slate-200 text-slate-700 text-sm rounded-lg outline-none p-2 min-w-[150px] cursor-pointer" value={job} onChange={(e) => setJob(e.target.value)}>
+        <select className="bg-slate-50 hover:bg-slate-100 transition-colors border border-transparent text-slate-700 text-xs rounded-lg outline-none py-1.5 px-2 min-w-[130px] cursor-pointer" value={job} onChange={(e) => setJob(e.target.value)}>
           <option value="all">כל המשרות</option>
           {FILTERS_META.jobs.map(j => <option key={j} value={j}>{j}</option>)}
         </select>
 
         {currentRole === "admin" && (
-          <select className="bg-slate-50 border border-slate-200 text-slate-700 text-sm rounded-lg outline-none p-2 min-w-[140px] cursor-pointer" value={recruiter} onChange={(e) => setRecruiter(e.target.value)}>
+          <select className="bg-slate-50 hover:bg-slate-100 transition-colors border border-transparent text-slate-700 text-xs rounded-lg outline-none py-1.5 px-2 min-w-[130px] cursor-pointer" value={recruiter} onChange={(e) => setRecruiter(e.target.value)}>
             <option value="all">כל המגייסים</option>
             {FILTERS_META.recruiters.map(r => <option key={r} value={r}>{r}</option>)}
           </select>
         )}
 
-        {/* כפתור איפוס דינמי */}
+        {/* כפתור איפוס דינמי מוקטן */}
         {isFiltered && (
-          <button onClick={handleResetFilters} className="flex items-center gap-1 px-3 py-1.5 bg-slate-100 hover:bg-red-50 text-slate-500 hover:text-red-500 rounded-lg text-xs font-bold transition-colors">
-            <RotateCcw size={14} /> איפוס
+          <button onClick={handleResetFilters} className="flex items-center gap-1 px-2 py-1 hover:bg-red-50 text-slate-400 hover:text-red-500 rounded text-[11px] font-bold transition-colors">
+            <RotateCcw size={12} /> נקה
           </button>
         )}
 
-        {/* COMPARISON ENGINE */}
+        {/* COMPARISON ENGINE COMPACT */}
         <div className="flex-1 flex justify-end shrink-0">
-          <div className="flex items-center gap-2 bg-blue-50/50 border border-blue-200 rounded-xl p-1.5 shadow-sm">
-            <span className="text-xs font-bold text-blue-900 px-2 flex items-center gap-1"><ArrowRightLeft size={14}/> השוואה מול:</span>
+          <div className="flex items-center gap-2 bg-blue-50/50 border border-blue-100 rounded-lg p-1">
+            <span className="text-[11px] font-bold text-blue-900 px-2 flex items-center gap-1"><ArrowRightLeft size={12}/> השוואה מול:</span>
             
-            <select className="bg-white text-blue-800 text-xs font-bold rounded-lg outline-none p-2 cursor-pointer border border-blue-100 shadow-sm" 
+            <select className="bg-white text-blue-800 text-[11px] font-bold rounded-md outline-none py-1 px-2 cursor-pointer border border-blue-100 shadow-sm" 
               value={compareMode} 
               onChange={(e) => {
                 setCompareMode(e.target.value);
                 setCompareTarget(""); 
               }}>
-              <option value="none">ללא השוואה</option>
-              <option value="prev_period">תקופה קודמת (MoM)</option>
-              <option value="yoy">שנה שעברה (YoY)</option>
-              {currentRole === "admin" && <option value="recruiters">מגייס מול מגייס ספציפי</option>}
-              {currentRole === "admin" && <option value="departments">יחידה מול יחידה ספציפית</option>}
+              <option value="none">ללא</option>
+              <option value="prev_period">תקופה קודמת</option>
+              <option value="yoy">שנה שעברה</option>
+              {currentRole === "admin" && <option value="recruiters">מגייס ספציפי</option>}
+              {currentRole === "admin" && <option value="departments">מחלקה ספציפית</option>}
             </select>
 
             {compareMode === "recruiters" && (
-              <select className="bg-blue-600 text-white text-xs font-bold rounded-lg outline-none p-2 cursor-pointer border border-blue-700 shadow-sm animate-in fade-in" 
+              <select className="bg-blue-600 text-white text-[11px] font-bold rounded-md outline-none py-1 px-2 cursor-pointer border border-blue-700 shadow-sm animate-in fade-in" 
                 value={compareTarget} onChange={e => setCompareTarget(e.target.value)}>
-                <option value="">בחר מגייס/ת...</option>
+                <option value="">בחר...</option>
                 {FILTERS_META.recruiters.filter(r => r !== recruiter).map(r => <option key={r} value={r}>{r}</option>)}
               </select>
             )}
 
             {compareMode === "departments" && (
-              <select className="bg-blue-600 text-white text-xs font-bold rounded-lg outline-none p-2 cursor-pointer border border-blue-700 shadow-sm animate-in fade-in" 
+              <select className="bg-blue-600 text-white text-[11px] font-bold rounded-md outline-none py-1 px-2 cursor-pointer border border-blue-700 shadow-sm animate-in fade-in" 
                 value={compareTarget} onChange={e => setCompareTarget(e.target.value)}>
-                <option value="">בחר מחלקה...</option>
+                <option value="">בחר...</option>
                 {FILTERS_META.departments.filter(d => d !== department).map(d => <option key={d} value={d}>{d}</option>)}
               </select>
             )}
           </div>
         </div>
-
       </div>
 
       {/* ========================================= */}
@@ -380,38 +407,38 @@ export default function DashboardPage() {
       <div className="space-y-8 relative z-20">
         
         {/* ROW 1: THE BOTTOM LINES */}
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
-          <KpiCard title="סה״כ קליטות בפועל" value={kpis.hires} icon={<CheckCircle className="text-green-600" />} subtext={compareMode !== 'none' ? "⬆️ גידול של 15% בהשוואה" : null} 
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-5">
+          <KpiCard title="סה״כ קליטות בפועל" value={kpis.hires} icon={<CheckCircle className="text-green-600" size={20}/>} borderColorClass="border-t-green-500" subtext={compareMode !== 'none' ? "⬆️ גידול של 15% בהשוואה" : null} 
             info="מניית כל המועמדים שסטטוס ה-ATS שלהם השתנה ל'קליטה' או 'גיוס' בטווח התאריכים והסינונים שנבחרו." />
           
-          <KpiCard title="סה״כ עזיבות (Attrition)" value={kpis.attrition} isWarning={kpis.attrition > 5} icon={<UserMinus className="text-orange-500" />} subtext={compareMode !== 'none' ? "⬇️ ירידה בנטישה בהשוואה" : null}
+          <KpiCard title="סה״כ עזיבות (Attrition)" value={kpis.attrition} isWarning={kpis.attrition > 5} icon={<UserMinus className="text-orange-500" size={20}/>} borderColorClass="border-t-orange-500" subtext={compareMode !== 'none' ? "⬇️ ירידה בנטישה בהשוואה" : null}
             info="עובדים שעזבו את הארגון בטווח הזמן שנבחר. הנתון נשאב מקובץ ה-HRIS שמוזן למערכת." />
             
-          <KpiCard title="סה״כ קורות חיים (Applications)" value={kpis.applications.toLocaleString()} icon={<Users className="text-blue-500" />} 
+          <KpiCard title="סה״כ קורות חיים" value={kpis.applications.toLocaleString()} icon={<Users className="text-blue-500" size={20}/>} borderColorClass="border-t-blue-500"
             info="נפח קורות החיים המלא שנכנס למערכת מכלל המקורות." />
             
-          <KpiCard title="יחס המרה (E2E Conversion)" value={`${kpis.e2e}%`} icon={<Percent className="text-purple-500" />} subtext="בנצ'מארק שוק: 0.5%"
+          <KpiCard title="יחס המרה (E2E Conversion)" value={`${kpis.e2e}%`} icon={<Percent className="text-purple-500" size={20}/>} borderColorClass="border-t-purple-500" subtext="בנצ'מארק שוק: 0.5%"
             info="אחוז המועמדים שנקלטו בפועל מתוך סך קורות החיים שהוגשו (קליטות חלקי קורות חיים). מודד את איכות הסינון בערוצי המקור." />
         </div>
 
         {/* ROW 2: ADVANCED KPIs */}
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
-          <KpiCard title={currentRole === 'recruiter' ? "ימי SLA ממוצעים שלי" : "זמן איוש חציוני (TTF)"} value={`${kpis.ttf} ימים`} icon={<Clock className="text-purple-600" />} subtext={kpis.ttf > 40 ? "חריגה מהיעד (40)" : "עמידה ביעד"} 
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-5">
+          <KpiCard title={currentRole === 'recruiter' ? "ימי SLA ממוצעים שלי" : "זמן איוש חציוני (TTF)"} value={`${kpis.ttf} ימים`} icon={<Clock className="text-purple-600" size={20}/>} borderColorClass="border-t-purple-600" subtext={kpis.ttf > 40 ? "חריגה מהיעד (40)" : "עמידה ביעד"} 
             info="TTF (Time to Fill): הזמן החציוני שלוקח לאייש משרה, מרגע פתיחתה במערכת ועד חתימת חוזה. חציון מנטרל משרות חריגות שנתקעו חודשים." />
           
-          <KpiCard title="אחוז חתימת חוזים (OAR)" value={`${kpis.oar}%`} isPositive={kpis.oar >= 80} isWarning={kpis.oar < 80} icon={<Activity className="text-green-600" />} subtext="בנצ'מארק שוק: 80%"
+          <KpiCard title="אחוז חתימת חוזים (OAR)" value={`${kpis.oar}%`} isPositive={kpis.oar >= 80} isWarning={kpis.oar < 80} icon={<Activity className="text-green-600" size={20}/>} borderColorClass="border-t-green-600" subtext="בנצ'מארק שוק: 80%"
               info="Offer Acceptance Rate: כמה מתוך הצעות השכר שניתנו התקבלו ונחתמו. מדד קריטי לבחינת תחרותיות השכר של הפניקס בשוק."/>
 
           {currentRole === "admin" || currentRole === "hrbp" ? (
-            <KpiCard title="עלות ממוצעת לאיוש (CPH)" value={`₪${kpis.cph.toLocaleString()}`} icon={<BadgeDollarSign className="text-orange-600" />} subtext="מחושב מתוך מודול FinOps" 
+            <KpiCard title="עלות ממוצעת לאיוש (CPH)" value={`₪${kpis.cph.toLocaleString()}`} icon={<BadgeDollarSign className="text-orange-600" size={20}/>} borderColorClass="border-t-orange-600" subtext="מחושב מתוך מודול FinOps" 
               info="Cost Per Hire: סך ההוצאות הישירות והעקיפות (פרסום, השמה, רישיונות) חלקי כמות המגויסים. מודל מלא מול FinOps." />
           ) : (
-            <KpiCard title="מועמדים בסיכון (Ghosting)" value={kpis.ghosting} isWarning={kpis.ghosting > 0} icon={<AlertTriangle className="text-red-600" />} subtext="ממתינים לתשובה מעל 14 יום" 
+            <KpiCard title="מועמדים בסיכון (Ghosting)" value={kpis.ghosting} isWarning={kpis.ghosting > 0} icon={<AlertTriangle className="text-red-600" size={20}/>} borderColorClass="border-t-red-600" subtext="ממתינים לתשובה מעל 14 יום" 
               info="ספירת מועמדים פעילים שנמצאים ללא תזוזת סטטוס במערכת מעל לשבועיים, ועלולים לנטוש את התהליך." />
           )}
 
           {currentRole === "admin" && (
-            <KpiCard title="איכות הגיוס (Quality of Hire)" value="92%" isPositive={true} icon={<Trophy className="text-yellow-500" />} subtext="אחוז הישרדות מעל שנה" 
+            <KpiCard title="איכות הגיוס (Quality of Hire)" value="92%" isPositive={true} icon={<Trophy className="text-yellow-500" size={20}/>} borderColorClass="border-t-yellow-500" subtext="אחוז הישרדות מעל שנה" 
               info="הגביע הקדוש של הגיוס: מודד איזה אחוז מהמגויסים נשארו בארגון למעלה משנה (Retention). מצליב נתוני ATS ישירות עם נתוני HRIS." />
           )}
         </div>
@@ -527,7 +554,7 @@ export default function DashboardPage() {
               </div>
             </div>
 
-            {/* NEW: STRATEGIC FOCUS CARDS */}
+            {/* STRATEGIC FOCUS CARDS */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6 animate-in slide-in-from-bottom-8">
                <StrategicSourceCard title="ניוד פנימי" icon={<ArrowRightLeft className="text-purple-600"/>} color="purple" cvs={45} hires={5} totalHires={kpis.hires} />
                <StrategicSourceCard title="חבר מביא חבר" icon={<Users className="text-green-600"/>} color="green" cvs={150} hires={9} totalHires={kpis.hires} />
@@ -780,16 +807,17 @@ export default function DashboardPage() {
 // עזרים Components
 // ==========================================
 
-function KpiCard({ title, value, icon, isWarning, isPositive, subtext, info }: Readonly<KpiCardProps>) {
+function KpiCard({ title, value, icon, isWarning, isPositive, subtext, info, borderColorClass }: Readonly<KpiCardProps>) {
+  const borderClass = borderColorClass || (isWarning ? 'border-t-red-500' : isPositive ? 'border-t-green-500' : 'border-t-[#002649]');
   return (
-    <div className={`bg-white rounded-2xl p-6 relative overflow-visible transition-all duration-300 hover:shadow-lg hover:z-50 border border-slate-200 border-t-4 ${isWarning ? 'border-t-red-500' : isPositive ? 'border-t-green-500' : 'border-t-[#002649]'}`}>
-      <div className="flex justify-between items-start mb-4">
-        <div className={`p-3 rounded-xl ${isWarning ? 'bg-red-50' : isPositive ? 'bg-green-50' : 'bg-slate-50'}`}>{icon}</div>
+    <div className={`bg-white rounded-2xl p-5 relative overflow-visible transition-all duration-300 hover:shadow-md hover:z-50 border border-slate-200 border-t-4 ${borderClass}`}>
+      <div className="flex justify-between items-start mb-3">
+        <div className={`p-2.5 rounded-lg ${isWarning ? 'bg-red-50' : isPositive ? 'bg-green-50' : 'bg-slate-50'}`}>{icon}</div>
         {info && <TooltipIcon text={info} />}
       </div>
-      <div className="text-3xl font-black text-[#002649] mb-1">{value}</div>
-      <div className="text-sm font-bold text-slate-500">{title}</div>
-      {subtext && <div className={`text-[11px] font-bold mt-3 ${isWarning ? 'text-red-500' : isPositive ? 'text-green-600' : 'text-slate-400'}`}>{subtext}</div>}
+      <div className="text-2xl font-black text-[#002649] mb-1">{value}</div>
+      <div className="text-xs font-bold text-slate-500">{title}</div>
+      {subtext && <div className={`text-[10px] font-bold mt-2 ${isWarning ? 'text-red-500' : isPositive ? 'text-green-600' : 'text-slate-400'}`}>{subtext}</div>}
     </div>
   );
 }
@@ -816,9 +844,6 @@ function PieBreakdownCard({ title, icon, data, info }: Readonly<PieBreakdownCard
   );
 }
 
-// ==========================================
-// NEW: קומפוננטה לכרטיסיות מקורות אסטרטגיים
-// ==========================================
 function StrategicSourceCard({ title, icon, color, cvs, hires, totalHires }: Readonly<StrategicSourceCardProps>) {
   const colorMap: Record<string, string> = {
     purple: "bg-purple-50 border-purple-200 text-purple-900",
@@ -866,9 +891,8 @@ function TooltipIcon({ text }: Readonly<{ text: string }>) {
   return (
     <div className="relative group flex items-center justify-center">
       <div className="text-slate-300 hover:text-[#EF6B00] cursor-help p-1 transition-colors">
-        <Info size={18}/>
+        <Info size={16}/>
       </div>
-      {/* התיקון: right-0 במקום תרגום למרכז, ו-z-index מקסימלי */}
       <div className="absolute bottom-full right-0 mb-3 w-72 p-4 bg-[#002649] text-white text-xs font-medium rounded-xl shadow-2xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-[9999] border border-slate-700 leading-relaxed text-right pointer-events-none">
         {text}
         <div className="absolute top-full right-4 border-8 border-transparent border-t-[#002649]"></div>

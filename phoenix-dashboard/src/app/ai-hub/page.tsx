@@ -1,26 +1,29 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { 
-  Bot, FileText, Send, UserPlus,
+  Bot, FileText, UserPlus,
   Sparkles, CheckCircle2, ArrowRightLeft, 
-  Server, ShieldCheck, Loader2,
-  BadgeDollarSign, Download, Trash2, PlusCircle, Printer
+  ShieldCheck, Loader2,
+  BadgeDollarSign, Download, Trash2, PlusCircle, Printer,
+  CheckSquare, Settings,
+  UploadCloud, File as FileIcon, AlertCircle, ChevronRight, ChevronLeft, Mail, XCircle
 } from "lucide-react";
 
 export default function SuperAiHub() {
   const [activeTab, setActiveTab] = useState("mobility");
 
   return (
-    <div className="max-w-[1600px] mx-auto space-y-6 animate-in fade-in duration-500 relative pb-20 px-4 md:px-8 h-screen flex flex-col">
+    // הוסר ה-h-screen שחנק את התצוגה והוחלף ב-min-h-screen כדי לאפשר גלילה טבעית
+    <div className="max-w-[1600px] mx-auto space-y-6 animate-in fade-in duration-500 relative pb-20 px-4 md:px-8 pt-6 min-h-screen flex flex-col">
       
-      <div className="shrink-0 pt-6 border-b border-slate-200 pb-4">
+      <div className="shrink-0 border-b border-slate-200 pb-4">
         <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-4 mb-6">
           <div>
             <h1 className="text-3xl font-black text-[#002649] flex items-center gap-3">
               ארגז כלים <Sparkles className="text-[#EF6B00]" size={28} />
             </h1>
-            <p className="text-slate-500 mt-2 font-medium">ארגז הכלים היומיומי: סימולציות שכר, אוטומציות ומחוללי דוחות.</p>
+            <p className="text-slate-500 mt-2 font-medium">ארגז הכלים היומיומי: סימולציות שכר, קליטת עובדים, אוטומציות ודוחות.</p>
           </div>
         </div>
 
@@ -32,7 +35,8 @@ export default function SuperAiHub() {
         </div>
       </div>
 
-      <div className="flex-1 min-h-0 bg-white border border-slate-200 rounded-3xl shadow-sm overflow-hidden">
+      {/* הקופסה הראשית נפתחה כדי שהתוכן יוכל "לנשום" ללא גלילה פנימית */}
+      <div className="flex-1 bg-white border border-slate-200 rounded-3xl shadow-sm mb-10">
         {activeTab === "mobility" && <MobilitySimulator />}
         {activeTab === "onboarding" && <SmartOnboarding />}
         {activeTab === "reports" && <ReportsGenerator />}
@@ -216,68 +220,69 @@ ${compData.proposed.customFields.length > 0 ? `<tr class="row-group"><td colspan
   const colSpan = isComparative ? 3 : 2;
 
   return (
-    <div className="flex flex-col h-full bg-slate-50/50">
+    <div className="bg-slate-50/50 rounded-b-3xl pb-10">
       
-      <div className="p-4 md:p-6 border-b border-slate-100 flex justify-between items-center gap-4 bg-white">
-        <h2 className="text-xl font-black text-[#002649] flex items-center gap-2"><BadgeDollarSign className="text-emerald-500"/> מנוע חישוב: סימולטור שכר (Total Rewards)</h2>
+      <div className="p-6 md:p-8 border-b border-slate-100 flex justify-between items-center gap-4 bg-white rounded-t-3xl">
+        <h2 className="text-2xl font-black text-[#002649] flex items-center gap-2"><BadgeDollarSign className="text-emerald-500"/> מנוע חישוב: סימולטור שכר (Total Rewards)</h2>
         <div className="flex bg-slate-100 p-1 rounded-xl shadow-inner shrink-0">
-          <button onClick={() => setIsComparative(false)} className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${!isComparative ? 'bg-white text-[#002649] shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>הצעת שכר (Stand Alone)</button>
-          <button onClick={() => setIsComparative(true)} className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${isComparative ? 'bg-white text-[#002649] shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>השוואה למצב קיים</button>
+          <button onClick={() => setIsComparative(false)} className={`px-5 py-2.5 rounded-lg text-sm font-bold transition-all ${!isComparative ? 'bg-white text-[#002649] shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>הצעת שכר (Stand Alone)</button>
+          <button onClick={() => setIsComparative(true)} className={`px-5 py-2.5 rounded-lg text-sm font-bold transition-all ${isComparative ? 'bg-white text-[#002649] shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>השוואה למצב קיים</button>
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-4 md:p-6 flex flex-col xl:flex-row gap-6">
+      <div className="p-6 md:p-10 flex flex-col xl:flex-row gap-10">
         
-        <div className="flex-1 space-y-6">
+        {/* אזור העבודה - רחב ומרווח למניעת גלילה */}
+        <div className="flex-1 space-y-8">
           
-          <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-5">
-            <h3 className="font-bold text-[#002649] border-b border-slate-100 pb-2 mb-4">פרטים אישיים ומזהים</h3>
-            <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
-              <div><label htmlFor="cb-name" className="text-[10px] font-bold text-slate-500 uppercase">שם מועמד.ת</label><input id="cb-name" type="text" value={personal.name} onChange={e=>setPersonal({...personal, name: e.target.value})} className="w-full p-2 border rounded-lg text-sm font-bold text-[#002649] outline-none" /></div>
-              <div><label htmlFor="cb-id" className="text-[10px] font-bold text-slate-500 uppercase">ת.ז</label><input id="cb-id" type="text" value={personal.id} onChange={e=>setPersonal({...personal, id: e.target.value})} className="w-full p-2 border rounded-lg text-sm font-bold text-[#002649] outline-none" /></div>
-              <div><label htmlFor="cb-role" className="text-[10px] font-bold text-slate-500 uppercase">תפקיד מיועד</label><input id="cb-role" type="text" value={personal.role} onChange={e=>setPersonal({...personal, role: e.target.value})} className="w-full p-2 border rounded-lg text-sm font-bold text-[#002649] outline-none" /></div>
-              <div><label htmlFor="cb-dept" className="text-[10px] font-bold text-slate-500 uppercase">יחידה ארגונית</label><input id="cb-dept" type="text" value={personal.dept} onChange={e=>setPersonal({...personal, dept: e.target.value})} className="w-full p-2 border rounded-lg text-sm font-bold text-[#002649] outline-none" /></div>
-              <div><label htmlFor="cb-mgr" className="text-[10px] font-bold text-slate-500 uppercase">מנהל ישיר</label><input id="cb-mgr" type="text" value={personal.manager} onChange={e=>setPersonal({...personal, manager: e.target.value})} className="w-full p-2 border rounded-lg text-sm font-bold text-[#002649] outline-none" /></div>
-              <div><label htmlFor="cb-date" className="text-[10px] font-bold text-slate-500 uppercase">תאריך קליטה</label><input id="cb-date" type="date" value={personal.startDate} onChange={e=>setPersonal({...personal, startDate: e.target.value})} className="w-full p-2 border rounded-lg text-sm font-bold text-[#002649] outline-none text-slate-600" /></div>
+          <div className="bg-white border border-slate-200 rounded-3xl shadow-sm p-6 xl:p-8">
+            <h3 className="font-bold text-[#002649] border-b border-slate-100 pb-3 mb-5 text-lg">פרטים אישיים ומזהים</h3>
+            <div className="grid grid-cols-2 lg:grid-cols-3 gap-5">
+              <div><label htmlFor="cb-name" className="text-xs font-bold text-slate-500 mb-1 block">שם מועמד.ת</label><input id="cb-name" type="text" value={personal.name} onChange={e=>setPersonal({...personal, name: e.target.value})} className="w-full p-2.5 border rounded-xl text-sm font-bold text-[#002649] bg-slate-50 outline-none focus:border-[#EF6B00]" /></div>
+              <div><label htmlFor="cb-id" className="text-xs font-bold text-slate-500 mb-1 block">ת.ז</label><input id="cb-id" type="text" value={personal.id} onChange={e=>setPersonal({...personal, id: e.target.value})} className="w-full p-2.5 border rounded-xl text-sm font-bold text-[#002649] bg-slate-50 outline-none focus:border-[#EF6B00]" /></div>
+              <div><label htmlFor="cb-role" className="text-xs font-bold text-slate-500 mb-1 block">תפקיד מיועד</label><input id="cb-role" type="text" value={personal.role} onChange={e=>setPersonal({...personal, role: e.target.value})} className="w-full p-2.5 border rounded-xl text-sm font-bold text-[#002649] bg-slate-50 outline-none focus:border-[#EF6B00]" /></div>
+              <div><label htmlFor="cb-dept" className="text-xs font-bold text-slate-500 mb-1 block">יחידה ארגונית</label><input id="cb-dept" type="text" value={personal.dept} onChange={e=>setPersonal({...personal, dept: e.target.value})} className="w-full p-2.5 border rounded-xl text-sm font-bold text-[#002649] bg-slate-50 outline-none focus:border-[#EF6B00]" /></div>
+              <div><label htmlFor="cb-mgr" className="text-xs font-bold text-slate-500 mb-1 block">מנהל ישיר</label><input id="cb-mgr" type="text" value={personal.manager} onChange={e=>setPersonal({...personal, manager: e.target.value})} className="w-full p-2.5 border rounded-xl text-sm font-bold text-[#002649] bg-slate-50 outline-none focus:border-[#EF6B00]" /></div>
+              <div><label htmlFor="cb-date" className="text-xs font-bold text-slate-500 mb-1 block">תאריך קליטה</label><input id="cb-date" type="date" value={personal.startDate} onChange={e=>setPersonal({...personal, startDate: e.target.value})} className="w-full p-2.5 border rounded-xl text-sm font-bold text-[#002649] bg-slate-50 outline-none focus:border-[#EF6B00]" /></div>
             </div>
           </div>
 
-          <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
-            <table className="w-full text-sm text-right">
+          <div className="bg-white border border-slate-200 rounded-3xl shadow-sm overflow-hidden">
+            <table className="w-full text-base text-right">
               <thead className="bg-[#002649] text-white">
                 <tr>
-                  <th className="p-3 font-bold">רכיב תגמול</th>
-                  <th className="p-3 font-bold text-center border-r border-white/20 w-64">הצעה חדשה</th>
-                  {isComparative && <th className="p-3 font-bold text-center border-r border-white/20 bg-slate-800 w-56">מצב נוכחי</th>}
+                  <th className="p-4 font-bold">רכיב תגמול</th>
+                  <th className="p-4 font-bold text-center border-r border-white/20 w-64 text-[#EF6B00]">הצעה חדשה</th>
+                  {isComparative && <th className="p-4 font-bold text-center border-r border-white/20 bg-slate-800 w-56">מצב נוכחי</th>}
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                <tr className="bg-slate-100/50 font-bold"><td colSpan={colSpan} className="p-2 text-slate-500 text-[10px] uppercase">שכר בסיס ותוספות</td></tr>
+                <tr className="bg-slate-100/50 font-bold"><td colSpan={colSpan} className="p-3 text-slate-500 text-[11px] uppercase tracking-wider">שכר בסיס ותוספות</td></tr>
                 <tr>
-                  <td className="p-3 font-bold text-[#002649]">שכר בסיס (ברוטו)</td>
-                  <td className="p-2 border-r border-slate-100"><input type="number" value={compData.proposed.base || ''} onChange={e=>updateField('proposed', 'base', Number(e.target.value))} className="w-full p-2 bg-blue-50/50 rounded-lg text-center font-bold text-blue-700 outline-none" /></td>
-                  {isComparative && <td className="p-2 border-r border-slate-100"><input type="number" value={compData.current.base || ''} onChange={e=>updateField('current', 'base', Number(e.target.value))} className="w-full p-2 border border-slate-200 rounded-lg text-center font-bold text-slate-600 outline-none" /></td>}
+                  <td className="p-4 font-bold text-[#002649]">שכר בסיס (ברוטו)</td>
+                  <td className="p-3 border-r border-slate-100"><input type="number" value={compData.proposed.base || ''} onChange={e=>updateField('proposed', 'base', Number(e.target.value))} className="w-full p-3 bg-blue-50/50 rounded-xl text-center font-black text-xl text-blue-700 outline-none focus:border-[#EF6B00] border border-transparent" /></td>
+                  {isComparative && <td className="p-3 border-r border-slate-100"><input type="number" value={compData.current.base || ''} onChange={e=>updateField('current', 'base', Number(e.target.value))} className="w-full p-3 border border-slate-200 rounded-xl text-center font-bold text-slate-600 outline-none" /></td>}
                 </tr>
                 <tr>
-                  <td className="p-3 font-bold text-[#002649]">נוספות גלובליות</td>
-                  <td className="p-2 border-r border-slate-100"><input type="number" value={compData.proposed.global || ''} onChange={e=>updateField('proposed', 'global', Number(e.target.value))} className="w-full p-2 bg-blue-50/50 rounded-lg text-center font-bold text-blue-700 outline-none" /></td>
-                  {isComparative && <td className="p-2 border-r border-slate-100"><input type="number" value={compData.current.global || ''} onChange={e=>updateField('current', 'global', Number(e.target.value))} className="w-full p-2 border border-slate-200 rounded-lg text-center font-bold text-slate-600 outline-none" /></td>}
+                  <td className="p-4 font-bold text-[#002649]">נוספות גלובליות</td>
+                  <td className="p-3 border-r border-slate-100"><input type="number" value={compData.proposed.global || ''} onChange={e=>updateField('proposed', 'global', Number(e.target.value))} className="w-full p-3 bg-blue-50/50 rounded-xl text-center font-bold text-blue-700 outline-none" /></td>
+                  {isComparative && <td className="p-3 border-r border-slate-100"><input type="number" value={compData.current.global || ''} onChange={e=>updateField('current', 'global', Number(e.target.value))} className="w-full p-3 border border-slate-200 rounded-xl text-center font-bold text-slate-600 outline-none" /></td>}
                 </tr>
 
-                <tr className="bg-slate-100/50 font-bold"><td colSpan={colSpan} className="p-2 text-slate-500 text-[10px] uppercase">סוציאלי (הפרשות מעסיק)</td></tr>
+                <tr className="bg-slate-100/50 font-bold"><td colSpan={colSpan} className="p-3 text-slate-500 text-[11px] uppercase tracking-wider">סוציאלי (הפרשות מעסיק)</td></tr>
                 <tr>
-                  <td className="p-3 font-bold text-[#002649]">פנסיה / תגמולים</td>
-                  <td className="p-2 border-r border-slate-100"><select value={compData.proposed.pension_pct} onChange={e=>updateField('proposed', 'pension_pct', Number(e.target.value))} className="w-full p-2 bg-slate-50 rounded-lg text-center font-bold text-slate-700 outline-none"><option value={5}>5.00%</option><option value={6}>6.00%</option><option value={6.5}>6.50%</option><option value={7.5}>7.50%</option></select></td>
-                  {isComparative && <td className="p-2 border-r border-slate-100"><select value={compData.current.pension_pct} onChange={e=>updateField('current', 'pension_pct', Number(e.target.value))} className="w-full p-2 border border-slate-200 rounded-lg text-center font-bold text-slate-600 outline-none"><option value={5}>5.00%</option><option value={6}>6.00%</option><option value={6.5}>6.50%</option><option value={7.5}>7.50%</option></select></td>}
+                  <td className="p-4 font-bold text-[#002649]">פנסיה / תגמולים</td>
+                  <td className="p-3 border-r border-slate-100"><select value={compData.proposed.pension_pct} onChange={e=>updateField('proposed', 'pension_pct', Number(e.target.value))} className="w-full p-3 bg-slate-50 rounded-xl text-center font-bold text-slate-700 outline-none"><option value={5}>5.00%</option><option value={6}>6.00%</option><option value={6.5}>6.50%</option><option value={7.5}>7.50%</option></select></td>
+                  {isComparative && <td className="p-3 border-r border-slate-100"><select value={compData.current.pension_pct} onChange={e=>updateField('current', 'pension_pct', Number(e.target.value))} className="w-full p-3 border border-slate-200 rounded-xl text-center font-bold text-slate-600 outline-none"><option value={5}>5.00%</option><option value={6}>6.00%</option><option value={6.5}>6.50%</option><option value={7.5}>7.50%</option></select></td>}
                 </tr>
                 <tr>
-                  <td className="p-3 font-bold text-[#002649] flex flex-col gap-1">
+                  <td className="p-4 font-bold text-[#002649] flex flex-col gap-1.5">
                     קרן השתלמות
                   </td>
-                  <td className="p-2 border-r border-slate-100">
+                  <td className="p-3 border-r border-slate-100">
                     <div className="flex gap-2">
-                      <select value={compData.proposed.kh_pct} onChange={e=>updateField('proposed', 'kh_pct', Number(e.target.value))} className="w-1/3 p-2 bg-slate-50 rounded-lg text-center font-bold text-slate-700 outline-none"><option value={0}>0%</option><option value={2.5}>2.5%</option><option value={5}>5%</option><option value={7.5}>7.5%</option></select>
-                      <select value={compData.proposed.kh_base_type} onChange={e=>updateField('proposed', 'kh_base_type', e.target.value)} className="w-2/3 p-2 bg-slate-50 rounded-lg text-xs font-bold text-slate-700 outline-none">
+                      <select value={compData.proposed.kh_pct} onChange={e=>updateField('proposed', 'kh_pct', Number(e.target.value))} className="w-1/3 p-3 bg-slate-50 rounded-xl text-center font-bold text-slate-700 outline-none"><option value={0}>0%</option><option value={2.5}>2.5%</option><option value={5}>5%</option><option value={7.5}>7.5%</option></select>
+                      <select value={compData.proposed.kh_base_type} onChange={e=>updateField('proposed', 'kh_base_type', e.target.value)} className="w-2/3 p-3 bg-slate-50 rounded-xl text-sm font-bold text-slate-700 outline-none">
                         <option value="base">משכר בסיס בלבד</option>
                         <option value="total">משכר בסיס + גלובליות</option>
                         <option value="ceiling">עד תקרת מס (15,712)</option>
@@ -285,105 +290,105 @@ ${compData.proposed.customFields.length > 0 ? `<tr class="row-group"><td colspan
                     </div>
                   </td>
                   {isComparative && (
-                    <td className="p-2 border-r border-slate-100">
-                      <div className="flex gap-1">
-                        <select value={compData.current.kh_pct} onChange={e=>updateField('current', 'kh_pct', Number(e.target.value))} className="w-1/3 p-2 border border-slate-200 rounded-lg text-center font-bold text-slate-600 outline-none"><option value={0}>0%</option><option value={2.5}>2.5%</option><option value={5}>5%</option><option value={7.5}>7.5%</option></select>
-                        <select value={compData.current.kh_base_type} onChange={e=>updateField('current', 'kh_base_type', e.target.value)} className="w-2/3 p-2 border border-slate-200 rounded-lg text-[10px] font-bold text-slate-600 outline-none"><option value="base">מבסיס</option><option value="total">מכולל</option><option value="ceiling">עד תקרה</option></select>
+                    <td className="p-3 border-r border-slate-100">
+                      <div className="flex gap-2">
+                        <select value={compData.current.kh_pct} onChange={e=>updateField('current', 'kh_pct', Number(e.target.value))} className="w-1/3 p-3 border border-slate-200 rounded-xl text-center font-bold text-slate-600 outline-none"><option value={0}>0%</option><option value={2.5}>2.5%</option><option value={5}>5%</option><option value={7.5}>7.5%</option></select>
+                        <select value={compData.current.kh_base_type} onChange={e=>updateField('current', 'kh_base_type', e.target.value)} className="w-2/3 p-3 border border-slate-200 rounded-xl text-[12px] font-bold text-slate-600 outline-none"><option value="base">מבסיס</option><option value="total">מכולל</option><option value="ceiling">עד תקרה</option></select>
                       </div>
                     </td>
                   )}
                 </tr>
 
-                <tr className="bg-slate-100/50 font-bold"><td colSpan={colSpan} className="p-2 text-slate-500 text-[10px] uppercase">הטבות נלוות (שווי)</td></tr>
-                <tr><td className="p-3 font-bold text-[#002649]">כרטיס הסעדה</td><td className="p-2 border-r border-slate-100"><input type="number" value={compData.proposed.meals || ''} onChange={e=>updateField('proposed', 'meals', Number(e.target.value))} className="w-full p-2 bg-slate-50 rounded-lg text-center font-bold text-slate-700 outline-none" /></td>{isComparative && <td className="p-2 border-r border-slate-100"><input type="number" value={compData.current.meals || ''} onChange={e=>updateField('current', 'meals', Number(e.target.value))} className="w-full p-2 border border-slate-200 rounded-lg text-center font-bold text-slate-600 outline-none" /></td>}</tr>
-                <tr><td className="p-3 font-bold text-[#002649]">נסיעות חודשי</td><td className="p-2 border-r border-slate-100"><input type="number" value={compData.proposed.travel || ''} onChange={e=>updateField('proposed', 'travel', Number(e.target.value))} className="w-full p-2 bg-slate-50 rounded-lg text-center font-bold text-slate-700 outline-none" /></td>{isComparative && <td className="p-2 border-r border-slate-100"><input type="number" value={compData.current.travel || ''} onChange={e=>updateField('current', 'travel', Number(e.target.value))} className="w-full p-2 border border-slate-200 rounded-lg text-center font-bold text-slate-600 outline-none" /></td>}</tr>
-                <tr><td className="p-3 font-bold text-[#002649]">שי לחג (גילום)</td><td className="p-2 border-r border-slate-100"><input type="number" value={compData.proposed.holiday || ''} onChange={e=>updateField('proposed', 'holiday', Number(e.target.value))} className="w-full p-2 bg-slate-50 rounded-lg text-center font-bold text-slate-700 outline-none" /></td>{isComparative && <td className="p-2 border-r border-slate-100"><input type="number" value={compData.current.holiday || ''} onChange={e=>updateField('current', 'holiday', Number(e.target.value))} className="w-full p-2 border border-slate-200 rounded-lg text-center font-bold text-slate-600 outline-none" /></td>}</tr>
-                <tr><td className="p-3 font-bold text-[#002649]">הדרכה ורווחה</td><td className="p-2 border-r border-slate-100"><input type="number" value={compData.proposed.welfare || ''} onChange={e=>updateField('proposed', 'welfare', Number(e.target.value))} className="w-full p-2 bg-slate-50 rounded-lg text-center font-bold text-slate-700 outline-none" /></td>{isComparative && <td className="p-2 border-r border-slate-100"><input type="number" value={compData.current.welfare || ''} onChange={e=>updateField('current', 'welfare', Number(e.target.value))} className="w-full p-2 border border-slate-200 rounded-lg text-center font-bold text-slate-600 outline-none" /></td>}</tr>
+                <tr className="bg-slate-100/50 font-bold"><td colSpan={colSpan} className="p-3 text-slate-500 text-[11px] uppercase tracking-wider">הטבות נלוות (שווי)</td></tr>
+                <tr><td className="p-4 font-bold text-[#002649]">כרטיס הסעדה</td><td className="p-3 border-r border-slate-100"><input type="number" value={compData.proposed.meals || ''} onChange={e=>updateField('proposed', 'meals', Number(e.target.value))} className="w-full p-3 bg-slate-50 rounded-xl text-center font-bold text-slate-700 outline-none" /></td>{isComparative && <td className="p-3 border-r border-slate-100"><input type="number" value={compData.current.meals || ''} onChange={e=>updateField('current', 'meals', Number(e.target.value))} className="w-full p-3 border border-slate-200 rounded-xl text-center font-bold text-slate-600 outline-none" /></td>}</tr>
+                <tr><td className="p-4 font-bold text-[#002649]">נסיעות חודשי</td><td className="p-3 border-r border-slate-100"><input type="number" value={compData.proposed.travel || ''} onChange={e=>updateField('proposed', 'travel', Number(e.target.value))} className="w-full p-3 bg-slate-50 rounded-xl text-center font-bold text-slate-700 outline-none" /></td>{isComparative && <td className="p-3 border-r border-slate-100"><input type="number" value={compData.current.travel || ''} onChange={e=>updateField('current', 'travel', Number(e.target.value))} className="w-full p-3 border border-slate-200 rounded-xl text-center font-bold text-slate-600 outline-none" /></td>}</tr>
+                <tr><td className="p-4 font-bold text-[#002649]">שי לחג (גילום)</td><td className="p-3 border-r border-slate-100"><input type="number" value={compData.proposed.holiday || ''} onChange={e=>updateField('proposed', 'holiday', Number(e.target.value))} className="w-full p-3 bg-slate-50 rounded-xl text-center font-bold text-slate-700 outline-none" /></td>{isComparative && <td className="p-3 border-r border-slate-100"><input type="number" value={compData.current.holiday || ''} onChange={e=>updateField('current', 'holiday', Number(e.target.value))} className="w-full p-3 border border-slate-200 rounded-xl text-center font-bold text-slate-600 outline-none" /></td>}</tr>
+                <tr><td className="p-4 font-bold text-[#002649]">הדרכה ורווחה</td><td className="p-3 border-r border-slate-100"><input type="number" value={compData.proposed.welfare || ''} onChange={e=>updateField('proposed', 'welfare', Number(e.target.value))} className="w-full p-3 bg-slate-50 rounded-xl text-center font-bold text-slate-700 outline-none" /></td>{isComparative && <td className="p-3 border-r border-slate-100"><input type="number" value={compData.current.welfare || ''} onChange={e=>updateField('current', 'welfare', Number(e.target.value))} className="w-full p-3 border border-slate-200 rounded-xl text-center font-bold text-slate-600 outline-none" /></td>}</tr>
 
-                <tr className="bg-slate-100/50 font-bold"><td colSpan={colSpan} className="p-2 text-slate-500 text-[10px] uppercase">התאמות מיוחדות למסמך (שדה חופשי)</td></tr>
+                <tr className="bg-slate-100/50 font-bold"><td colSpan={colSpan} className="p-3 text-slate-500 text-[11px] uppercase tracking-wider">התאמות מיוחדות למסמך (שדה חופשי)</td></tr>
                 {compData.proposed.customFields.map((field: CustomField) => (
                   <tr key={field.id}>
-                    <td className="p-2 pl-6 relative">
-                      <input type="text" value={field.label} onChange={e => updateCustomField('proposed', field.id, 'label', e.target.value)} className="w-full p-2 border border-slate-200 rounded-lg font-bold text-[#002649] outline-none focus:border-[#EF6B00]" placeholder="שם הרכיב..." />
-                      <button onClick={() => removeCustomField('proposed', field.id)} className="absolute left-2 top-4 text-slate-300 hover:text-red-500"><Trash2 size={16}/></button>
+                    <td className="p-3 pl-6 relative">
+                      <input type="text" value={field.label} onChange={e => updateCustomField('proposed', field.id, 'label', e.target.value)} className="w-full p-3 border border-slate-200 rounded-xl font-bold text-[#002649] outline-none focus:border-[#EF6B00]" placeholder="שם הרכיב..." />
+                      <button onClick={() => removeCustomField('proposed', field.id)} className="absolute left-2 top-6 text-slate-300 hover:text-red-500"><Trash2 size={20}/></button>
                     </td>
-                    <td className="p-2 border-r border-slate-100"><input type="number" value={field.amount || ''} onChange={e=>updateCustomField('proposed', field.id, 'amount', Number(e.target.value))} className="w-full p-2 bg-orange-50/50 rounded-lg text-center font-black text-[#EF6B00] outline-none" placeholder="₪סכום" /></td>
-                    {isComparative && <td className="p-2 border-r border-slate-100 text-center text-slate-300 text-xs bg-slate-50/50">לא זמין</td>}
+                    <td className="p-3 border-r border-slate-100"><input type="number" value={field.amount || ''} onChange={e=>updateCustomField('proposed', field.id, 'amount', Number(e.target.value))} className="w-full p-3 bg-orange-50/50 rounded-xl text-center font-black text-[#EF6B00] outline-none" placeholder="₪סכום" /></td>
+                    {isComparative && <td className="p-3 border-r border-slate-100 text-center text-slate-300 text-sm bg-slate-50/50">לא זמין</td>}
                   </tr>
                 ))}
                 <tr>
-                  <td colSpan={colSpan} className="p-3 text-center bg-white border-t border-slate-200">
-                    <button onClick={() => addCustomField('proposed')} className="text-blue-600 font-bold text-xs flex items-center justify-center gap-1 mx-auto hover:text-blue-800"><PlusCircle size={14}/> הוסף רכיב נוסף (מענק, רכב, ביגוד)</button>
+                  <td colSpan={colSpan} className="p-4 text-center bg-white border-t border-slate-200">
+                    <button onClick={() => addCustomField('proposed')} className="text-blue-600 font-bold text-sm flex items-center justify-center gap-2 mx-auto hover:text-blue-800"><PlusCircle size={16}/> הוסף רכיב נוסף (מענק, רכב, ביגוד)</button>
                   </td>
                 </tr>
               </tbody>
             </table>
           </div>
 
-          <div className="bg-slate-900 border-2 border-slate-800 rounded-2xl p-6 relative overflow-hidden text-white shadow-xl mt-8">
-            <h3 className="font-black text-blue-300 text-sm mb-4 relative z-10 flex items-center gap-2">
-              <ShieldCheck size={18}/> אזור מסווג למגייסת (לא מופיע במסמך השיווקי)
+          <div className="bg-slate-900 border-2 border-slate-800 rounded-3xl p-8 relative overflow-hidden text-white shadow-xl mt-8">
+            <h3 className="font-black text-blue-300 text-base mb-6 relative z-10 flex items-center gap-2">
+              <ShieldCheck size={20}/> אזור מסווג למגייסת (לא מופיע במסמך השיווקי)
             </h3>
-            <div className="grid grid-cols-2 gap-6 relative z-10">
-              <div className="bg-white/10 p-4 rounded-xl border border-white/10">
-                <p className="text-xs font-bold text-slate-400 uppercase">עלות מעסיק חודשית מוערכת</p>
-                <p className="text-3xl font-black text-white mt-1">₪{propMetrics.employer_cost.toLocaleString(undefined, {maximumFractionDigits:0})}</p>
+            <div className="grid grid-cols-2 gap-8 relative z-10">
+              <div className="bg-white/10 p-5 rounded-2xl border border-white/10">
+                <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">עלות מעסיק חודשית מוערכת</p>
+                <p className="text-4xl font-black text-white mt-2">₪{propMetrics.employer_cost.toLocaleString(undefined, {maximumFractionDigits:0})}</p>
               </div>
-              <div className="bg-white/10 p-4 rounded-xl border border-white/10">
-                <div className="flex justify-between items-center mb-2">
-                  <p className="text-xs font-bold text-slate-400 uppercase">תשלום השמה / ספק (חד פעמי)</p>
-                  <select value={compData.proposed.agency_fee_pct} onChange={e=>updateField('proposed', 'agency_fee_pct', Number(e.target.value))} className="text-xs bg-slate-800 rounded p-1 outline-none text-slate-200 font-bold border border-slate-700">
+              <div className="bg-white/10 p-5 rounded-2xl border border-white/10">
+                <div className="flex justify-between items-center mb-3">
+                  <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">תשלום לחברת השמה (חד פעמי)</p>
+                  <select value={compData.proposed.agency_fee_pct} onChange={e=>updateField('proposed', 'agency_fee_pct', Number(e.target.value))} className="text-sm bg-slate-800 rounded-lg p-1.5 outline-none text-slate-200 font-bold border border-slate-700 cursor-pointer">
                     <option value={0}>ללא ספק (0%)</option>
                     <option value={80}>80% שכר</option>
                     <option value={100}>100% שכר</option>
                     <option value={120}>120% שכר</option>
                   </select>
                 </div>
-                <p className="text-3xl font-black text-red-400">₪{propMetrics.agency_fee.toLocaleString(undefined, {maximumFractionDigits:0})}</p>
+                <p className="text-4xl font-black text-red-400">₪{propMetrics.agency_fee.toLocaleString(undefined, {maximumFractionDigits:0})}</p>
               </div>
             </div>
           </div>
         </div>
 
-        <div className="w-full xl:w-[480px] shrink-0 flex flex-col gap-4">
-          <div className="bg-white border border-slate-200 rounded-3xl p-8 shadow-xl relative overflow-hidden h-full flex flex-col">
-            <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-[#002649] to-[#EF6B00]"></div>
+        {/* Presentation Panel */}
+        <div className="w-full xl:w-[500px] shrink-0">
+          <div className="bg-[#002649] rounded-3xl p-10 shadow-2xl relative overflow-hidden flex flex-col text-white sticky top-10">
+            <div className="absolute top-0 right-0 w-full h-3 bg-gradient-to-r from-transparent via-[#EF6B00] to-transparent opacity-50"></div>
             
-            <div className="text-center mb-8">
-              <h2 className="text-2xl font-black text-[#002649] mb-1">חבילת תגמול והצעת שכר</h2>
-              <p className="text-sm font-bold text-[#EF6B00]">{personal.name} | {personal.role}</p>
-              <p className="text-xs text-slate-400 mt-1">יחידה: {personal.dept}</p>
+            <div className="text-center mb-10">
+              <h2 className="text-3xl font-black mb-2 text-white">חבילת תגמול והצעת שכר</h2>
+              <p className="text-lg font-bold text-[#EF6B00] mb-1">{personal.name} <span className="text-slate-400">|</span> {personal.role}</p>
+              <p className="text-sm text-blue-200">יחידה: {personal.dept}</p>
             </div>
 
-            <div className="bg-[#002649] text-white rounded-2xl p-6 text-center mb-6 shadow-md transform hover:scale-105 transition-transform">
-              <p className="text-xs font-bold text-blue-200 uppercase tracking-widest mb-1">שווי חבילה חודשי (Total Rewards)</p>
-              <div className="text-5xl font-black text-[#EF6B00]">₪{propMetrics.total_value.toLocaleString(undefined, {maximumFractionDigits:0})}</div>
+            <div className="bg-white/5 rounded-3xl p-8 text-center mb-10 border border-white/10">
+              <p className="text-sm font-bold text-blue-300 uppercase tracking-widest mb-3">שווי חבילה חודשי (Total Rewards)</p>
+              <div className="text-6xl font-black text-[#EF6B00]">₪{propMetrics.total_value.toLocaleString(undefined, {maximumFractionDigits:0})}</div>
             </div>
 
             {isComparative && deltaValue !== 0 && (
-              <div className={`mb-6 p-4 rounded-xl border flex items-center justify-between font-bold ${deltaValue > 0 ? 'bg-green-50 border-green-200 text-green-700' : 'bg-red-50 border-red-200 text-red-700'}`}>
-                <div className="flex items-center gap-2"><ArrowRightLeft size={18}/> פער שווי חבילה:</div>
-                <div className="text-xl">{deltaValue > 0 ? '+' : ''}₪{deltaValue.toLocaleString(undefined, {maximumFractionDigits:0})}</div>
+              <div className={`mb-10 p-5 rounded-2xl border-2 flex items-center justify-between font-black text-xl ${deltaValue > 0 ? 'bg-green-500/20 border-green-400 text-green-300' : 'bg-red-500/20 border-red-400 text-red-300'}`}>
+                <div className="flex items-center gap-3"><ArrowRightLeft size={24}/> פער שווי מהמצב הקיים:</div>
+                <div>{deltaValue > 0 ? '+' : ''}₪{deltaValue.toLocaleString(undefined, {maximumFractionDigits:0})}</div>
               </div>
             )}
 
-            <div className="space-y-2 mb-6">
-              <div className="flex justify-between text-sm font-bold border-b border-slate-100 pb-2"><span className="text-slate-500">שכר בסיס + גלובליות</span><span className="text-[#002649]">₪{propMetrics.gross.toLocaleString()}</span></div>
-              <div className="flex justify-between text-sm font-bold border-b border-slate-100 pb-2"><span className="text-slate-500">הפרשות סוציאליות (מעסיק)</span><span className="text-[#002649]">₪{(propMetrics.total_value - propMetrics.gross - propMetrics.custom_value - compData.proposed.meals - compData.proposed.travel - compData.proposed.holiday - compData.proposed.welfare).toLocaleString(undefined, {maximumFractionDigits:0})}</span></div>
-              <div className="flex justify-between text-sm font-bold border-b border-slate-100 pb-2"><span className="text-slate-500">הטבות נלוות</span><span className="text-[#002649]">₪{(compData.proposed.meals + compData.proposed.travel + compData.proposed.holiday + compData.proposed.welfare).toLocaleString()}</span></div>
-              {propMetrics.custom_value > 0 && <div className="flex justify-between text-sm font-black border-b border-slate-100 pb-2 pt-2"><span className="text-[#EF6B00]">תוספות מיוחדות</span><span className="text-[#EF6B00]">₪{propMetrics.custom_value.toLocaleString()}</span></div>}
+            <div className="space-y-4 mb-10 text-base">
+              <div className="flex justify-between font-bold border-b border-white/10 pb-3"><span className="text-slate-300">שכר בסיס + גלובליות</span><span>₪{propMetrics.gross.toLocaleString()}</span></div>
+              <div className="flex justify-between font-bold border-b border-white/10 pb-3"><span className="text-slate-300">הפרשות סוציאליות (מעסיק)</span><span>₪{(propMetrics.total_value - propMetrics.gross - propMetrics.custom_value - compData.proposed.meals - compData.proposed.travel - compData.proposed.holiday - compData.proposed.welfare).toLocaleString(undefined, {maximumFractionDigits:0})}</span></div>
+              <div className="flex justify-between font-bold border-b border-white/10 pb-3"><span className="text-slate-300">הטבות נלוות</span><span>₪{(compData.proposed.meals + compData.proposed.travel + compData.proposed.holiday + compData.proposed.welfare).toLocaleString()}</span></div>
+              {propMetrics.custom_value > 0 && <div className="flex justify-between font-black border-b border-white/10 pb-3 pt-2"><span className="text-[#EF6B00]">תוספות ומענקים מיוחדים</span><span className="text-[#EF6B00]">₪{propMetrics.custom_value.toLocaleString()}</span></div>}
             </div>
 
-            <div className="flex-1"></div>
-
-            <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 text-[10px] text-slate-500 leading-relaxed font-medium text-justify">
-              <strong>הצהרה משפטית:</strong> המסמך הינו הצעת שכר שיווקית (סימולציה) בלבד ואינו מחייב את הפניקס בקשירת יחסי עובד-מעסיק. תוקף ההצעה הינו ל-30 יום. כל סכום הנקוב כ&quot;שווי&quot; הינו הערכת ברוטו לפני ניכויים כחוק. תנאי ההעסקה הסופיים ייקבעו בהתאם לחוזה חתום בלבד.
+            <div className="mt-auto">
+              <div className="bg-white/5 border border-white/10 rounded-2xl p-5 text-[11px] text-blue-200/60 leading-relaxed font-medium text-justify mb-8">
+                <strong>הצהרה משפטית:</strong> המסמך הינו הצעת שכר שיווקית (סימולציה) בלבד ואינו מחייב בקשירת יחסי עובד-מעסיק. תוקף ההצעה ל-30 יום. כל סכום הנקוב כ"שווי" הינו ברוטו. תנאי ההעסקה הסופיים ייקבעו בהתאם לחוזה חתום בלבד.
+              </div>
+              <button onClick={handleGeneratePDF} className="w-full bg-[#EF6B00] text-white py-5 rounded-2xl font-black text-xl shadow-lg hover:shadow-xl hover:bg-[#d65a00] transition-all flex items-center justify-center gap-3">
+                <Printer size={28}/> הדפס מסמך הצעת שכר (PDF)
+              </button>
             </div>
           </div>
-
-          <button onClick={handleGeneratePDF} className="w-full bg-[#EF6B00] text-white py-4 rounded-2xl font-black text-lg shadow-lg hover:shadow-xl hover:bg-[#d65a00] transition-all flex items-center justify-center gap-2">
-            <Printer size={24}/> הפק הצעת שכר (לשליחה למועמד)
-          </button>
         </div>
 
       </div>
@@ -392,78 +397,342 @@ ${compData.proposed.customFields.length > 0 ? `<tr class="row-group"><td colspan
 }
 
 // ==========================================
-// 3. Smart Onboarding Form (Live API)
+// 3. Smart Onboarding Wizard (4 Steps Flow)
 // ==========================================
-interface OnboardingTicket { dept: string; status: string }
+interface OnboardingTask { id: number; text: string; done: boolean }
 
 function SmartOnboarding() {
   const [step, setStep] = useState(1);
-  const [formData, setFormData] = useState({ name: "", role: "מפתח Backend Java", idNum: "", date: "" });
-  const [isLoading, setIsLoading] = useState(false);
-  const [tickets, setTickets] = useState<OnboardingTicket[]>([]);
-  
+  const [isSaving, setIsSaving] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
+
+  const [formData, setFormData] = useState({
+    firstName: "", lastName: "", idNum: "", startDate: "",
+    jobTitle: "", jobNum: "", orgUnit: "", manager: "",
+    isReferral: false, refName: "", refEmpNum: "", refBonus: "", refDate: "",
+    hasDisability: false,
+    hasFamilyTie: false, relativeName: "", tieType: "ראשונה",
+    hasMobile: false, hasCibus: false, hasCar: false,
+    parkingType: "לא", carNum: "", freeText: ""
+  });
+
+  // חישוב אוטומטי של תאריך חבר מביא חבר
+  useEffect(() => {
+    if (formData.startDate && formData.isReferral && !formData.refDate) {
+      const d = new Date(formData.startDate);
+      d.setMonth(d.getMonth() + 3);
+      setFormData(prev => ({ ...prev, refDate: d.toISOString().split('T')[0] }));
+    }
+  }, [formData.startDate, formData.isReferral, formData.refDate]);
+
+  // לוגיקת החסימה והסנכרון בין רכב לחניה
+  useEffect(() => {
+    if (formData.hasCar) {
+      setFormData(prev => ({ ...prev, parkingType: "בזכאות", carNum: "" }));
+    }
+  }, [formData.hasCar]);
+
+  const [tasks, setTasks] = useState<OnboardingTask[]>([
+    { id: 1, text: 'ביצוע ״יועסקו״ ב-SAP', done: false },
+    { id: 2, text: 'סגירת משרה במערכת EC', done: false },
+    { id: 3, text: 'וידוא הסרת פרסומים (נילוסופט/לינקדאין)', done: false },
+    { id: 4, text: 'שליחת שאלון עובד חדש (HRO)', done: false },
+    { id: 5, text: 'וידוא כתובת ותאריך תחילה בנילוסופט', done: false }
+  ]);
+
+  const [cvFile, setCvFile] = useState<globalThis.File | null>(null);
+  const [otherFiles, setOtherFiles] = useState<globalThis.File[]>([]);
+
+  const [routing, setRouting] = useState({
+    referral: "hr-referrals@fnx.co.il", logistics: "car-fleet@fnx.co.il",
+    diversity: "diversity@fnx.co.il", hro: "payroll@fnx.co.il"
+  });
+
+  const nextStep = () => {
+    if (step === 1) {
+      if (!formData.firstName || !formData.lastName || !formData.idNum || !formData.startDate) {
+        globalThis.alert("חובה למלא שם, ת.ז ותאריך תחילה.");
+        return;
+      }
+    }
+    if (step === 3) {
+      if (tasks.some(t => !t.done)) {
+        if (!globalThis.confirm("לא סימנת את כל משימות החובה בצ׳קליסט. האם להמשיך בכל זאת?")) return;
+      }
+    }
+    setStep(step + 1);
+  };
+
   const handleLaunch = async () => {
-    if (!formData.name) { globalThis.alert("חובה להזין שם עובד"); return; }
-    setStep(2);
-    setIsLoading(true);
+    if (!cvFile) { globalThis.alert("חובה להעלות קורות חיים לפני סיום התהליך."); return; }
+    setIsSaving(true);
+    
     try {
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/tools/fan-out`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(formData)
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/onboarding`, {
+        method: 'POST', 
+        headers: { 'Content-Type': 'application/json' }, 
+        body: JSON.stringify({ ...formData, checklist: tasks, files: { cv: cvFile.name, others: otherFiles.map(f=>f.name) } })
       });
+      
       const data = await res.json();
-      if(data.status === "success") { setTickets(data.tickets); setStep(3); }
+      if(data.status === "success") { 
+        setStep(5);
+      }
     } catch {
-      globalThis.alert("שגיאת תקשורת מול שרת ה-IT"); setStep(1);
+      globalThis.alert("שגיאת תקשורת מול השרת. אנא ודא שהשרת רץ."); 
     } finally {
-      setIsLoading(false);
+      setIsSaving(false);
     }
   };
 
   return (
-    <div className="flex flex-col h-full bg-slate-50/30 p-6">
-      <div className="max-w-2xl mx-auto w-full bg-white p-8 rounded-3xl border border-slate-200 shadow-sm">
-        {step === 1 && (
-          <div className="space-y-8 animate-in fade-in">
+    <div className="bg-white rounded-b-3xl flex flex-col relative">
+      
+      {showSettings && (
+        <div className="absolute top-4 left-4 w-80 bg-white shadow-2xl border border-slate-200 rounded-2xl p-5 z-50 animate-in slide-in-from-top-4">
+          <div className="flex justify-between items-center mb-4 border-b pb-2">
+            <h4 className="font-black text-[#002649] flex items-center gap-2"><Mail size={16}/> מטריצת נמענים אוטומטית</h4>
+            <button onClick={()=>setShowSettings(false)} className="text-slate-400"><XCircle size={18}/></button>
+          </div>
+          <div className="space-y-3 text-xs">
+            <div><label htmlFor="rt-ref" className="font-bold text-slate-600 block">מייל חבר מביא חבר:</label><input id="rt-ref" type="text" value={routing.referral} onChange={e=>setRouting({...routing, referral:e.target.value})} className="w-full p-2 border rounded bg-slate-50" /></div>
+            <div><label htmlFor="rt-log" className="font-bold text-slate-600 block">מייל לוגיסטיקה (רכב/חניה):</label><input id="rt-log" type="text" value={routing.logistics} onChange={e=>setRouting({...routing, logistics:e.target.value})} className="w-full p-2 border rounded bg-slate-50" /></div>
+            <div><label htmlFor="rt-div" className="font-bold text-slate-600 block">מייל מחלקת גיוון:</label><input id="rt-div" type="text" value={routing.diversity} onChange={e=>setRouting({...routing, diversity:e.target.value})} className="w-full p-2 border rounded bg-slate-50" /></div>
+          </div>
+        </div>
+      )}
+
+      {step < 5 && (
+        <div className="border-b border-slate-200 p-8">
+          <div className="flex justify-between items-start mb-10">
             <div>
-              <h2 className="text-xl font-black text-[#002649] flex items-center gap-2 mb-1"><UserPlus className="text-blue-500"/> טופס קליטה מרכזי (Smart Onboarding)</h2>
-              <p className="text-sm text-slate-500">הזן נתונים ולחץ שיגור. המערכת תפתח טיקטים אוטומטית במערכות ה-IT והלוגיסטיקה.</p>
+              <h2 className="text-2xl font-black text-[#002649] flex items-center gap-2"><UserPlus className="text-[#EF6B00]"/> אשף טרום-קליטה (Pre-Boarding Wizard)</h2>
+              <p className="text-sm text-slate-500 mt-1">תהליך מודרך לקליטת עובד חדש, כולל טיפול בזכאויות והפצת מידע למחלקות התפעול.</p>
             </div>
-            <div className="grid grid-cols-2 gap-6">
-              <div><label htmlFor="ob-name" className="block text-xs font-bold text-slate-500 mb-2">שם העובד.ת הנקלט</label><input id="ob-name" type="text" value={formData.name} onChange={e=>setFormData({...formData, name: e.target.value})} className="w-full p-2.5 border rounded-xl outline-none focus:border-[#EF6B00]" /></div>
-              <div><label htmlFor="ob-id" className="block text-xs font-bold text-slate-500 mb-2">תעודת זהות</label><input id="ob-id" type="text" value={formData.idNum} onChange={e=>setFormData({...formData, idNum: e.target.value})} className="w-full p-2.5 border rounded-xl outline-none focus:border-[#EF6B00]" /></div>
-              <div><label htmlFor="ob-role" className="block text-xs font-bold text-slate-500 mb-2">תפקיד מיועד</label><input id="ob-role" type="text" value={formData.role} onChange={e=>setFormData({...formData, role: e.target.value})} className="w-full p-2.5 border rounded-xl outline-none focus:border-[#EF6B00]" /></div>
-              <div><label htmlFor="ob-date" className="block text-xs font-bold text-slate-500 mb-2">תאריך תחילת עבודה</label><input id="ob-date" type="date" value={formData.date} onChange={e=>setFormData({...formData, date: e.target.value})} className="w-full p-2.5 border rounded-xl outline-none focus:border-[#EF6B00] text-slate-600" /></div>
+            <button onClick={()=>setShowSettings(!showSettings)} className="text-blue-600 hover:bg-blue-50 p-2.5 rounded-xl transition-colors font-bold text-sm flex items-center gap-2"><Settings size={18}/> הגדרות תפוצה</button>
+          </div>
+
+          {/* Stepper עם יישור מושלם לאמצע */}
+          <div className="relative w-full max-w-5xl mx-auto mt-6">
+            {/* פס הרקע האפור */}
+            <div className="absolute top-5 left-12 right-12 h-1.5 bg-slate-100 -z-10 rounded-full overflow-hidden">
+               {/* פס ההתקדמות הכתום */}
+               <div className="h-full bg-[#EF6B00] transition-all duration-500" style={{ width: `${((step-1)/3)*100}%` }}></div>
             </div>
-            <button onClick={handleLaunch} className="w-full bg-[#002649] text-white py-4 rounded-xl font-black flex items-center justify-center gap-2 hover:bg-[#EF6B00] transition-colors shadow-lg mt-4">
-              <Send size={18}/> שגר תהליך קליטה
-            </button>
-          </div>
-        )}
-        {step === 2 && (
-          <div className="py-20 flex flex-col items-center justify-center space-y-6">
-            <Loader2 size={48} className="text-[#EF6B00] animate-spin" />
-            <h3 className="font-black text-xl text-[#002649]">משדר נתונים למערכות התפעול...</h3>
-          </div>
-        )}
-        {step === 3 && (
-          <div className="py-10 flex flex-col items-center justify-center space-y-6 animate-in zoom-in-95">
-            <div className="w-24 h-24 bg-green-100 text-green-600 rounded-full flex items-center justify-center shadow-inner"><CheckCircle2 size={48} /></div>
-            <div className="text-center">
-              <h3 className="font-black text-2xl text-[#002649] mb-2">שיגור בוצע בהצלחה</h3>
-              <p className="text-slate-500 mb-8">נפתחו טיקטים עבור {formData.name}:</p>
-              <div className="flex flex-wrap justify-center gap-4 text-left">
-                {tickets.map((t) => (
-                  <div key={t.dept} className="bg-slate-50 border border-slate-200 p-3 rounded-xl min-w-[120px]">
-                    <div className="flex items-center gap-1.5 text-slate-500 font-bold text-[10px] uppercase mb-1"><Server size={14}/> {t.dept}</div>
-                    <div className="font-black text-[#002649] text-xs">{t.status}</div>
+            
+            <div className="flex justify-between items-start">
+              {['פרטים אישיים וארגוניים', 'מועמדות וזכאויות', "צ׳קליסט סגירה", 'מסמכים ושיגור'].map((label, idx) => {
+                const num = idx + 1;
+                return (
+                  <div key={num} className="flex flex-col items-center gap-3 w-32">
+                    <div className={`w-11 h-11 rounded-full flex items-center justify-center font-black text-lg transition-all duration-300 ${step === num ? 'bg-[#002649] text-white shadow-xl scale-110 ring-4 ring-blue-50' : step > num ? 'bg-[#EF6B00] text-white' : 'bg-white text-slate-300 border-2 border-slate-200'}`}>
+                      {step > num ? <CheckCircle2 size={24}/> : num}
+                    </div>
+                    <span className={`text-center text-[12px] leading-tight font-extrabold transition-colors ${step === num ? 'text-[#002649]' : step > num ? 'text-[#EF6B00]' : 'text-slate-400'}`}>{label}</span>
                   </div>
-                ))}
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* אזור התוכן הראשי - רחב ומרווח למניעת מסגרת כפולה */}
+      <div className="p-8 md:p-12 w-full">
+        
+        {step === 1 && (
+          <div className="animate-in slide-in-from-right-4 w-full">
+            <h3 className="text-xl font-black text-[#002649] border-b pb-4 mb-6">פרטי המועמד.ת</h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6 mb-12">
+              <div><label htmlFor="wz-fn" className="text-sm font-bold text-slate-500 mb-1.5 block">שם פרטי <span className="text-red-500">*</span></label><input id="wz-fn" type="text" value={formData.firstName} onChange={e=>setFormData({...formData, firstName: e.target.value})} className="w-full p-3.5 border rounded-xl font-bold text-[#002649] bg-slate-50 outline-none focus:border-[#EF6B00]" /></div>
+              <div><label htmlFor="wz-ln" className="text-sm font-bold text-slate-500 mb-1.5 block">שם משפחה <span className="text-red-500">*</span></label><input id="wz-ln" type="text" value={formData.lastName} onChange={e=>setFormData({...formData, lastName: e.target.value})} className="w-full p-3.5 border rounded-xl font-bold text-[#002649] bg-slate-50 outline-none focus:border-[#EF6B00]" /></div>
+              <div><label htmlFor="wz-id" className="text-sm font-bold text-slate-500 mb-1.5 block">תעודת זהות <span className="text-red-500">*</span></label><input id="wz-id" type="text" value={formData.idNum} onChange={e=>setFormData({...formData, idNum: e.target.value})} className="w-full p-3.5 border rounded-xl font-bold text-[#002649] bg-slate-50 outline-none focus:border-[#EF6B00]" /></div>
+              <div><label htmlFor="wz-sd" className="text-sm font-bold text-slate-500 mb-1.5 block">תאריך תחילת עבודה <span className="text-red-500">*</span></label><input id="wz-sd" type="date" value={formData.startDate} onChange={e=>setFormData({...formData, startDate: e.target.value})} className="w-full p-3.5 border rounded-xl font-bold text-[#002649] bg-slate-50 outline-none focus:border-[#EF6B00]" /></div>
+            </div>
+            
+            <h3 className="text-xl font-black text-[#002649] border-b pb-4 mb-6">פרטי המשרה</h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
+              <div><label htmlFor="wz-jt" className="text-sm font-bold text-slate-500 mb-1.5 block">שם משרה</label><input id="wz-jt" type="text" value={formData.jobTitle} onChange={e=>setFormData({...formData, jobTitle: e.target.value})} className="w-full p-3.5 border rounded-xl font-bold text-[#002649] bg-slate-50 outline-none focus:border-[#EF6B00]" /></div>
+              <div><label htmlFor="wz-jn" className="text-sm font-bold text-slate-500 mb-1.5 block">מספר משרה (Requisition)</label><input id="wz-jn" type="text" value={formData.jobNum} onChange={e=>setFormData({...formData, jobNum: e.target.value})} className="w-full p-3.5 border rounded-xl font-bold text-[#002649] bg-slate-50 outline-none focus:border-[#EF6B00]" /></div>
+              <div><label htmlFor="wz-ou" className="text-sm font-bold text-slate-500 mb-1.5 block">שיוך ארגוני (רמה 3)</label><input id="wz-ou" type="text" value={formData.orgUnit} onChange={e=>setFormData({...formData, orgUnit: e.target.value})} className="w-full p-3.5 border rounded-xl font-bold text-[#002649] bg-slate-50 outline-none focus:border-[#EF6B00]" /></div>
+              <div><label htmlFor="wz-mg" className="text-sm font-bold text-slate-500 mb-1.5 block">שם מנהל מגייס</label><input id="wz-mg" type="text" value={formData.manager} onChange={e=>setFormData({...formData, manager: e.target.value})} className="w-full p-3.5 border rounded-xl font-bold text-[#002649] bg-slate-50 outline-none focus:border-[#EF6B00]" /></div>
+            </div>
+          </div>
+        )}
+
+        {step === 2 && (
+          <div className="animate-in slide-in-from-right-4 w-full grid grid-cols-1 lg:grid-cols-2 gap-12">
+            
+            {/* עמודה ימנית: מועמדות וגיוון */}
+            <div className="bg-slate-50/50 rounded-3xl border border-slate-100 p-8 space-y-6">
+              <h3 className="text-xl font-black text-[#002649] border-b pb-3">הפניות וגיוון באוכלוסיה</h3>
+              
+              <div className="space-y-5">
+                <label htmlFor="wz-ref" className="flex items-center gap-3 p-5 border rounded-xl bg-white shadow-sm cursor-pointer transition-all hover:border-[#EF6B00]">
+                  <input id="wz-ref" type="checkbox" checked={formData.isReferral} onChange={e=>setFormData({...formData, isReferral: e.target.checked})} className="w-6 h-6 accent-[#002649]" />
+                  <span className="font-black text-lg text-[#002649]">נקלט במסגרת 'חבר מביא חבר'</span>
+                </label>
+                {formData.isReferral && (
+                  <div className="grid grid-cols-2 xl:grid-cols-4 gap-4 p-5 border border-blue-200 bg-blue-50/50 rounded-xl animate-in zoom-in-95">
+                    <div><label htmlFor="wz-rn" className="text-xs font-bold text-slate-500 mb-1.5 block">שם הממליץ</label><input id="wz-rn" type="text" value={formData.refName} onChange={e=>setFormData({...formData, refName: e.target.value})} className="w-full p-3 border rounded-xl bg-white shadow-sm" /></div>
+                    <div><label htmlFor="wz-re" className="text-xs font-bold text-slate-500 mb-1.5 block">מספר עובד</label><input id="wz-re" type="text" value={formData.refEmpNum} onChange={e=>setFormData({...formData, refEmpNum: e.target.value})} className="w-full p-3 border rounded-xl bg-white shadow-sm" /></div>
+                    <div><label htmlFor="wz-rb" className="text-xs font-bold text-slate-500 mb-1.5 block">סכום תגמול (₪)</label><input id="wz-rb" type="number" value={formData.refBonus} onChange={e=>setFormData({...formData, refBonus: e.target.value})} className="w-full p-3 border rounded-xl bg-white shadow-sm" /></div>
+                    <div><label htmlFor="wz-rd" className="text-xs font-bold text-slate-500 mb-1.5 block">תאריך תשלום יעד</label><input id="wz-rd" type="date" value={formData.refDate} onChange={e=>setFormData({...formData, refDate: e.target.value})} className="w-full p-3 border rounded-xl bg-white shadow-sm font-bold text-blue-600" /></div>
+                  </div>
+                )}
+
+                <div className="grid grid-cols-2 gap-5 pt-4">
+                  <label htmlFor="wz-dis" className="flex items-center gap-3 p-5 border rounded-xl bg-white shadow-sm cursor-pointer hover:border-slate-300">
+                    <input id="wz-dis" type="checkbox" checked={formData.hasDisability} onChange={e=>setFormData({...formData, hasDisability: e.target.checked})} className="w-6 h-6 accent-[#002649]" />
+                    <span className="font-bold text-[#002649]">עובד עם מוגבלות (גיוון)</span>
+                  </label>
+                  
+                  <label htmlFor="wz-fam" className="flex items-center gap-3 p-5 border rounded-xl bg-white shadow-sm cursor-pointer hover:border-slate-300">
+                    <input id="wz-fam" type="checkbox" checked={formData.hasFamilyTie} onChange={e=>setFormData({...formData, hasFamilyTie: e.target.checked})} className="w-6 h-6 accent-[#002649]" />
+                    <span className="font-bold text-[#002649]">קרבה משפחתית בארגון</span>
+                  </label>
+                </div>
+                {formData.hasFamilyTie && (
+                  <div className="grid grid-cols-2 gap-4 p-5 border border-orange-200 bg-orange-50/50 rounded-xl animate-in zoom-in-95">
+                    <div><label htmlFor="wz-rel" className="text-xs font-bold text-slate-500 mb-1.5 block">שם עובד.ת קרוב.ה</label><input id="wz-rel" type="text" value={formData.relativeName} onChange={e=>setFormData({...formData, relativeName: e.target.value})} className="w-full p-3 border rounded-xl bg-white shadow-sm" /></div>
+                    <div><label htmlFor="wz-tie" className="text-xs font-bold text-slate-500 mb-1.5 block">סוג קרבה</label><select id="wz-tie" value={formData.tieType} onChange={e=>setFormData({...formData, tieType: e.target.value})} className="w-full p-3 border rounded-xl bg-white shadow-sm"><option>ראשונה</option><option>שנייה</option></select></div>
+                  </div>
+                )}
               </div>
             </div>
-            <button onClick={() => {setStep(1); setFormData({name:"", role:"", idNum:"", date:""});}} className="mt-8 text-blue-600 font-bold text-sm hover:underline">קלוט עובד נוסף</button>
+
+            {/* עמודה שמאלית: זכאויות לוגיסטיות */}
+            <div className="bg-slate-50/50 rounded-3xl border border-slate-100 p-8 space-y-6">
+              <h3 className="text-xl font-black text-[#002649] border-b pb-3">זכאויות ולוגיסטיקה</h3>
+              
+              <div className="flex gap-8 p-5 bg-white shadow-sm rounded-xl border border-slate-200 mb-6">
+                <label htmlFor="wz-mob" className="flex items-center gap-2 cursor-pointer font-black text-[#002649]"><input id="wz-mob" type="checkbox" checked={formData.hasMobile} onChange={e=>setFormData({...formData, hasMobile: e.target.checked})} className="w-5 h-5 accent-[#EF6B00]"/> זכאות לנייד</label>
+                <label htmlFor="wz-cib" className="flex items-center gap-2 cursor-pointer font-black text-[#002649]"><input id="wz-cib" type="checkbox" checked={formData.hasCibus} onChange={e=>setFormData({...formData, hasCibus: e.target.checked})} className="w-5 h-5 accent-[#EF6B00]"/> כרטיס הסעדה</label>
+                <label htmlFor="wz-car" className="flex items-center gap-2 cursor-pointer font-black text-[#002649]"><input id="wz-car" type="checkbox" checked={formData.hasCar} onChange={e=>setFormData({...formData, hasCar: e.target.checked})} className="w-5 h-5 accent-[#EF6B00]"/> זכאות לרכב חברה</label>
+              </div>
+
+              {/* לוגיקת החניה והרכב (מופרדת כפי שביקשת) */}
+              <div className="grid grid-cols-2 gap-6 bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+                <div>
+                  <label htmlFor="wz-park" className="text-sm font-bold text-slate-500 mb-1.5 block">זכאות חניה</label>
+                  <select id="wz-park" value={formData.parkingType} onChange={e=>setFormData({...formData, parkingType: e.target.value})} disabled={formData.hasCar} className="w-full p-3.5 border rounded-xl font-bold text-[#002649] bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed">
+                    <option value="לא">ללא זכאות חניה</option>
+                    <option value="בזכאות">זכאות מלאה למקום קבוע</option>
+                    <option value="ללא זכאות">זכאות כניסה (על בסיס מקום פנוי)</option>
+                  </select>
+                  {formData.hasCar && <p className="text-[11px] text-orange-600 font-bold mt-2">* חניה מאושרת אוטומטית עקב זכאות לרכב חברה.</p>}
+                </div>
+                
+                {formData.parkingType !== "לא" && !formData.hasCar && (
+                  <div className="animate-in fade-in"><label htmlFor="wz-cn" className="text-sm font-bold text-slate-500 mb-1.5 block">מספר רכב אישי (לאישורי כניסה)</label><input id="wz-cn" type="text" value={formData.carNum} onChange={e=>setFormData({...formData, carNum: e.target.value})} className="w-full p-3.5 border rounded-xl font-bold text-[#002649]" placeholder="123-45-678" /></div>
+                )}
+              </div>
+
+              <div className="pt-4">
+                <label htmlFor="wz-ft" className="text-sm font-bold text-slate-500 mb-1.5 block">הערות לוגיסטיקה / שכר (מלל חופשי)</label>
+                <textarea id="wz-ft" value={formData.freeText} onChange={e=>setFormData({...formData, freeText: e.target.value})} className="w-full p-4 border rounded-xl font-medium text-slate-700 bg-white shadow-sm outline-none h-28" placeholder="הערות מיוחדות שיופיעו בתיק העובד..." />
+              </div>
+            </div>
           </div>
         )}
+
+        {step === 3 && (
+          <div className="animate-in slide-in-from-right-4 w-full max-w-4xl mx-auto">
+            <h3 className="text-2xl font-black text-[#002649] border-b pb-4 mb-6 flex items-center gap-3"><CheckSquare className="text-green-500" size={32}/> צ׳קליסט סגירת משרה חובה</h3>
+            <div className="bg-blue-50 border border-blue-200 p-5 rounded-2xl flex items-start gap-3 mb-8 shadow-sm">
+              <AlertCircle className="text-blue-500 shrink-0" size={24}/>
+              <p className="text-base text-blue-900 font-medium">כדי לשמור על דאטה נקי במערכות הפניקס, אנא ודאי שביצעת את הפעולות הבאות לפני שיגור הקליטה הסופית.</p>
+            </div>
+
+            <div className="space-y-4">
+              {tasks.map(task => (
+                <label key={task.id} htmlFor={`cl-${task.id}`} className={`flex items-center gap-5 p-6 rounded-2xl border-2 cursor-pointer transition-all ${task.done ? 'bg-green-50 border-green-300' : 'bg-white border-slate-200 hover:border-blue-300 shadow-sm'}`}>
+                  <input id={`cl-${task.id}`} type="checkbox" checked={task.done} onChange={() => setTasks(prev => prev.map(t => t.id === task.id ? {...t, done: !t.done} : t))} className="w-7 h-7 accent-green-600" />
+                  <span className={`text-xl font-bold ${task.done ? 'text-green-700 line-through opacity-60' : 'text-[#002649]'}`}>{task.text}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {step === 4 && (
+          <div className="animate-in slide-in-from-right-4 w-full max-w-5xl mx-auto">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-12">
+              
+              <div className="space-y-8">
+                <h3 className="text-2xl font-black text-[#002649] border-b pb-3">מסמכים מצורפים</h3>
+                <div>
+                  <h4 className="font-bold text-[#002649] text-lg flex items-center gap-2 mb-3">קורות חיים <span className="text-red-500 text-xs bg-red-50 px-2 py-1 rounded border border-red-100">חובת צירוף</span></h4>
+                  <label className={`border-2 border-dashed rounded-3xl p-12 flex flex-col items-center justify-center cursor-pointer transition-all ${cvFile ? 'border-green-500 bg-green-50' : 'border-slate-300 hover:border-blue-500 bg-slate-50'}`}>
+                    <input type="file" className="hidden" accept=".pdf,.doc,.docx" onChange={e => { if(e.target.files?.[0]) setCvFile(e.target.files[0]); }} />
+                    <UploadCloud size={48} className={cvFile ? 'text-green-600 mb-4' : 'text-blue-500 mb-4'}/>
+                    <span className="font-black text-lg text-[#002649] text-center">{cvFile ? cvFile.name : 'לחצי כאן להעלאת מסמך קורות חיים'}</span>
+                    {cvFile && <span className="text-base text-green-600 mt-2 font-black">✓ המסמך נקלט במערכת</span>}
+                  </label>
+                </div>
+
+                <div>
+                  <h4 className="font-bold text-slate-600 flex items-center gap-2 mb-3 text-base">מסמכים נלווים (המלצות / חוזה)</h4>
+                  <label className="border-2 border-dashed border-slate-200 rounded-2xl p-6 flex flex-col items-center justify-center cursor-pointer hover:bg-slate-50 transition-colors bg-white">
+                    <input type="file" className="hidden" multiple onChange={e => { if(e.target.files) setOtherFiles(prev => [...prev, ...Array.from(e.target.files!)]); }} />
+                    <span className="text-base font-bold text-slate-500 flex items-center gap-2"><PlusCircle size={20}/> הוספת קבצים נוספים...</span>
+                  </label>
+                  {otherFiles.length > 0 && (
+                    <div className="mt-4 flex flex-wrap gap-2">
+                      {otherFiles.map((f) => (
+                        <div key={f.name} className="bg-slate-100 px-4 py-2 rounded-xl text-sm font-bold text-[#002649] flex items-center gap-2 border border-slate-200"><FileIcon size={16}/> {f.name}</div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="bg-[#002649] p-10 rounded-3xl text-white shadow-2xl flex flex-col justify-center border-4 border-blue-900/50">
+                <ShieldCheck size={64} className="text-[#EF6B00] mb-6" />
+                <h4 className="font-black text-3xl mb-4">מוכנה לשיגור הקליטה?</h4>
+                <p className="text-blue-200 text-base mb-8 leading-relaxed">בלחיצה על שיגור, המערכת תבצע את הפעולות הבאות ברקע ללא צורך במעורבות נוספת:</p>
+                <ul className="text-base space-y-4 text-white font-medium">
+                  <li className="flex items-center gap-3"><div className="w-2 h-2 rounded-full bg-[#EF6B00]" /> העובד יעבור אוטומטית לטבלת "ממתינים לקליטה".</li>
+                  <li className="flex items-center gap-3"><div className="w-2 h-2 rounded-full bg-[#EF6B00]" /> לוגים ישלחו למחלקות (HRO, לוגיסטיקה, גיוון).</li>
+                  {formData.isReferral && <li className="flex items-center gap-3"><div className="w-2 h-2 rounded-full bg-green-400 shadow-[0_0_8px_rgba(74,222,128,0.8)]" /> טריגר תשלום (חמ"ח) ינעל מול השכר ל-{formData.refDate}.</li>}
+                </ul>
+              </div>
+
+            </div>
+          </div>
+        )}
+
+        {step === 5 && (
+          <div className="w-full flex flex-col items-center justify-center text-center py-20 animate-in zoom-in-95">
+            <div className="w-32 h-32 bg-green-100 text-green-600 rounded-full flex items-center justify-center mb-8 shadow-inner ring-[12px] ring-green-50"><CheckCircle2 size={64} /></div>
+            <h2 className="text-5xl font-black text-[#002649] mb-4">הקליטה שוגרה בהצלחה!</h2>
+            <p className="text-slate-500 mb-12 max-w-2xl text-xl leading-relaxed">תיק העובד עבור {formData.firstName} {formData.lastName} הועבר למערכות התפעול. משימות הצ׳קליסט נרשמו ביומן, והתראות נשלחו למחלקות.</p>
+            <div className="flex gap-4">
+              <button onClick={() => {setStep(1); setCvFile(null); setOtherFiles([]);}} className="bg-[#EF6B00] text-white px-10 py-5 rounded-2xl font-black text-xl shadow-xl hover:bg-[#d65a00] transition-colors">התחל קליטת עובד חדש</button>
+            </div>
+          </div>
+        )}
+
       </div>
+      
+      {step < 5 && (
+        <div className="border-t border-slate-200 bg-slate-50 p-8 rounded-b-3xl flex justify-between items-center w-full mt-auto">
+          <button onClick={() => setStep(step - 1)} disabled={step === 1 || isSaving} className="px-8 py-4 rounded-xl font-bold text-slate-500 hover:bg-slate-200 transition-colors disabled:opacity-30 flex items-center gap-2 text-lg">
+            <ChevronRight size={20}/> חזרה
+          </button>
+          
+          {step < 4 ? (
+            <button onClick={nextStep} className="bg-[#002649] text-white px-14 py-4 rounded-xl font-black text-lg shadow-xl hover:bg-blue-800 transition-colors flex items-center gap-3">
+              לשלב הבא <ChevronLeft size={20}/>
+            </button>
+          ) : (
+            <button onClick={handleLaunch} disabled={isSaving || !cvFile} className="bg-[#EF6B00] text-white px-14 py-4 rounded-xl font-black text-lg shadow-xl hover:bg-[#d65a00] transition-colors flex items-center gap-3 disabled:opacity-50 disabled:cursor-not-allowed">
+              {isSaving ? <span className="animate-pulse">משגר קליטה למערכות...</span> : 'אישור ושיגור קליטה'} <Mail size={20}/>
+            </button>
+          )}
+        </div>
+      )}
+
     </div>
   );
 }
@@ -493,7 +762,7 @@ function ReportsGenerator() {
   };
 
   return (
-    <div className="flex flex-col h-full bg-slate-50/30 p-6">
+    <div className="flex flex-col h-full bg-slate-50/30 p-6 rounded-b-3xl">
       <div className="max-w-xl mx-auto mt-10 bg-white p-8 rounded-3xl border border-slate-200 shadow-sm space-y-8">
         <div>
           <h2 className="text-xl font-black text-[#002649] flex items-center gap-2 mb-2"><FileText className="text-blue-500"/> מחולל דוחות (PDF)</h2>
@@ -511,5 +780,5 @@ function ReportsGenerator() {
 // Helpers
 interface ComingSoonProps { title: string; icon: React.ReactNode }
 function ComingSoon({ title, icon }: Readonly<ComingSoonProps>) {
-  return ( <div className="h-full flex flex-col items-center justify-center text-slate-400 p-6 text-center animate-in fade-in zoom-in-95"><div className="mb-6">{icon}</div><h3 className="font-black text-2xl text-slate-300 mb-2">{title}</h3><p className="text-sm font-medium max-w-md">מודול בבנייה</p></div> );
+  return ( <div className="py-32 flex flex-col items-center justify-center text-slate-400 text-center animate-in fade-in zoom-in-95 bg-slate-50/50 rounded-b-3xl"><div className="mb-6">{icon}</div><h3 className="font-black text-2xl text-slate-300 mb-2">{title}</h3><p className="text-sm font-medium max-w-md">מודול בבנייה</p></div> );
 }
