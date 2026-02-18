@@ -77,9 +77,11 @@ export default function CandidatesPage() {
       return false; // pipeline handled separately
     })
     .filter(r => r.name.includes(searchTerm) || r.role.includes(searchTerm) || r.department.includes(searchTerm) || r.id_num.includes(searchTerm))
-    .sort((a, b) => {
-      if (!sortConfig || !sortConfig.key) return 0;
-      const key = sortConfig.key as keyof typeof a;
+    .sort((a: any, b: any) => {
+      if (!sortConfig || !sortConfig.key) {
+        return 0;
+      }
+      const key = sortConfig.key;
       const direction = sortConfig.direction;
       const valA = a[key] ?? "";
       const valB = b[key] ?? "";
