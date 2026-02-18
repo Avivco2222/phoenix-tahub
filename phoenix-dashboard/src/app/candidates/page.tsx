@@ -78,11 +78,13 @@ export default function CandidatesPage() {
     })
     .filter(r => r.name.includes(searchTerm) || r.role.includes(searchTerm) || r.department.includes(searchTerm) || r.id_num.includes(searchTerm))
     .sort((a, b) => {
-      if (!sortConfig) return 0;
+      if (!sortConfig || !sortConfig.key) return 0;
       const key = sortConfig.key as keyof typeof a;
       const direction = sortConfig.direction;
-      if (a[key] < b[key]) return direction === 'asc' ? -1 : 1;
-      if (a[key] > b[key]) return direction === 'asc' ? 1 : -1;
+      const valA = a[key] ?? "";
+      const valB = b[key] ?? "";
+      if (valA < valB) return direction === 'asc' ? -1 : 1;
+      if (valA > valB) return direction === 'asc' ? 1 : -1;
       return 0;
     });
 
