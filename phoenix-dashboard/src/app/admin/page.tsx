@@ -275,7 +275,7 @@ export default function AdminCommandCenter() {
                   <div className="flex items-center gap-6">
                     <div className="flex items-center gap-2 w-48"><div className="w-2 h-2 rounded-full bg-green-500" /><span className="font-bold text-[#002649] text-sm">{rule.col_name}</span></div>
                     <div className="text-xs font-bold text-slate-500 bg-white px-3 py-1.5 rounded-lg border border-slate-100 shadow-sm w-48 text-center">{rule.condition}</div>
-                    <div className="text-slate-400"><XAxis size={14}/></div>
+                    <div className="text-slate-400 text-lg">➔</div>
                     <div className="text-sm font-black text-[#EF6B00] bg-orange-50 px-3 py-1.5 rounded-lg">{rule.action}</div>
                   </div>
                   <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
