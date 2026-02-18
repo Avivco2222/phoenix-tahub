@@ -5,6 +5,7 @@ import { LayoutDashboard, Users, Settings, Search, PieChart, Brain, BadgeDollarS
 import Link from "next/link"; // לניווט מהיר
 import { NotificationProvider } from "@/context/NotificationContext";
 import { BellDropdown } from "@/components/BellDropdown";
+import SessionGuard from "@/components/SessionGuard";
 
 // הגדרת הפונט
 const heebo = Heebo({ 
@@ -27,6 +28,7 @@ export default function RootLayout({
     <html lang="he" dir="rtl">
       <body className={`${heebo.className} flex h-screen overflow-hidden bg-[#F8FAFC]`}>
         <NotificationProvider>
+          <SessionGuard />
           {/* === SIDEBAR === */}
           <aside className="w-72 bg-white border-l border-slate-200 flex flex-col shadow-sm z-50">
             <div className="h-24 flex flex-col justify-center px-8 border-b border-slate-100">
