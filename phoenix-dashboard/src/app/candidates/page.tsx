@@ -1,11 +1,11 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import { 
   Users, Search, Briefcase, Plus, UserCheck, 
   Clock, XCircle, CheckCircle2, Edit3, Trash2,
-  Lock, CheckSquare, Save, Settings, AlertTriangle,
-  Car, Smartphone, Coffee, Download, Send, UserMinus, UserCheck2
+  Lock, CheckSquare, Save, Settings,
+  Car, Smartphone, Coffee, Download, Send, UserMinus, UserCheck2, Loader2
 } from "lucide-react";
 
 // --- Types ---
@@ -30,13 +30,22 @@ interface OnboardingRecord {
   created_at: string;
 }
 
+const MOCK_DATA: OnboardingRecord[] = [
+  { id: "1", name: "דניאל כהן", id_num: "034567891", role: "מפתח Backend", department: "חטיבת טכנולוגיות", manager: "אביב", start_date: "2026-03-01", has_car: false, parking_type: "בזכאות", car_num: "123-45-678", has_mobile: true, has_cibus: true, is_referral: true, referral_name: "ישראל ישראלי", referral_id: "12345", diversity: "", status: "pending", created_at: "2026-02-18" },
+  { id: "2", name: "מיכל אהרוני", id_num: "204958321", role: "מנהלת פרויקטים", department: "מטה", manager: "שלי", start_date: "2026-02-25", has_car: true, parking_type: "בזכאות", car_num: "", has_mobile: true, has_cibus: true, is_referral: false, referral_name: "", referral_id: "", diversity: "עמותת שווים", status: "pending", created_at: "2026-02-15" },
+  { id: "3", name: "ירון לוי", id_num: "023459812", role: "אנליסט נתונים", department: "פיננסים", manager: "מרסל", start_date: "2026-01-01", has_car: false, parking_type: "לא", car_num: "", has_mobile: false, has_cibus: true, is_referral: false, referral_name: "", referral_id: "", diversity: "", status: "completed", created_at: "2025-11-10" },
+  { id: "4", name: "שירן גבאי", id_num: "305847129", role: "מגייסת בכירה", department: "משאבי אנוש", manager: "אביב", start_date: "2026-02-10", has_car: false, parking_type: "ללא זכאות", car_num: "888-22-333", has_mobile: true, has_cibus: true, is_referral: true, referral_name: "בת-אל", referral_id: "99988", diversity: "קרבה משפחתית", status: "completed", created_at: "2026-01-20" },
+  { id: "5", name: "רועי פלד", id_num: "049384722", role: "איש סיסטם", department: "חטיבת טכנולוגיות", manager: "נדב", start_date: "2025-08-15", has_car: false, parking_type: "בזכאות", car_num: "55-666-77", has_mobile: true, has_cibus: false, is_referral: false, referral_name: "", referral_id: "", diversity: "", status: "left_company", created_at: "2025-07-01" },
+  { id: "6", name: "נועה כרמל", id_num: "228374611", role: "רפרנטית שירות", department: "שירות לקוחות", manager: "דנה", start_date: "2026-03-15", has_car: false, parking_type: "לא", car_num: "", has_mobile: false, has_cibus: true, is_referral: false, referral_name: "", referral_id: "", diversity: "חברה ערבית", status: "pending", created_at: "2026-02-19" }
+];
+
 export default function CandidatesPage() {
   // --- Global States ---
   const [activeTab, setActiveTab] = useState<"pipeline" | "preboarding" | "active" | "archive">("preboarding");
   const [userRole, setUserRole] = useState<"recruiter" | "admin">("admin"); 
   
   // --- Data States ---
-  const [onboardings, setOnboardings] = useState<OnboardingRecord[]>([]);
+  const [onboardings, setOnboardings] = useState<OnboardingRecord[]>(MOCK_DATA);
   const [searchTerm, setSearchTerm] = useState("");
   const [sortConfig, setSortConfig] = useState<{ key: keyof OnboardingRecord, direction: 'asc' | 'desc' }>({ key: 'start_date', direction: 'asc' });
 
@@ -55,23 +64,6 @@ export default function CandidatesPage() {
   ]);
   const [isEditingTasks, setIsEditingTasks] = useState(false);
 
-  // --- Fetch / Load Mock Data ---
-  useEffect(() => {
-    // לצורך הדגמה, אנחנו טוענים נתוני מוקאפ מיד כדי שתוכל לראות איך הכל נראה
-    loadMockData();
-  }, []);
-
-  const loadMockData = () => {
-    setOnboardings([
-      { id: "1", name: "דניאל כהן", id_num: "034567891", role: "מפתח Backend", department: "חטיבת טכנולוגיות", manager: "אביב", start_date: "2026-03-01", has_car: false, parking_type: "בזכאות", car_num: "123-45-678", has_mobile: true, has_cibus: true, is_referral: true, referral_name: "ישראל ישראלי", referral_id: "12345", diversity: "", status: "pending", created_at: "2026-02-18" },
-      { id: "2", name: "מיכל אהרוני", id_num: "204958321", role: "מנהלת פרויקטים", department: "מטה", manager: "שלי", start_date: "2026-02-25", has_car: true, parking_type: "בזכאות", car_num: "", has_mobile: true, has_cibus: true, is_referral: false, referral_name: "", referral_id: "", diversity: "עמותת שווים", status: "pending", created_at: "2026-02-15" },
-      { id: "3", name: "ירון לוי", id_num: "023459812", role: "אנליסט נתונים", department: "פיננסים", manager: "מרסל", start_date: "2026-01-01", has_car: false, parking_type: "לא", car_num: "", has_mobile: false, has_cibus: true, is_referral: false, referral_name: "", referral_id: "", diversity: "", status: "completed", created_at: "2025-11-10" },
-      { id: "4", name: "שירן גבאי", id_num: "305847129", role: "מגייסת בכירה", department: "משאבי אנוש", manager: "אביב", start_date: "2026-02-10", has_car: false, parking_type: "ללא זכאות", car_num: "888-22-333", has_mobile: true, has_cibus: true, is_referral: true, referral_name: "בת-אל", referral_id: "99988", diversity: "קרבה משפחתית", status: "completed", created_at: "2026-01-20" },
-      { id: "5", name: "רועי פלד", id_num: "049384722", role: "איש סיסטם", department: "חטיבת טכנולוגיות", manager: "נדב", start_date: "2025-08-15", has_car: false, parking_type: "בזכאות", car_num: "55-666-77", has_mobile: true, has_cibus: false, is_referral: false, referral_name: "", referral_id: "", diversity: "", status: "left_company", created_at: "2025-07-01" },
-      { id: "6", name: "נועה כרמל", id_num: "228374611", role: "רפרנטית שירות", department: "שירות לקוחות", manager: "דנה", start_date: "2026-03-15", has_car: false, parking_type: "לא", car_num: "", has_mobile: false, has_cibus: true, is_referral: false, referral_name: "", referral_id: "", diversity: "חברה ערבית", status: "pending", created_at: "2026-02-19" }
-    ]);
-  };
-
   // --- Sorting & Filtering ---
   const handleSort = (key: keyof OnboardingRecord) => {
     setSortConfig({ key, direction: sortConfig.key === key && sortConfig.direction === 'asc' ? 'desc' : 'asc' });
@@ -86,8 +78,10 @@ export default function CandidatesPage() {
     })
     .filter(r => r.name.includes(searchTerm) || r.role.includes(searchTerm) || r.department.includes(searchTerm) || r.id_num.includes(searchTerm))
     .sort((a, b) => {
-      if (a[sortConfig.key] < b[sortConfig.key]) return sortConfig.direction === 'asc' ? -1 : 1;
-      if (a[sortConfig.key] > b[sortConfig.key]) return sortConfig.direction === 'asc' ? 1 : -1;
+      const valA = a[sortConfig.key] ?? '';
+      const valB = b[sortConfig.key] ?? '';
+      if (valA < valB) return sortConfig.direction === 'asc' ? -1 : 1;
+      if (valA > valB) return sortConfig.direction === 'asc' ? 1 : -1;
       return 0;
     });
 
@@ -128,7 +122,7 @@ export default function CandidatesPage() {
         
         <div className="flex items-center gap-3 bg-slate-100 p-2 rounded-xl border border-slate-200">
           <span className="text-xs font-bold text-slate-500">תצוגה כ:</span>
-          <select value={userRole} onChange={e => {setUserRole(e.target.value as any); if(e.target.value==='recruiter' && activeTab==='archive') setActiveTab('preboarding');}} className="bg-white border border-slate-200 rounded-lg text-sm font-bold text-[#002649] p-1.5 outline-none cursor-pointer">
+          <select value={userRole} onChange={e => {setUserRole(e.target.value as "recruiter" | "admin"); if(e.target.value==='recruiter' && activeTab==='archive') setActiveTab('preboarding');}} className="bg-white border border-slate-200 rounded-lg text-sm font-bold text-[#002649] p-1.5 outline-none cursor-pointer">
             <option value="recruiter">מגייסת (Recruiter)</option>
             <option value="admin">מנהלת מערכת (Admin)</option>
           </select>
@@ -217,7 +211,7 @@ export default function CandidatesPage() {
                         {!record.has_car && record.parking_type !== 'לא' && record.parking_type && <span className="bg-slate-100 text-slate-700 border border-slate-200 px-2 py-1 rounded text-[10px] font-bold">חניה: {record.parking_type} {record.car_num ? `(${record.car_num})` : ''}</span>}
                         {record.has_mobile && <span className="bg-emerald-50 text-emerald-700 border border-emerald-200 px-2 py-1 rounded text-[10px] font-bold flex items-center gap-1"><Smartphone size={12}/> נייד</span>}
                         {record.has_cibus && <span className="bg-orange-50 text-orange-700 border border-orange-200 px-2 py-1 rounded text-[10px] font-bold flex items-center gap-1"><Coffee size={12}/> סיבוס</span>}
-                        {record.is_referral && <span className="bg-indigo-50 text-indigo-700 border border-indigo-200 px-2 py-1 rounded text-[10px] font-bold">חמ"ח: {record.referral_name}</span>}
+                        {record.is_referral && <span className="bg-indigo-50 text-indigo-700 border border-indigo-200 px-2 py-1 rounded text-[10px] font-bold">חמ&quot;ח: {record.referral_name}</span>}
                         {record.diversity && <span className="bg-purple-50 text-purple-700 border border-purple-200 px-2 py-1 rounded text-[10px] font-bold">{record.diversity}</span>}
                       </div>
                     </td>
@@ -258,9 +252,9 @@ export default function CandidatesPage() {
         <OnboardingFormModal 
           onClose={() => setShowForm(false)} 
           existingRecord={editingRecord}
-          onSaveSuccess={(name: string) => {
+          onSaveSuccess={(name) => {
              setShowForm(false);
-             if (!editingRecord) setShowChecklist(name); 
+             if (!editingRecord && name) setShowChecklist(name); 
           }}
         />
       )}
@@ -274,14 +268,14 @@ export default function CandidatesPage() {
             <div className="bg-[#002649] text-white p-6 text-center relative">
               <div className="w-16 h-16 bg-green-500 text-white rounded-full flex items-center justify-center mx-auto mb-4 border-4 border-[#002649] shadow-lg"><CheckCircle2 size={32}/></div>
               <h2 className="text-2xl font-black">הקליטה שוגרה בהצלחה!</h2>
-              <p className="text-blue-200 mt-1">מיילים אוטומטיים נשלחו ל-HRO ולקב"ט עבור {showChecklist}.</p>
+              <p className="text-blue-200 mt-1">מיילים אוטומטיים נשלחו ל-HRO ולקב&quot;ט עבור {showChecklist}.</p>
               <button onClick={() => setShowChecklist(null)} className="absolute top-4 right-4 text-white/50 hover:text-white"><XCircle size={24}/></button>
             </div>
             
             <div className="p-8">
               <div className="flex justify-between items-end mb-6">
                  <div>
-                   <h3 className="font-black text-lg text-[#002649] flex items-center gap-2"><CheckSquare className="text-[#EF6B00]"/> צ'קליסט סגירת משרה</h3>
+                   <h3 className="font-black text-lg text-[#002649] flex items-center gap-2"><CheckSquare className="text-[#EF6B00]"/> צ&apos;קליסט סגירת משרה</h3>
                    <p className="text-xs text-slate-500 font-bold mt-1">חובה להשלים את הפעולות הבאות כדי למנוע תקלות.</p>
                  </div>
                  <button onClick={() => setIsEditingTasks(!isEditingTasks)} className="text-blue-600 hover:text-blue-800 text-xs font-bold flex items-center gap-1 bg-blue-50 px-3 py-1.5 rounded-lg"><Settings size={14}/> {isEditingTasks ? 'סיים עריכה' : 'ערוך משימות'}</button>
@@ -319,8 +313,10 @@ export default function CandidatesPage() {
 // ==========================================
 // SUB-COMPONENT: The Onboarding Edit Form
 // ==========================================
-function OnboardingFormModal({ onClose, existingRecord, onSaveSuccess }: any) {
-  const [formData, setFormData] = useState<any>(existingRecord || {
+interface FormModalProps { onClose: () => void; existingRecord: OnboardingRecord | null; onSaveSuccess: (name: string | undefined) => void }
+
+function OnboardingFormModal({ onClose, existingRecord, onSaveSuccess }: Readonly<FormModalProps>) {
+  const [formData, setFormData] = useState<Partial<OnboardingRecord>>(existingRecord || {
     name: "", id_num: "", role: "", department: "", manager: "", start_date: "",
     has_car: false, parking_type: "לא", car_num: "",
     has_mobile: false, has_cibus: false,
@@ -329,10 +325,9 @@ function OnboardingFormModal({ onClose, existingRecord, onSaveSuccess }: any) {
   const [isSaving, setIsSaving] = useState(false);
   const [sendUpdateNotification, setSendUpdateNotification] = useState(false); // הצ'קבוקס החדש לעדכונים
 
-  // חסימת חניה אם יש רכב
-  useEffect(() => {
-    if (formData.has_car) setFormData((prev: any) => ({ ...prev, parking_type: "בזכאות", car_num: "" }));
-  }, [formData.has_car]);
+  const handleCarToggle = (checked: boolean) => {
+    setFormData(prev => ({ ...prev, has_car: checked, ...(checked ? { parking_type: "בזכאות", car_num: "" } : {}) }));
+  };
 
   const handleSave = async () => {
     if (!formData.name || !formData.role) return alert("חובה להזין לפחות שם ותפקיד");
@@ -379,7 +374,7 @@ function OnboardingFormModal({ onClose, existingRecord, onSaveSuccess }: any) {
               <div className="flex gap-4 mb-4">
                 <label className="flex items-center gap-2 cursor-pointer font-bold text-sm text-[#002649]"><input type="checkbox" checked={formData.has_mobile} onChange={e=>setFormData({...formData, has_mobile: e.target.checked})} className="w-4 h-4 accent-[#EF6B00]"/> נייד</label>
                 <label className="flex items-center gap-2 cursor-pointer font-bold text-sm text-[#002649]"><input type="checkbox" checked={formData.has_cibus} onChange={e=>setFormData({...formData, has_cibus: e.target.checked})} className="w-4 h-4 accent-[#EF6B00]"/> סיבוס</label>
-                <label className="flex items-center gap-2 cursor-pointer font-bold text-sm text-[#002649]"><input type="checkbox" checked={formData.has_car} onChange={e=>setFormData({...formData, has_car: e.target.checked})} className="w-4 h-4 accent-[#EF6B00]"/> רכב</label>
+                <label className="flex items-center gap-2 cursor-pointer font-bold text-sm text-[#002649]"><input type="checkbox" checked={formData.has_car} onChange={e=>handleCarToggle(e.target.checked)} className="w-4 h-4 accent-[#EF6B00]"/> רכב</label>
               </div>
               <div>
                 <label className="text-xs font-bold text-slate-500 mb-1 block">זכאות חניה</label>
@@ -425,7 +420,7 @@ function OnboardingFormModal({ onClose, existingRecord, onSaveSuccess }: any) {
           {existingRecord ? (
              <label className="flex items-center gap-2 cursor-pointer bg-blue-50 px-4 py-2 rounded-lg border border-blue-100 text-blue-800 font-bold text-sm hover:bg-blue-100 transition-colors">
                <input type="checkbox" checked={sendUpdateNotification} onChange={e=>setSendUpdateNotification(e.target.checked)} className="w-4 h-4 accent-blue-600" />
-               <Send size={16}/> שלח עדכונים לשותפים (HRO/קב"ט)
+               <Send size={16}/> שלח עדכונים לשותפים (HRO/קב&quot;ט)
              </label>
           ) : <div></div>}
           
