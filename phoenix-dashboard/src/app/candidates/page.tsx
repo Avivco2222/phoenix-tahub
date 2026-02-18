@@ -69,24 +69,28 @@ export default function CandidatesPage() {
     setSortConfig({ key, direction: sortConfig.key === key && sortConfig.direction === 'asc' ? 'desc' : 'asc' });
   };
 
+  const currentKey = sortConfig?.key;
+  const currentDir = sortConfig?.direction;
+
   const filteredAndSortedData = [...onboardings]
     .filter(r => {
       if (activeTab === 'preboarding') return r.status === 'pending';
       if (activeTab === 'active') return r.status === 'completed' || r.status === 'left_company';
-      if (activeTab === 'archive') return true; // הכל מהכל
-      return false; // pipeline handled separately
+      if (activeTab === 'archive') return true;
+      return false;
     })
-    .filter(r => r.name.includes(searchTerm) || r.role.includes(searchTerm) || r.department.includes(searchTerm) || r.id_num.includes(searchTerm))
-    .sort((a: any, b: any) => {
-      if (!sortConfig || !sortConfig.key) {
-        return 0;
-      }
-      const key = sortConfig.key;
-      const direction = sortConfig.direction;
-      const valA = a[key] ?? "";
-      const valB = b[key] ?? "";
-      if (valA < valB) return direction === 'asc' ? -1 : 1;
-      if (valA > valB) return direction === 'asc' ? 1 : -1;
+    .filter(r => 
+      r.name.includes(searchTerm) || 
+      r.role.includes(searchTerm) || 
+      r.department.includes(searchTerm) || 
+      r.id_num.includes(searchTerm)
+    )
+    .sort((a, b) => {
+      if (!currentKey || !currentDir) return 0;
+      const valA = a[currentKey as keyof typeof a] ?? "";
+      const valB = b[currentKey as keyof typeof b] ?? "";
+      if (valA < valB) return currentDir === 'asc' ? -1 : 1;
+      if (valA > valB) return currentDir === 'asc' ? 1 : -1;
       return 0;
     });
 
