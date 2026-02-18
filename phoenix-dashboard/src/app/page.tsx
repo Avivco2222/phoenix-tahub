@@ -8,7 +8,7 @@ import {
   ThumbsUp, Send, Plus, Trash2, Info, 
   PieChart, Percent, UserMinus, ArrowDownToLine, Zap,
   ChevronDown, ChevronUp, ArrowUpDown, BadgeDollarSign,
-  ArrowRightLeft, Linkedin, RotateCcw
+  ArrowRightLeft, Linkedin, RotateCcw, ArrowRight
 } from "lucide-react";
 import { AreaChart, Area, XAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, Legend, PieChart as RechartsPie, Pie, Cell } from 'recharts';
 
