@@ -179,7 +179,7 @@ export default function CandidatesPage() {
                         <span className={`font-black ${c.days_in_process > 40 ? 'text-red-600 bg-red-50 px-2 py-0.5 rounded-md border border-red-100' : 'text-[#002649]'}`}>
                           {c.days_in_process}
                         </span>
-                        {c.days_in_process > 40 && <Clock size={14} className="text-red-500 animate-pulse" title="מועמד חורג מ-SLA" />}
+                        {c.days_in_process > 40 && <span title="מועמד חורג מ-SLA"><Clock size={14} className="text-red-500 animate-pulse" /></span>}
                       </div>
                     </td>
                     <td className="px-6 py-4 text-slate-500 text-xs font-bold">{c.department}</td>
