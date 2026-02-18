@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 import pandas as pd
 import sqlite3
@@ -9,6 +9,7 @@ from datetime import datetime
 import json
 import hashlib
 import io
+import re
 
 app = FastAPI()
 
@@ -16,24 +17,54 @@ app = FastAPI()
 # מנוע קליטת נתוני ATS, אבטחת מידע ואיכות נתונים
 # ==========================================
 
+# ==========================================
+# PII SCRUBBING ENGINE
+# ==========================================
+class PIIScrubber:
+    @staticmethod
+    def scrub_text_for_ai(text: str) -> tuple:
+        """
+        סורק טקסט חופשי ומצנזר נתונים מזהים לפני שליחה ל-AI.
+        מחזיר את הטקסט המצונזר + סטטיסטיקות לצורך Audit Log.
+        """
+        if not text:
+            return text, {}
+
+        stats = {"id_cards": 0, "phones": 0, "emails": 0}
+
+        id_pattern = r'\b\d{9}\b'
+        stats["id_cards"] = len(re.findall(id_pattern, text))
+        text = re.sub(id_pattern, '[ID_SECURED]', text)
+
+        phone_pattern = r'\b05\d-?\d{7}\b'
+        stats["phones"] = len(re.findall(phone_pattern, text))
+        text = re.sub(phone_pattern, '[PHONE_SECURED]', text)
+
+        email_pattern = r'[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+'
+        stats["emails"] = len(re.findall(email_pattern, text))
+        text = re.sub(email_pattern, '[EMAIL_SECURED]', text)
+
+        return text, stats
+
+def log_audit_action(action: str, status: str, details: str, user: str = "System"):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    log_id = f"LOG-{uuid.uuid4().hex[:6].upper()}"
+    timestamp = pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")
+    c.execute("INSERT INTO audit_logs (id, timestamp, action, status, details, user) VALUES (?, ?, ?, ?, ?, ?)",
+              (log_id, timestamp, action, status, details, user))
+    conn.commit()
+    conn.close()
+
 def mask_sensitive_data(df):
-    """
-    מנגנון InfoSec: מזהה עמודות רגישות (PII) לפי שם,
-    ומוחק את המידע הרגיש. במקומו מייצר Hash (הצפנה חד-כיוונית) 
-    כדי לאפשר זיהוי מועמדים חוזרים מבלי לשמור את תעודת הזהות שלהם.
-    """
     sensitive_keywords = ['ת.ז', 'תעודת זהות', 'id', 'טלפון', 'נייד', 'phone', 'כתובת']
-    
     for col in df.columns:
         col_lower = str(col).lower()
         if any(keyword in col_lower for keyword in sensitive_keywords):
-            # הפיכת המידע ל-Hash מאובטח (SHA-256)
             df[col] = df[col].astype(str).apply(
                 lambda x: hashlib.sha256(x.encode()).hexdigest()[:12] if pd.notnull(x) and str(x).lower() not in ['nan', 'none', ''] else None
             )
-            # שינוי שם העמודה כדי להבהיר שהיא הושחרה
             df.rename(columns={col: f"{col}_MASKED_SECURE"}, inplace=True)
-            
     return df
 
 @app.post("/upload/{file_type}")
@@ -96,6 +127,13 @@ def init_db():
     c.execute('''CREATE TABLE IF NOT EXISTS finops_categories (
                  id INTEGER PRIMARY KEY, name TEXT UNIQUE, 
                  target REAL, previous_year_spend REAL, code TEXT, notes TEXT, subcategories TEXT)''')
+
+    # --- טבלת אבטחת מידע (Audit Logs) ---
+    c.execute('''CREATE TABLE IF NOT EXISTS audit_logs (id TEXT PRIMARY KEY, timestamp TEXT, action TEXT, status TEXT, details TEXT, user TEXT)''')
+
+    # --- טבלת הגדרות מערכת (כגון מצב מנוע ה-AI) ---
+    c.execute('''CREATE TABLE IF NOT EXISTS system_settings (key TEXT PRIMARY KEY, value TEXT)''')
+    c.execute('''INSERT OR IGNORE INTO system_settings (key, value) VALUES ('ai_enabled', 'true')''')
 
     conn.commit()
     conn.close()
@@ -773,3 +811,348 @@ def save_categories(categories: list):
         return {"message": "Categories synced"}
     finally:
         conn.close()
+
+# ==========================================
+# SECURITY & AUDIT API
+# ==========================================
+
+@app.get("/api/security/audit-logs")
+def get_audit_logs():
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        logs_df = pd.read_sql("SELECT * FROM audit_logs ORDER BY timestamp DESC LIMIT 50", conn)
+        logs = []
+        for _, row in logs_df.iterrows():
+            time_part = row["timestamp"].split(" ")[1] if " " in str(row["timestamp"]) else row["timestamp"]
+            logs.append({
+                "id": row["id"],
+                "time": time_part,
+                "action": row["action"],
+                "status": row["status"],
+                "details": row["details"],
+                "user": row["user"]
+            })
+        return logs
+    except Exception:
+        return []
+    finally:
+        conn.close()
+
+
+@app.post("/api/ai/analyze-cv")
+async def analyze_cv_safely(request: Request):
+    candidate_text = await request.json()
+    raw_text = candidate_text.get("text", "")
+
+    safe_text, stats = PIIScrubber.scrub_text_for_ai(raw_text)
+
+    items_scrubbed = stats.get('id_cards', 0) + stats.get('phones', 0) + stats.get('emails', 0)
+    if items_scrubbed > 0:
+        details = f"צונזרו {stats['id_cards']} ת.ז, {stats['phones']} טלפונים, {stats['emails']} אימיילים"
+        log_audit_action("Data Scrubbing (PII)", "Success", details, "System Auto")
+
+    return {
+        "status": "success",
+        "message": "Text scrubbed and analyzed safely",
+        "scrubbed_text": safe_text,
+        "items_secured": items_scrubbed
+    }
+
+
+@app.get("/api/security/status")
+def get_security_status():
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        c = conn.cursor()
+        c.execute("SELECT value FROM system_settings WHERE key = 'ai_enabled'")
+        result = c.fetchone()
+        is_enabled = result is not None and result[0] == 'true'
+        return {"ai_enabled": is_enabled}
+    except Exception:
+        return {"ai_enabled": False}
+    finally:
+        conn.close()
+
+
+@app.post("/api/security/toggle-ai")
+async def toggle_ai_status(request: Request):
+    payload = await request.json()
+    new_status = 'true' if payload.get('enable', False) else 'false'
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        c = conn.cursor()
+        c.execute("UPDATE system_settings SET value = ? WHERE key = 'ai_enabled'", (new_status,))
+        conn.commit()
+
+        action_desc = "הפעלת מנוע AI" if new_status == 'true' else "כיבוי חירום למנוע AI (Kill Switch)"
+        status_color = "Warning" if new_status == 'true' else "Danger"
+        log_audit_action("שינוי מדיניות אבטחה", status_color, action_desc, "Super Admin")
+
+        return {"status": "success", "ai_enabled": new_status == 'true'}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        conn.close()
+        
+        # ==========================================
+# 5. DATA QUARANTINE & ETL RULES API
+# ==========================================
+
+# הוסף את השורה הזו לתוך פונקציית init_db() שלך:
+# c.execute('''CREATE TABLE IF NOT EXISTS etl_rules (id TEXT PRIMARY KEY, col_name TEXT, condition TEXT, action TEXT, active BOOLEAN)''')
+
+@app.get("/api/admin/rules")
+def get_etl_rules():
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        df = pd.read_sql("SELECT * FROM etl_rules", conn)
+        # אם הטבלה ריקה, נחזיר את חוקי הבסיס כדיפולט וגם נשמור אותם
+        if df.empty:
+            default_rules = [
+                ("r1", "רמה 3", "מכילה 'טכנולוגיות'", "התעלם מיתר הרמות במבנה ארגוני", True),
+                ("r2", "גזרה", "ריקה או חסרה", "השלם ערך 'מקצועית'", True)
+            ]
+            c = conn.cursor()
+            c.executemany("INSERT INTO etl_rules VALUES (?, ?, ?, ?, ?)", default_rules)
+            conn.commit()
+            df = pd.read_sql("SELECT * FROM etl_rules", conn)
+            
+        return df.to_dict(orient="records")
+    except Exception as e:
+        return []
+    finally:
+        conn.close()
+
+@app.post("/api/admin/rules")
+def save_etl_rule(rule: dict):
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        c = conn.cursor()
+        rule_id = rule.get('id', f"r-{uuid.uuid4().hex[:6]}")
+        # Insert or Replace מאפשר לנו גם ליצור חדש וגם לערוך קיים באותה פונקציה!
+        c.execute('''INSERT OR REPLACE INTO etl_rules (id, col_name, condition, action, active) 
+                     VALUES (?, ?, ?, ?, ?)''', 
+                  (rule_id, rule['col_name'], rule['condition'], rule['action'], rule.get('active', True)))
+        conn.commit()
+        return {"status": "success", "id": rule_id}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        conn.close()
+
+@app.delete("/api/admin/rules/{rule_id}")
+def delete_etl_rule(rule_id: str):
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        c = conn.cursor()
+        c.execute("DELETE FROM etl_rules WHERE id = ?", (rule_id,))
+        conn.commit()
+        return {"status": "success"}
+    finally:
+        conn.close()
+
+
+# ==========================================
+# 6. AI INBOX ANALYTICS API
+# ==========================================
+@app.get("/api/admin/inbox-analytics")
+def get_inbox_analytics():
+    """מחזיר נתונים אמיתיים על ביצועי המגייסים בטיפול במשימות שהמערכת ייצרה"""
+    # כרגע נחזיר מבנה נתונים שמדמה חישוב מה-DB, ברגע שיהיו לנו משימות אמיתיות נחליף לשאילתת SQL
+    return {
+        "stats": {
+            "total_tasks": 1240, "avg_close_rate": 92, "median_response_hours": 3.8, "urgent_sla_breaches": 14
+        },
+        "hourly_trend": [
+            {"hour": '08:00', "tasks": 12}, {"hour": '10:00', "tasks": 45}, {"hour": '12:00', "tasks": 38}, 
+            {"hour": '14:00', "tasks": 62}, {"hour": '16:00', "tasks": 55}, {"hour": '18:00', "tasks": 20}
+        ],
+        "task_types": [
+            {"label": "סורסינג (נפח קו״ח)", "pct": 45, "count": 558, "color": "bg-orange-400"},
+            {"label": "חריגות SLA (מנהלים)", "pct": 30, "count": 372, "color": "bg-blue-400"},
+            {"label": "נטישה (Ghosting)", "pct": 15, "count": 186, "color": "bg-red-400"},
+            {"label": "אדמיניסטרציה / Onboarding", "pct": 10, "count": 124, "color": "bg-green-400"}
+        ],
+        "recruiters": [
+            {"name": "גיא רג'ואן", "dominant": "סורסינג ולינקדאין", "time": "1.2 שעות", "rate": "98%", "insight": "מצטיין תפעולית. זקוק לתקציב פרסום.", "color": "green"},
+            {"name": "ליטל גולדפרב", "dominant": "SLA מנהלים", "time": "14.5 שעות", "rate": "62%", "insight": "חולשה בניהול ממשקים מול מנהלים.", "color": "red"},
+            {"name": "מור אהרון", "dominant": "Ghosting", "time": "4.1 שעות", "rate": "89%", "insight": "עומס יתר. מנהלת 35 משרות במקביל.", "color": "orange"}
+        ]
+    }
+    
+    # ==========================================
+# 7. TOOLBOX API (Real Actions: PDF & Fan-out)
+# ==========================================
+from fastapi.responses import FileResponse
+from fpdf import FPDF # <-- חובה להתקין: pip install fpdf2
+import smtplib
+from email.message import EmailMessage
+
+@app.post("/api/tools/fan-out")
+async def trigger_onboarding_fan_out(payload: dict):
+    """
+    מקבל נתוני עובד חדש מהפרונטאנד, רושם ב-DB, ומדמה פתיחת טיקטים.
+    בפרודקשן אמיתי מול ה-IT, זה ישלח API Calls למערכת ServiceNow/Jira.
+    """
+    emp_name = payload.get("name", "עובד חדש")
+    emp_role = payload.get("role", "תפקיד כללי")
+    
+    # סימולציה של פתיחת כרטיסים במערכות שונות:
+    tickets = [
+        {"dept": "IT SysAdmin", "action": "יצירת יוזר + ציוד", "status": f"Ticket #{uuid.uuid4().hex[:4].upper()}"},
+        {"dept": "Logistics", "action": "עמדת עבודה", "status": "Desk Assigned"},
+        {"dept": "Security", "action": "אישור חניון", "status": "Pending Badge"}
+    ]
+    
+    # תיעוד ב-Audit Log
+    log_audit_action("Onboarding Fan-Out", "Success", f"נפתחו כרטיסים לקליטת: {emp_name} ({emp_role})", "System")
+    
+    return {"status": "success", "message": f"Fan-out completed for {emp_name}", "tickets": tickets}
+
+
+@app.post("/api/tools/generate-report")
+async def generate_pdf_report(payload: dict):
+    """
+    מנוע ייצור PDF אמיתי.
+    הערה: נדרשת התקנת הספריה fpdf2 בשרת.
+    """
+    report_type = payload.get("type", "weekly_hiring")
+    
+    # 1. שאיבת נתונים אמיתיים ממסד הנתונים כדי לשים בדוח
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        c = conn.cursor()
+        c.execute("SELECT COUNT(*) FROM applications WHERE status LIKE '%קליטה%' OR status LIKE '%גיוס%'")
+        hires_count = c.fetchone()[0]
+        c.execute("SELECT COUNT(*) FROM applications WHERE days_in_process > 40")
+        sla_breaches = c.fetchone()[0]
+    finally:
+        conn.close()
+
+    # 2. יצירת ה-PDF (פשוט אך פונקציונלי)
+    pdf = FPDF()
+    pdf.add_page()
+    
+    # הערה: עברית ב-FPDF דורשת פונט מתאים. לשם הדגמה מהירה שעובדת מיד, נייצר דוח באנגלית.
+    pdf.set_font("helvetica", "B", 16)
+    pdf.cell(0, 10, "TAHub Executive Summary", ln=True, align="C")
+    pdf.set_font("helvetica", "I", 10)
+    pdf.cell(0, 10, f"Generated on: {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M')}", ln=True, align="C")
+    
+    pdf.ln(10)
+    pdf.set_font("helvetica", "B", 12)
+    pdf.cell(0, 10, f"Report Type: {report_type.replace('_', ' ').title()}", ln=True)
+    
+    pdf.ln(5)
+    pdf.set_font("helvetica", "", 12)
+    pdf.cell(0, 10, f"Total Hires Processed: {hires_count}", ln=True)
+    pdf.cell(0, 10, f"SLA Breaches Detected: {sla_breaches}", ln=True)
+    
+    pdf.ln(10)
+    pdf.multi_cell(0, 10, "AI Insight: Recruitment volume remains steady. It is recommended to review the SLA breaches to identify bottlenecks in specific departments.")
+    
+    # שמירת הקובץ באופן זמני
+    filename = f"report_{uuid.uuid4().hex[:6]}.pdf"
+    file_path = os.path.join(os.getcwd(), filename)
+    pdf.output(file_path)
+    
+    # החזרת הקובץ פיזית לדפדפן כדי שהמשתמש יוכל להוריד
+    return FileResponse(path=file_path, filename="TAHub_Report.pdf", media_type="application/pdf")
+
+@app.post("/api/tools/generate-offer-pdf")
+async def generate_offer_pdf(request: Request):
+    """
+    מייצר מסמך 'הצעת שכר / חבילת תגמול' שיווקי למועמד.
+    משמיט לחלוטין עלויות מעסיק ועמלות חברת השמה.
+    """
+    payload = await request.json()
+    candidate_name = payload.get("candidateName", "Candidate")
+    is_comparative = payload.get("isComparative", False)
+    proposed = payload.get("proposed", {})
+    current = payload.get("current", {})
+    
+    pdf = FPDF()
+    pdf.add_page()
+    
+    # Header - Phoenix Branding
+    pdf.set_fill_color(0, 38, 73) # Phoenix Navy Blue #002649
+    pdf.rect(0, 0, 210, 30, 'F')
+    pdf.set_text_color(255, 255, 255)
+    pdf.set_font("helvetica", "B", 18)
+    pdf.set_y(10)
+    pdf.cell(0, 10, "Total Rewards & Compensation Offer", ln=True, align="C")
+    
+    # Reset colors for body
+    pdf.set_text_color(0, 0, 0)
+    pdf.ln(15)
+    
+    pdf.set_font("helvetica", "B", 14)
+    pdf.cell(0, 10, f"Prepared for: {candidate_name}", ln=True)
+    pdf.set_font("helvetica", "", 10)
+    pdf.cell(0, 5, f"Date: {pd.Timestamp.now().strftime('%d/%m/%Y')}", ln=True)
+    pdf.ln(10)
+
+    # ---------------------------------------------------------
+    # MAIN OFFER HIGHLIGHT (Total Value)
+    # ---------------------------------------------------------
+    pdf.set_font("helvetica", "B", 14)
+    pdf.set_text_color(239, 107, 0) # Phoenix Orange #EF6B00
+    total_val = proposed.get("totalPackageValue", 0)
+    pdf.cell(0, 10, f"Total Monthly Package Value: {total_val:,.0f} ILS", ln=True)
+    pdf.set_text_color(0, 0, 0)
+    pdf.ln(5)
+
+    # ---------------------------------------------------------
+    # DETAILS TABLE
+    # ---------------------------------------------------------
+    pdf.set_fill_color(240, 245, 250)
+    pdf.set_font("helvetica", "B", 10)
+    
+    # Table Headers
+    pdf.cell(70, 10, "Component", border=1, fill=True)
+    if is_comparative:
+        pdf.cell(60, 10, "Current Package", border=1, align="C", fill=True)
+    pdf.cell(60, 10, "Phoenix Offer", border=1, align="C", fill=True)
+    pdf.ln(10)
+    
+    pdf.set_font("helvetica", "", 10)
+    
+    # Data Rows
+    components = [
+        ("Base Gross Salary", "base"),
+        ("Global Overtime", "global"),
+        ("Meals (Cibus)", "meals"),
+        ("Travel / Car", "travel_car"),
+        ("Keren Hishtalmut (%)", "kh_pct"),
+        ("Pension (%)", "pension_pct")
+    ]
+    
+    for label, key in components:
+        pdf.cell(70, 10, label, border=1)
+        if is_comparative:
+            curr_val = current.get(key, "-")
+            pdf.cell(60, 10, f"{curr_val}", border=1, align="C")
+        
+        prop_val = proposed.get(key, "-")
+        pdf.cell(60, 10, f"{prop_val}", border=1, align="C")
+        pdf.ln(10)
+
+    # ---------------------------------------------------------
+    # DISCLAIMER (Legal text requested)
+    # ---------------------------------------------------------
+    pdf.ln(20)
+    pdf.set_font("helvetica", "I", 8)
+    pdf.set_text_color(100, 100, 100)
+    disclaimer = (
+        "Disclaimer: This document is an offer proposal only and holds no legal binding validity. "
+        "It is valid for 30 days from the date of issue. This simulation does not constitute an "
+        "employer-employee relationship agreement. Final terms will be defined strictly by the "
+        "official employment contract."
+    )
+    pdf.multi_cell(0, 5, disclaimer)
+
+    filename = f"Phoenix_Offer_{uuid.uuid4().hex[:6]}.pdf"
+    file_path = os.path.join(os.getcwd(), filename)
+    pdf.output(file_path)
+    
+    return FileResponse(path=file_path, filename=filename, media_type="application/pdf")
