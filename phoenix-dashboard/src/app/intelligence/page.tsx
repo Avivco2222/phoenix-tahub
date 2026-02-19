@@ -85,10 +85,10 @@ export default function IntelligenceAndReports() {
   const [showAdmin, setShowAdmin] = useState(false);
   const [adminConfig, setAdminConfig] = useState({
     earlyAttritionMonths: 12,
-    capacityWeights: { mass: 1, pro: 1.5, tech: 2.5 },
+    capacityWeights: { mass: 1, pro: 1.5, tech: 2.5 } as Record<string, number>,
     maxCapacityLimit: 22,
     threshold: 60,
-    overrides: { depts: { "Service": 1.1 }, recruiters: {}, jobs: {} }
+    overrides: { depts: { "Service": 1.1 } as Record<string, number>, recruiters: {} as Record<string, number>, jobs: {} as Record<string, number> }
   });
 
   const [overrideDept, setOverrideDept] = useState("");
@@ -123,8 +123,8 @@ export default function IntelligenceAndReports() {
   };
 
   const removeOverride = (dept: string) => {
-    const newDepts = { ...adminConfig.overrides.depts };
-    delete newDepts[dept as keyof typeof newDepts];
+    const newDepts: Record<string, number> = { ...adminConfig.overrides.depts };
+    delete newDepts[dept];
     setAdminConfig({ ...adminConfig, overrides: { ...adminConfig.overrides, depts: newDepts } });
   };
 
