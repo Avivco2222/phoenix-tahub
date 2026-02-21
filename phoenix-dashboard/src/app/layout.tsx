@@ -42,19 +42,22 @@ export default function RootLayout({
           <aside className="w-64 bg-white border-l border-slate-200 flex flex-col shrink-0 h-full">
 
             {/* LOGO AREA */}
-            <div className="px-6 py-6 border-b border-slate-100 group cursor-pointer">
-              <div className="flex flex-col items-center justify-center gap-1.5">
-                <div dir="ltr" className="flex items-center gap-2">
-                  <Orbit size={22} strokeWidth={1.5} className="text-[#EF6B00] transition-all duration-700 ease-in-out group-hover:rotate-180 group-hover:scale-110 drop-shadow-sm group-hover:drop-shadow-[0_0_8px_rgba(239,107,0,0.5)]" />
-                  <div className="text-2xl text-[#002649] tracking-tight flex items-baseline">
+            <div className="px-6 py-6 border-b border-slate-100 group cursor-default">
+              <div className="flex flex-col items-center justify-center gap-2 animate-in fade-in slide-in-from-top-4 duration-1000">
+                <div dir="ltr" className="flex items-center gap-2.5">
+                  <span className="text-[26px] font-bold text-[#002649] tracking-tight">FNX</span>
+                  <Orbit size={28} strokeWidth={1.5} className="text-[#EF6B00] transition-all duration-700 ease-in-out group-hover:rotate-180 group-hover:scale-110 drop-shadow-sm group-hover:drop-shadow-[0_0_8px_rgba(239,107,0,0.5)]" />
+                  <div className="text-[26px] text-[#002649] tracking-tight flex items-baseline">
                     <span className="font-black">TA</span>
                     <span className="font-light">Hub</span>
                   </div>
                 </div>
-                <div className="text-[9px] uppercase tracking-[0.15em] whitespace-nowrap mt-0.5 flex items-center justify-center gap-1.5 opacity-80 group-hover:opacity-100 transition-opacity duration-500">
-                  <span className="font-medium text-slate-400 group-hover:text-[#002649] transition-colors duration-500">Smart Hiring &bull; Human Touch</span>
-                  <span className="text-slate-300 font-light">|</span>
-                  <span className="font-black text-slate-500 group-hover:text-[#002649] transition-colors duration-500">FNX</span>
+                <div className="text-[9px] uppercase tracking-[0.25em] whitespace-nowrap opacity-80 group-hover:opacity-100 transition-opacity duration-500">
+                  <span className="font-medium text-slate-400 group-hover:text-[#002649] transition-colors duration-500 flex items-center justify-center">
+                    Smart Hiring
+                    <span className="text-[#EF6B00]/60 mx-2 text-[12px] leading-none">&bull;</span>
+                    Human Touch
+                  </span>
                 </div>
               </div>
             </div>
