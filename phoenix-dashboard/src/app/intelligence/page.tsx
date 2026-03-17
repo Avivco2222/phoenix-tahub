@@ -1,6 +1,7 @@
 "use client";
 
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect } from "react";
+import { useToast } from "@/components/Toast";
 import { 
   Brain, AlertTriangle, TrendingDown, Target, Zap, 
   HeartHandshake, Users, CheckCircle2, AlertCircle, 
@@ -68,8 +69,21 @@ const aiInsights = [
   "המלצת תקציב (AI): מקור 'חבר מביא חבר' מציג שרידות (QoH) כפולה מקמפיין סושיאל. הסטת 10% מתקציב המימון אליו תחסוך מוערך של 45K ש״ח."
 ];
 
+interface GhostingRisk {
+  candidate: string;
+  job: string;
+  risk_score: number;
+  reason: string;
+}
+
+interface IntelligenceData {
+  baseline: { current_hires: number; avg_days: number };
+  ghosting_risks: GhostingRisk[];
+}
+
 export default function IntelligenceAndReports() {
-  const [data, setData] = useState<any>(null);
+  const { showToast } = useToast();
+  const [data, setData] = useState<IntelligenceData | null>(null);
   const [budgetBoost, setBudgetBoost] = useState(0); 
   const [processSpeed, setProcessSpeed] = useState(0); 
   const [insightIndex, setInsightIndex] = useState(0);
@@ -106,7 +120,7 @@ export default function IntelligenceAndReports() {
   const resetFilters = () => setFilters(defaultFilters);
 
   const handleExecutiveExport = () => {
-    alert("מייצר דוח מנהלים אקזקיוטיבי... (C-Level Summary)");
+    showToast("ייצוא דוח C-Level — בקרוב", "coming-soon");
   };
 
   const addOverride = () => {
@@ -370,7 +384,7 @@ export default function IntelligenceAndReports() {
             </h3>
             <p className="text-slate-500 font-bold mb-6 text-sm">התראות חיות על טאלנטים בסיכון</p>
             <div className="space-y-4 overflow-y-auto pr-2 flex-1">
-              {data.ghosting_risks.map((risk: any, idx: number) => (
+              {data.ghosting_risks.map((risk: GhostingRisk, idx: number) => (
                 <div key={idx} className="bg-red-50/40 border border-red-100 p-4 rounded-2xl flex items-center justify-between">
                   <div>
                     <div className="font-black text-red-900 text-base">{risk.candidate}</div>
@@ -559,9 +573,18 @@ function InfoTooltip({ description, formula }: { description: string, formula: s
   );
 }
 
-function MetricCard({ label, actual, target, status, trend, tooltipDesc, tooltipFormula }: any) {
-  const statusColors: any = { success: "text-green-500", warning: "text-amber-500", danger: "text-red-500" };
-  const bgColors: any = { success: "bg-green-50 text-green-700", warning: "bg-amber-50 text-amber-700", danger: "bg-red-50 text-red-700" };
+interface MetricCardProps {
+  label: string;
+  actual: string | number;
+  target: string | number;
+  status: "success" | "warning" | "danger";
+  trend: string;
+  tooltipDesc: string;
+  tooltipFormula: string;
+}
+function MetricCard({ label, actual, target, status, trend, tooltipDesc, tooltipFormula }: MetricCardProps) {
+  const statusColors: Record<"success" | "warning" | "danger", string> = { success: "text-green-500", warning: "text-amber-500", danger: "text-red-500" };
+  const bgColors: Record<"success" | "warning" | "danger", string> = { success: "bg-green-50 text-green-700", warning: "bg-amber-50 text-amber-700", danger: "bg-red-50 text-red-700" };
   
   return (
     <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm transition-all hover:shadow-lg hover:border-blue-200 flex flex-col justify-between">

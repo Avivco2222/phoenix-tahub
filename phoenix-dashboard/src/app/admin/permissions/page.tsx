@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useToast } from "@/components/Toast";
 import { 
   ShieldCheck, UserPlus, Edit3, Trash2, Key, Briefcase, Search, 
   CheckCircle2, XCircle, Users, Copy, FileSpreadsheet, 
@@ -51,6 +52,7 @@ const PENDING_REQUESTS = [
 ];
 
 export default function PermissionsEnterprisePage() {
+  const { showToast } = useToast();
   const [users, setUsers] = useState<User[]>(INITIAL_USERS);
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedUsers, setSelectedUsers] = useState<string[]>([]);
@@ -84,7 +86,7 @@ export default function PermissionsEnterprisePage() {
 
   // --- 9. Export Matrix ---
   const handleExportMatrix = () => {
-    alert("מייצא דוח Access Review Matrix (CSV) לביקורת אבטחת מידע...");
+    showToast("ייצוא Access Review Matrix — בקרוב", "coming-soon");
   };
 
   // --- Modal Saves ---

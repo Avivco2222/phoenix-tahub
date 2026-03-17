@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
+import { useToast } from "@/components/Toast";
 import { 
   Users, Search, Briefcase, Plus, UserCheck, 
   Clock, XCircle, CheckCircle2, Edit3, Trash2,
@@ -325,6 +326,7 @@ export default function CandidatesPage() {
 interface FormModalProps { onClose: () => void; existingRecord: OnboardingRecord | null; onSaveSuccess: (name: string | undefined) => void }
 
 function OnboardingFormModal({ onClose, existingRecord, onSaveSuccess }: Readonly<FormModalProps>) {
+  const { showToast } = useToast();
   const [formData, setFormData] = useState<Partial<OnboardingRecord>>(existingRecord || {
     name: "", id_num: "", role: "", department: "", manager: "", start_date: "",
     has_car: false, parking_type: "לא", car_num: "",
@@ -339,14 +341,14 @@ function OnboardingFormModal({ onClose, existingRecord, onSaveSuccess }: Readonl
   };
 
   const handleSave = async () => {
-    if (!formData.name || !formData.role) return alert("חובה להזין לפחות שם ותפקיד");
+    if (!formData.name || !formData.role) { showToast("חובה להזין לפחות שם ותפקיד", "error"); return; }
     setIsSaving(true);
     
     // סימולציה של שליחת הנתונים לשרת + מיילים
     setTimeout(() => {
       setIsSaving(false);
       if (sendUpdateNotification) {
-        alert("נשלח מייל עדכון לשותפים (לוגיסטיקה/HRO) המדגיש את הנתונים שעודכנו.");
+        showToast("עדכון שותפים — שליחת מייל אוטומטית בקרוב", "coming-soon");
       }
       onSaveSuccess(formData.name);
     }, 1000);
