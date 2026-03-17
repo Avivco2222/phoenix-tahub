@@ -1237,3 +1237,36 @@ def update_onboarding(ob_id: str, payload: dict):
         return {"status": "success"}
     finally:
         conn.close()
+
+
+# ==========================================
+# AUTH AUDIT LOGGING
+# ==========================================
+@app.post("/api/auth/log")
+async def auth_log(request: Request):
+    """
+    מקבל אירועי אבטחה מה-SessionGuard ורושם אותם ב-audit_logs.
+    מדיניות PII: לא נשמרים סיסמאות, שמות משתמשים, או נתוני מועמדים.
+    """
+    try:
+        payload = await request.json()
+        event = str(payload.get("event", "UNKNOWN_EVENT"))
+        details = str(payload.get("details", ""))
+        timestamp = str(payload.get("timestamp", ""))
+
+        # Sanitise: only allow known event names to prevent log injection
+        allowed_events = {"SESSION_LOCKED", "SESSION_RESTORED", "UNLOCK_FAILED"}
+        if event not in allowed_events:
+            event = "UNKNOWN_EVENT"
+
+        log_audit_action(
+            action=event,
+            status="auth",
+            details=f"{details} | client_ts={timestamp}",
+            user="frontend"
+        )
+        return {"status": "logged", "event": event}
+    except Exception as e:
+        # Never crash — auth logging must not block the client
+        print(f"[auth/log] Failed to write audit log: {e}")
+        return {"status": "error", "message": str(e)}
