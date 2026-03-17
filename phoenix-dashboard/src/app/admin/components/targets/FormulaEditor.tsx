@@ -1,5 +1,5 @@
 "use client";
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { Plus, Trash2, Save, AlertCircle, CheckCircle2 } from "lucide-react";
 import { useAdminConfig, evalFormula, KpiFormula } from "./useAdminConfig";
 import { useToast } from "@/components/Toast";
@@ -31,6 +31,7 @@ export default function FormulaEditor() {
   const { config, save, isOffline } = useAdminConfig();
   const { showToast } = useToast();
   const [formulas, setFormulas] = useState<KpiFormula[]>(config.formulas);
+  useEffect(() => { setFormulas(config.formulas); }, [config.formulas]);
   const [isSaving, setIsSaving] = useState(false);
 
   const allValid = formulas.every(isValid);

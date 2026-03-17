@@ -1,5 +1,5 @@
 "use client";
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { Save, Eye, EyeOff } from "lucide-react";
 import { useAdminConfig, VisibilityConfig } from "./useAdminConfig";
 import { useToast } from "@/components/Toast";
@@ -18,6 +18,7 @@ export default function VisibilityToggles() {
   const { config, save } = useAdminConfig();
   const { showToast }    = useToast();
   const [vis,      setVis]      = useState<VisibilityConfig>(config.visibility);
+  useEffect(() => { setVis(config.visibility); }, [config.visibility]);
   const [isSaving, setIsSaving] = useState(false);
 
   const toggle      = (key: keyof VisibilityConfig) => setVis(prev => ({ ...prev, [key]: !prev[key] }));

@@ -20,6 +20,7 @@ export default function RuleBuilder() {
   const { config, save } = useAdminConfig();
   const { showToast }    = useToast();
   const [rules,    setRules]    = useState<AutomationRule[]>(config.rules);
+  useEffect(() => { setRules(config.rules); }, [config.rules]);
   const [isSaving, setIsSaving] = useState(false);
   const firedRef = useRef<Set<string>>(new Set());
 
@@ -38,8 +39,14 @@ export default function RuleBuilder() {
     });
   }, [rules, showToast]);
 
-  const update = (idx: number, patch: Partial<AutomationRule>) =>
-    setRules(prev => prev.map((r, i) => i === idx ? { ...r, ...patch } : r));
+  const update = (idx: number, patch: Partial<AutomationRule>) => {
+    setRules(prev => {
+      const updated = prev.map((r, i) => i === idx ? { ...r, ...patch } : r);
+      // Reset fired state so edited rules can re-evaluate
+      if (prev[idx]) firedRef.current.delete(prev[idx].id);
+      return updated;
+    });
+  };
 
   const addRule = () =>
     setRules(prev => [...prev, {
@@ -104,21 +111,26 @@ export default function RuleBuilder() {
               <input
                 type="number"
                 value={rule.threshold}
-                onChange={e => update(idx, { threshold: Number(e.target.value) })}
+                onChange={e => {
+                  const val = e.target.value;
+                  if (val !== "") update(idx, { threshold: Number(val) });
+                }}
                 className="w-16 p-2 bg-slate-50 border border-slate-100 rounded-xl text-xs font-bold outline-none text-center"
               />
-              <span className={`text-[9px] font-black px-2 py-0.5 rounded-full ${
-                (() => {
-                  const v = LIVE_METRICS[rule.metric] ?? 0;
-                  const fired =
-                    rule.op === "<" ? v < rule.threshold :
-                    rule.op === ">" ? v > rule.threshold :
-                    v === rule.threshold;
-                  return fired ? "bg-red-100 text-red-600" : "bg-emerald-100 text-emerald-700";
-                })()
-              }`}>
-                {LIVE_METRICS[rule.metric] ?? "—"}
-              </span>
+              {(() => {
+                const liveVal = LIVE_METRICS[rule.metric] ?? 0;
+                const isTriggered =
+                  rule.op === "<" ? liveVal < rule.threshold :
+                  rule.op === ">" ? liveVal > rule.threshold :
+                  liveVal === rule.threshold;
+                return (
+                  <span className={`text-[9px] font-black px-2 py-0.5 rounded-full ${
+                    isTriggered ? "bg-red-100 text-red-600" : "bg-emerald-100 text-emerald-700"
+                  }`}>
+                    {liveVal}
+                  </span>
+                );
+              })()}
             </div>
 
             <div className="flex items-center gap-3 flex-wrap">

@@ -404,12 +404,17 @@ function AdminCommandCenter() {
         <div className="space-y-8 animate-in slide-in-from-right-4">
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
             <StatMiniCard label="משימות AI שנוצרו" value={analyticsData.stats.total_tasks} sub="החודש" color="text-[#002649]" />
-            <StatMiniCard
-              label={adminConfig.formulas.find(f => f.id === "conv_rate")?.label ?? "Conversion Rate %"}
-              value={`${evalFormula(adminConfig.formulas.find(f => f.id === "conv_rate") ?? adminConfig.formulas[0]).toFixed(1)}%`}
-              sub="מחושב לפי נוסחת ה-Admin"
-              color="text-green-600"
-            />
+            {(() => {
+              const convFormula = adminConfig.formulas.find(f => f.id === "conv_rate");
+              return (
+                <StatMiniCard
+                  label={convFormula?.label ?? "Conversion Rate %"}
+                  value={convFormula ? `${evalFormula(convFormula).toFixed(1)}%` : "—"}
+                  sub="מחושב לפי נוסחת ה-Admin"
+                  color="text-green-600"
+                />
+              );
+            })()}
             <StatMiniCard label="זמן תגובה (חציוני)" value={analyticsData.stats.median_response_hours} sub="שעות" color="text-blue-600" />
             <StatMiniCard label="חריגות SLA חוזרות" value={analyticsData.stats.urgent_sla_breaches} sub="דחופות" color="text-red-500" />
           </div>

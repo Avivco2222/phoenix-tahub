@@ -81,7 +81,8 @@ export function AdminConfigProvider({ children }: { children: React.ReactNode })
   const load = useCallback(async () => {
     setIsLoading(true);
     try {
-      const res  = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/admin/config`);
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/admin/config`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json() as AdminConfig;
       setConfig({ ...HARDCODED_DEFAULTS, ...data });
       setIsOffline(false);
@@ -98,17 +99,27 @@ export function AdminConfigProvider({ children }: { children: React.ReactNode })
 
   const save = useCallback(
     async (patch: Partial<AdminConfig>, section: "formulas" | "rules" | "visibility") => {
-      const next = { ...config, ...patch };
-      const res  = await fetch(
-        `${process.env.NEXT_PUBLIC_API_URL}/api/admin/config?section=${section}`,
-        { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(next) }
-      );
-      if (!res.ok) throw new Error("SAVE_FAILED");
-      const data = await res.json() as { status: string; timestamp: string };
-      setConfig(next);
-      setLastSaved(data.timestamp ?? new Date().toISOString());
+      return new Promise<void>((resolve, reject) => {
+        setConfig(prev => {
+          const next = { ...prev, ...patch };
+          fetch(
+            `${process.env.NEXT_PUBLIC_API_URL}/api/admin/config?section=${section}`,
+            { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(next) }
+          )
+            .then(res => {
+              if (!res.ok) throw new Error(`HTTP ${res.status}`);
+              return res.json() as Promise<{ status: string; timestamp: string }>;
+            })
+            .then(data => {
+              setLastSaved(data.timestamp ?? new Date().toISOString());
+              resolve();
+            })
+            .catch(reject);
+          return next; // optimistic update
+        });
+      });
     },
-    [config]
+    []
   );
 
   return (
@@ -134,8 +145,11 @@ const MOCK_METRICS: Record<string, number> = {
 };
 
 export function evalFormula(f: KpiFormula, metrics: Record<string, number> = MOCK_METRICS): number {
+  if (!f) return 0;
   const a = metrics[f.varA] ?? 0;
-  const b = f.varB !== null ? (metrics[f.varB] ?? 0) : 1;
+  // When varB is null, treat formula as unary (just return a * scale for +/-, or a for others)
+  if (f.varB === null) return a * f.scale;
+  const b = metrics[f.varB] ?? 0;
   if (f.op === "/" && b === 0) return 0;
   switch (f.op) {
     case "/": return (a / b) * f.scale;
