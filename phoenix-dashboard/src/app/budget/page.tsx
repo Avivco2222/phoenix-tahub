@@ -74,6 +74,7 @@ function getStatusColor(status: string): string {
 export default function UnifiedBudgetPage() {
   const [activeTab, setActiveTab] = useState("analytics");
   const [isLoading, setIsLoading] = useState(true);
+  const [isOfflineMode, setIsOfflineMode] = useState(false);
   
   const [categories, setCategories] = useState<Category[]>([]);
   const [vendors, setVendors] = useState<Vendor[]>([]);
@@ -116,7 +117,19 @@ export default function UnifiedBudgetPage() {
         })));
       }
     } catch (e) {
-      console.error("Failed to fetch data", e);
+      console.warn("[FinOps] Backend offline — loading mock data", e);
+      setIsOfflineMode(true);
+      setCategories(DEFAULT_CATEGORIES);
+      setVendors([
+        { id: "v1", name: "LinkedIn Talent Solutions", defaultCategory: "שיווק ופרסום", totalPaid: 42000, activeInvoices: 2 },
+        { id: "v2", name: "AllJobs Premium", defaultCategory: "שיווק ופרסום", totalPaid: 18500, activeInvoices: 1 },
+        { id: "v3", name: "טכנולוגי בע\"מ", defaultCategory: "חברות השמה", totalPaid: 65000, activeInvoices: 3 },
+      ]);
+      setInvoices([
+        { id: "INV-001", vendor: "LinkedIn Talent Solutions", date: "2026-01-15", dueDate: "2026-02-15", budgetMonth: "ינואר 2026", amount: 21000, category: "שיווק ופרסום", subcategory: "קמפיין ממומן", status: "שולם", note: "Q1 Campaign", fileUrl: undefined, due_date: "2026-02-15", budget_month: "ינואר 2026", file_url: undefined },
+        { id: "INV-002", vendor: "טכנולוגי בע\"מ", date: "2026-02-01", dueDate: "2026-03-01", budgetMonth: "פברואר 2026", amount: 35000, category: "חברות השמה", subcategory: "השמת בכיר", status: "ממתין לאישור הנהח״ש", note: "Senior R&D hire", fileUrl: undefined, due_date: "2026-03-01", budget_month: "פברואר 2026", file_url: undefined },
+        { id: "INV-003", vendor: "AllJobs Premium", date: "2026-02-20", dueDate: "2026-03-20", budgetMonth: "פברואר 2026", amount: 18500, category: "שיווק ופרסום", subcategory: "קמפיין ממומן", status: "ממתין למיפוי", note: "", fileUrl: undefined, due_date: "2026-03-20", budget_month: "פברואר 2026", file_url: undefined },
+      ]);
     } finally {
       setIsLoading(false);
     }
@@ -260,7 +273,11 @@ export default function UnifiedBudgetPage() {
           <h1 className="text-3xl font-black text-[#002649] flex items-center gap-3">
             ניהול תקציב (FinOps) <BadgeDollarSign className="text-[#EF6B00]" size={32} />
           </h1>
-          <p className="text-slate-500 mt-2">אנליטיקה, תפעול חשבוניות וניהול ספקים (מסונכרן לשרת Live 🟢)</p>
+          <p className="text-slate-500 mt-2">
+            {isOfflineMode
+              ? <span className="inline-flex items-center gap-1.5 text-amber-600 font-semibold">⚠️ מצב לא מקוון — מוצגים נתוני הדגמה. הפעל את השרת לנתונים אמיתיים.</span>
+              : "אנליטיקה, תפעול חשבוניות וניהול ספקים (מסונכרן לשרת Live 🟢)"}
+          </p>
         </div>
         <div className="flex gap-2 bg-slate-100 p-1 rounded-xl overflow-x-auto">
           <TabBtn id="analytics" current={activeTab} onClick={setActiveTab} icon={<PieChart size={16}/>} label="דשבורד ואנליטיקה" />
