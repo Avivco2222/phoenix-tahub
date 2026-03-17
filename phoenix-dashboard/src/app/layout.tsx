@@ -9,6 +9,7 @@ import Link from "next/link";
 import { NotificationProvider } from "@/context/NotificationContext";
 import { BellDropdown } from "@/components/BellDropdown";
 import SessionGuard from "@/components/SessionGuard";
+import { ToastProvider } from "@/components/Toast";
 
 // הגדרת הפונט
 const heebo = Heebo({ 
@@ -35,6 +36,7 @@ export default function RootLayout({
   return (
     <html lang="he" dir="rtl">
       <body className={`${heebo.className} flex h-screen overflow-hidden bg-[#F8FAFC]`}>
+        <ToastProvider>
         <NotificationProvider>
           <SessionGuard />
           
@@ -119,6 +121,7 @@ export default function RootLayout({
             </div>
           </main>
         </NotificationProvider>
+        </ToastProvider>
       </body>
     </html>
   );

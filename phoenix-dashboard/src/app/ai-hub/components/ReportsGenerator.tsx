@@ -1,9 +1,11 @@
 "use client";
 
 import React, { useState } from "react";
+import { useToast } from "@/components/Toast";
 import { FileText, Loader2, Download } from "lucide-react";
 
 export default function ReportsGenerator() {
+  const { showToast } = useToast();
   const [generating, setGenerating] = useState(false);
   
   const handleGeneratePDF = async () => {
@@ -18,7 +20,7 @@ export default function ReportsGenerator() {
       const a = document.createElement('a');
       a.href = url; a.download = 'Report.pdf'; document.body.appendChild(a); a.click(); a.remove();
     } catch {
-      globalThis.alert("שגיאה בהפקת הדוח.");
+      showToast("שגיאה בהפקת הדוח — ודא שהשרת פעיל", "error");
     } finally {
       setGenerating(false);
     }

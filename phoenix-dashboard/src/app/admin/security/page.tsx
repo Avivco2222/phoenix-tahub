@@ -12,6 +12,28 @@ interface AuditLog {
   user: string;
 }
 
+const MOCK_SECURITY_DATA = {
+  ai_enabled: true,
+  logs: [
+    {
+      id: "LOG-DEMO-01",
+      time: "2026-03-17 09:00:00",
+      action: "SESSION_LOCKED",
+      status: "auth",
+      details: "inactivity timeout 20min | client_ts=demo",
+      user: "frontend",
+    },
+    {
+      id: "LOG-DEMO-02",
+      time: "2026-03-17 09:05:00",
+      action: "SESSION_RESTORED",
+      status: "auth",
+      details: "session resumed by user | client_ts=demo",
+      user: "frontend",
+    },
+  ] as AuditLog[],
+};
+
 export default function SecurityAndPrivacyPage() {
   const [isUnlocked, setIsUnlocked] = useState(false);
   const [passwordInput, setPasswordInput] = useState("");
@@ -31,7 +53,9 @@ export default function SecurityAndPrivacyPage() {
       const logsData = await logsRes.json();
       setLogs(logsData);
     } catch (error) {
-      console.error("Failed to fetch security data", error);
+      console.warn("[Security] Backend offline — showing mock data", error);
+      setAiEnabled(MOCK_SECURITY_DATA.ai_enabled);
+      setLogs(MOCK_SECURITY_DATA.logs);
     }
   }, []);
 

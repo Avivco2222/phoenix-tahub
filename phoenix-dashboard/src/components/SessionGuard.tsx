@@ -5,6 +5,31 @@ import { Lock, ShieldCheck } from "lucide-react";
 
 const TIMEOUT_MS = 20 * 60 * 1000;
 
+// --- Auth Audit Logging ---
+// Fire-and-forget: never blocks the UI. Falls back to console if backend is offline.
+// PII POLICY: payload contains only pre-defined event names and static detail strings.
+// No passwords, no user input, no candidate data is ever sent.
+async function logAuthEvent(event: string, details: string): Promise<void> {
+  const apiUrl = process.env.NEXT_PUBLIC_API_URL;
+  if (!apiUrl) {
+    console.warn("[Auth]", event, details);
+    return;
+  }
+  try {
+    await fetch(`${apiUrl}/api/auth/log`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        event,
+        details,
+        timestamp: new Date().toISOString(),
+      }),
+    });
+  } catch {
+    console.warn("[Auth fallback]", event, details);
+  }
+}
+
 export default function SessionGuard() {
   const [isLocked, setIsLocked] = useState(false);
   const [password, setPassword] = useState("");
@@ -12,6 +37,7 @@ export default function SessionGuard() {
 
   const lockScreen = useCallback(() => {
     setIsLocked(true);
+    logAuthEvent("SESSION_LOCKED", "inactivity timeout 20min");
   }, []);
 
   useEffect(() => {
@@ -48,8 +74,10 @@ export default function SessionGuard() {
       setIsLocked(false);
       setPassword("");
       setError("");
+      logAuthEvent("SESSION_RESTORED", "session resumed by user");
     } else {
       setError("סיסמה שגויה. נסה שוב.");
+      logAuthEvent("UNLOCK_FAILED", "invalid unlock attempt");
     }
   };
 
