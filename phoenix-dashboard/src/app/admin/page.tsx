@@ -16,6 +16,112 @@ export interface FileStatus {
   errorMsg?: string;
 }
 
+// --- Admin page types ---
+interface SystemHealthLog {
+  id: string;
+  timestamp: string;
+  action: string;
+  status: string;
+  details: string;
+  user: string;
+  filename: string;
+  upload_date: string;
+  rows_processed: number;
+  log_id: string;
+}
+
+interface MissingDataAlert {
+  type: string;
+  message: string;
+  count: number;
+  field: string;
+}
+
+interface SystemHealthData {
+  missing_data: MissingDataAlert[];
+  logs: SystemHealthLog[];
+  candidate_count: number;
+  job_count: number;
+  last_upload: string;
+  health_score: number;
+  total_records: number;
+}
+
+interface AnalyticsTaskType {
+  label: string;
+  pct: number;
+  count: number;
+  color: string;
+}
+
+interface AnalyticsRecruiter {
+  name: string;
+  dominant: string;
+  time: string;
+  rate: string;
+  insight: string;
+  color: string;
+}
+
+interface AnalyticsData {
+  task_types: AnalyticsTaskType[];
+  recruiters: AnalyticsRecruiter[];
+  stats: {
+    total_tasks: number;
+    avg_close_rate: number;
+    median_response_hours: number;
+    urgent_sla_breaches: number;
+  };
+  hourly_trend: { hour: string; tasks: number }[];
+}
+
+interface StatMiniCardProps {
+  label: string;
+  value: string | number;
+  sub: string;
+  color: string;
+}
+
+interface TypeBarProps {
+  label: string;
+  pct: number;
+  count: number;
+  color: string;
+}
+
+interface RecruiterRowProps {
+  name: string;
+  dominant: string;
+  time: string;
+  rate: string;
+  insight: string;
+  color: string;
+}
+
+interface DropzoneBoxProps {
+  title: string;
+  icon: React.ReactNode;
+  color: string;
+  status: { status: string; name: string; rows: number | string; errorMsg?: string };
+  inputRef: React.RefObject<HTMLInputElement | null>;
+  onUpload: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  uploading: boolean;
+}
+
+interface TabNavProps {
+  id: string;
+  active: string;
+  setter: (id: string) => void;
+  icon: React.ReactNode;
+  label: string;
+}
+
+interface FileMeta {
+  title: string;
+  icon: React.ReactNode;
+  color: string;
+}
+
 interface EtlRule {
   id?: string;
   col_name: string;
@@ -29,9 +135,9 @@ export default function AdminCommandCenter() {
   
   // --- Live Data States ---
   const [isUploading, setIsUploading] = useState<string | null>(null);
-  const [systemHealth, setSystemHealth] = useState<any>(null);
+  const [systemHealth, setSystemHealth] = useState<SystemHealthData | null>(null);
   const [etlRules, setEtlRules] = useState<EtlRule[]>([]);
-  const [analyticsData, setAnalyticsData] = useState<any>(null);
+  const [analyticsData, setAnalyticsData] = useState<AnalyticsData | null>(null);
   
   // --- Rules Form State ---
   const [showRuleForm, setShowRuleForm] = useState(false);
@@ -86,7 +192,7 @@ export default function AdminCommandCenter() {
       } else {
         setFilesStatus(prev => ({ ...prev, [type]: { name: file.name, date: new Date().toLocaleTimeString('he-IL'), rows: "נכשל", status: "error", errorMsg: data.detail || "שגיאת קריאת קובץ" } }));
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
       setFilesStatus(prev => ({ ...prev, [type]: { name: file.name, date: "-", rows: "נכשל", status: "error", errorMsg: "השרת לא מגיב." } }));
     } finally {
       setIsUploading(null);
@@ -130,7 +236,7 @@ export default function AdminCommandCenter() {
   // --- File Upload Definitions ---
   const fileRefs: Record<string, React.RefObject<HTMLInputElement | null>> = { candidates: useRef(null), jobs: useRef(null), hires: useRef(null), diversity: useRef(null), headcount: useRef(null), budget: useRef(null), attrition: useRef(null) };
   const [filesStatus, setFilesStatus] = useState<Record<string, FileStatus>>({ candidates: { name: "ממתין", date: "-", rows: "-", status: "pending" }, jobs: { name: "ממתין", date: "-", rows: "-", status: "pending" }, hires: { name: "ממתין", date: "-", rows: "-", status: "pending" }, diversity: { name: "ממתין", date: "-", rows: "-", status: "pending" }, headcount: { name: "ממתין", date: "-", rows: "-", status: "pending" }, budget: { name: "ממתין", date: "-", rows: "-", status: "pending" }, attrition: { name: "ממתין", date: "-", rows: "-", status: "pending" } });
-  const FILE_META: Record<string, any> = { candidates: { title: "מועמדים (ATS)", icon: <Users size={24} />, color: "blue" }, jobs: { title: "משרות פתוחות", icon: <Briefcase size={24} />, color: "orange" }, hires: { title: "קליטות", icon: <CheckCircle2 size={24} />, color: "green" }, diversity: { title: "גיוון", icon: <HeartHandshake size={24} />, color: "pink" }, headcount: { title: "תקן מצבה", icon: <Building2 size={24} />, color: "purple" }, budget: { title: "תקציב", icon: <Receipt size={24} />, color: "emerald" }, attrition: { title: "עזיבות", icon: <UserMinus size={24} />, color: "red" } };
+  const FILE_META: Record<string, FileMeta> = { candidates: { title: "מועמדים (ATS)", icon: <Users size={24} />, color: "blue" }, jobs: { title: "משרות פתוחות", icon: <Briefcase size={24} />, color: "orange" }, hires: { title: "קליטות", icon: <CheckCircle2 size={24} />, color: "green" }, diversity: { title: "גיוון", icon: <HeartHandshake size={24} />, color: "pink" }, headcount: { title: "תקן מצבה", icon: <Building2 size={24} />, color: "purple" }, budget: { title: "תקציב", icon: <Receipt size={24} />, color: "emerald" }, attrition: { title: "עזיבות", icon: <UserMinus size={24} />, color: "red" } };
 
   return (
     <div className="max-w-[1600px] mx-auto space-y-8 animate-in fade-in duration-500 pb-20 px-4">
@@ -172,13 +278,13 @@ export default function AdminCommandCenter() {
       {/* TAB 1: DATA DROPZONES */}
       {activeTab === "data" && (
         <div className="space-y-8 animate-in slide-in-from-right-4">
-          {systemHealth?.missing_data?.length > 0 && (
+          {(systemHealth?.missing_data?.length ?? 0) > 0 && systemHealth && (
             <div className="bg-red-50 border border-red-200 rounded-2xl p-5 flex items-start gap-4">
               <AlertOctagon className="text-red-500 shrink-0" size={24} />
               <div>
                 <h3 className="font-black text-red-800">התראות טיוב נתונים פעילות</h3>
                 <ul className="mt-2 space-y-1">
-                  {systemHealth.missing_data.map((alert: any, idx: number) => (
+                  {systemHealth.missing_data.map((alert: MissingDataAlert, idx: number) => (
                     <li key={idx} className="text-sm font-bold text-red-700">⚠️ מצאנו {alert.count} רשומות חסרות: {alert.field}</li>
                   ))}
                 </ul>
@@ -191,13 +297,13 @@ export default function AdminCommandCenter() {
               const meta = FILE_META[key];
               return (
                 <DropzoneBox key={key} title={meta.title} icon={meta.icon} color={meta.color} status={filesStatus[key]} inputRef={fileRefs[key]} uploading={isUploading === key}
-                  onUpload={(e: any) => { const f = e.target.files?.[0]; if (f) handleLiveUpload(key, f); }}
+                  onUpload={(e: React.ChangeEvent<HTMLInputElement>) => { const f = e.target.files?.[0]; if (f) handleLiveUpload(key, f); }}
                 />
               );
             })}
           </div>
 
-          {systemHealth?.logs?.length > 0 && (
+          {(systemHealth?.logs?.length ?? 0) > 0 && systemHealth && (
              <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden mt-8">
                <div className="p-5 border-b border-slate-100 bg-slate-50 flex justify-between items-center">
                  <h3 className="font-black text-lg text-[#002649] flex items-center gap-2"><RefreshCw size={18} className="text-blue-500"/> היסטוריית טעינות (ETL Logs)</h3>
@@ -208,7 +314,7 @@ export default function AdminCommandCenter() {
                    <tr><th className="px-6 py-3">קובץ</th><th className="px-6 py-3">תאריך סנכרון</th><th className="px-6 py-3">רשומות</th><th className="px-6 py-3">סטטוס</th><th className="px-6 py-3">פעולה</th></tr>
                  </thead>
                  <tbody className="divide-y divide-slate-50">
-                   {systemHealth.logs.map((log: any, i: number) => (
+                   {systemHealth.logs.map((log: SystemHealthLog, i: number) => (
                      <tr key={i} className="hover:bg-slate-50 transition-colors">
                        <td className="px-6 py-3 font-bold text-[#002649]">{log.filename}</td>
                        <td className="px-6 py-3 text-slate-500">{log.upload_date}</td>
@@ -319,7 +425,7 @@ export default function AdminCommandCenter() {
             <div className="bg-[#002649] p-8 rounded-3xl text-white shadow-xl">
               <h3 className="font-black mb-6 flex items-center gap-2"><Layers size={20} className="text-[#EF6B00]"/> התפלגות נושאי המשימות</h3>
               <div className="space-y-5">
-                {analyticsData.task_types.map((t: any, i: number) => (
+                {analyticsData.task_types.map((t: AnalyticsTaskType, i: number) => (
                   <TypeBar key={i} label={t.label} pct={t.pct} color={t.color} count={t.count} />
                 ))}
               </div>
@@ -331,7 +437,7 @@ export default function AdminCommandCenter() {
             <table className="w-full text-right">
               <thead><tr className="text-slate-400 font-black text-[10px] uppercase bg-slate-50"><th className="p-4 rounded-r-2xl">מגייס.ת</th><th className="p-4">משימה דומיננטית</th><th className="p-4">זמן תגובה</th><th className="p-4">אחוז סגירה</th><th className="p-4 rounded-l-2xl">תובנת AI למנהל</th></tr></thead>
               <tbody className="divide-y divide-slate-50">
-                {analyticsData.recruiters.map((r: any, i: number) => (
+                {analyticsData.recruiters.map((r: AnalyticsRecruiter, i: number) => (
                   <RecruiterRow key={i} {...r} />
                 ))}
               </tbody>
@@ -353,10 +459,10 @@ export default function AdminCommandCenter() {
 }
 
 // --- SUB-COMPONENTS ---
-function StatMiniCard({ label, value, sub, color }: any) { return ( <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm"><p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{label}</p><div className={`text-3xl font-black ${color} mt-1`}>{value}</div><p className="text-[10px] font-bold text-slate-400 mt-1">{sub}</p></div> ); }
-function TypeBar({ label, pct, color, count }: any) { return ( <div className="space-y-1.5"><div className="flex justify-between text-[11px] font-bold"><span>{label}</span><span className="opacity-60">{count} ({pct}%)</span></div><div className="h-1.5 bg-white/10 rounded-full overflow-hidden"><div className={`h-full ${color}`} style={{ width: `${pct}%` }} /></div></div> ); }
-function RecruiterRow({ name, dominant, time, rate, insight, color }: any) { const dotColor = color === "green" ? "bg-green-500" : color === "red" ? "bg-red-500" : "bg-orange-500"; return ( <tr className="hover:bg-slate-50 transition-colors group"><td className="p-4 font-black text-[#002649] flex items-center gap-3"><div className={`w-2 h-2 rounded-full ${dotColor}`} /> {name}</td><td className="p-4 font-bold text-slate-600 text-xs">{dominant}</td><td className="p-4 font-black text-[#002649]">{time}</td><td className="p-4"><span className={`px-2 py-1 rounded-lg font-bold text-[10px] ${color === 'red' ? 'bg-red-50 text-red-600' : 'bg-green-50 text-green-700'}`}>{rate}</span></td><td className="p-4 text-xs font-medium text-slate-500 italic max-w-xs">{insight}</td></tr> ); }
+function StatMiniCard({ label, value, sub, color }: StatMiniCardProps) { return ( <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm"><p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{label}</p><div className={`text-3xl font-black ${color} mt-1`}>{value}</div><p className="text-[10px] font-bold text-slate-400 mt-1">{sub}</p></div> ); }
+function TypeBar({ label, pct, color, count }: TypeBarProps) { return ( <div className="space-y-1.5"><div className="flex justify-between text-[11px] font-bold"><span>{label}</span><span className="opacity-60">{count} ({pct}%)</span></div><div className="h-1.5 bg-white/10 rounded-full overflow-hidden"><div className={`h-full ${color}`} style={{ width: `${pct}%` }} /></div></div> ); }
+function RecruiterRow({ name, dominant, time, rate, insight, color }: RecruiterRowProps) { const dotColor = color === "green" ? "bg-green-500" : color === "red" ? "bg-red-500" : "bg-orange-500"; return ( <tr className="hover:bg-slate-50 transition-colors group"><td className="p-4 font-black text-[#002649] flex items-center gap-3"><div className={`w-2 h-2 rounded-full ${dotColor}`} /> {name}</td><td className="p-4 font-bold text-slate-600 text-xs">{dominant}</td><td className="p-4 font-black text-[#002649]">{time}</td><td className="p-4"><span className={`px-2 py-1 rounded-lg font-bold text-[10px] ${color === 'red' ? 'bg-red-50 text-red-600' : 'bg-green-50 text-green-700'}`}>{rate}</span></td><td className="p-4 text-xs font-medium text-slate-500 italic max-w-xs">{insight}</td></tr> ); }
 const DROPZONE_COLOR_MAP: Record<string, string> = { blue: "border-blue-200 bg-blue-50/50 hover:border-blue-500", orange: "border-orange-200 bg-orange-50/50 hover:border-orange-500", green: "border-green-200 bg-green-50/50 hover:border-green-500", pink: "border-pink-200 bg-pink-50/50 hover:border-pink-500", purple: "border-purple-200 bg-purple-50/50 hover:border-purple-500", emerald: "border-emerald-200 bg-emerald-50/50 hover:border-emerald-500", red: "border-red-200 bg-red-50/50 hover:border-red-500" };
-function DropzoneBox({ title, icon, color, status, inputRef, onUpload, uploading }: any) { const isError = status.status === "error"; return ( <button type="button" className={`border-2 border-dashed rounded-3xl p-6 transition-all cursor-pointer flex flex-col items-center text-center relative group w-full text-inherit ${isError ? 'border-red-500 bg-red-50' : DROPZONE_COLOR_MAP[color]}`} onClick={() => inputRef.current?.click()} > <input type="file" ref={inputRef} className="hidden" onChange={onUpload} accept=".csv, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/vnd.ms-excel" /> <div className={`w-14 h-14 rounded-full flex items-center justify-center shadow-sm mb-4 transition-transform ${isError ? 'bg-red-500 text-white' : 'bg-white text-[#002649] group-hover:scale-110'}`}> {uploading ? <Loader2 size={24} className="animate-spin text-slate-400"/> : isError ? <X size={24} /> : icon} </div> <h3 className="font-black text-[#002649] text-sm mb-1">{title}</h3> <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-4">גרור/לחץ להעלאה</div> {isError ? ( <div className="w-full bg-red-100/80 p-3 rounded-2xl text-[10px] font-bold text-red-800 text-right border border-red-200"> שגיאה: {status.errorMsg} </div> ) : ( <div className="w-full bg-white p-3 rounded-2xl text-[10px] space-y-1.5 text-right text-slate-600 shadow-sm border border-slate-100"> <div className="flex justify-between items-center border-b border-slate-100 pb-1.5"><span className="font-bold opacity-50">קובץ:</span><span className="font-black text-[#002649] truncate max-w-[100px]">{status.name}</span></div> <div className="flex justify-between items-center"><span className="font-bold opacity-50">רשומות תקינות:</span><span className="font-black text-green-600">{status.rows}</span></div> </div> )} </button> ); }
+function DropzoneBox({ title, icon, color, status, inputRef, onUpload, uploading }: DropzoneBoxProps) { const isError = status.status === "error"; return ( <button type="button" className={`border-2 border-dashed rounded-3xl p-6 transition-all cursor-pointer flex flex-col items-center text-center relative group w-full text-inherit ${isError ? 'border-red-500 bg-red-50' : DROPZONE_COLOR_MAP[color]}`} onClick={() => inputRef.current?.click()} > <input type="file" ref={inputRef} className="hidden" onChange={onUpload} accept=".csv, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/vnd.ms-excel" /> <div className={`w-14 h-14 rounded-full flex items-center justify-center shadow-sm mb-4 transition-transform ${isError ? 'bg-red-500 text-white' : 'bg-white text-[#002649] group-hover:scale-110'}`}> {uploading ? <Loader2 size={24} className="animate-spin text-slate-400"/> : isError ? <X size={24} /> : icon} </div> <h3 className="font-black text-[#002649] text-sm mb-1">{title}</h3> <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-4">גרור/לחץ להעלאה</div> {isError ? ( <div className="w-full bg-red-100/80 p-3 rounded-2xl text-[10px] font-bold text-red-800 text-right border border-red-200"> שגיאה: {status.errorMsg} </div> ) : ( <div className="w-full bg-white p-3 rounded-2xl text-[10px] space-y-1.5 text-right text-slate-600 shadow-sm border border-slate-100"> <div className="flex justify-between items-center border-b border-slate-100 pb-1.5"><span className="font-bold opacity-50">קובץ:</span><span className="font-black text-[#002649] truncate max-w-[100px]">{status.name}</span></div> <div className="flex justify-between items-center"><span className="font-bold opacity-50">רשומות תקינות:</span><span className="font-black text-green-600">{status.rows}</span></div> </div> )} </button> ); }
 import { Filter } from "lucide-react";
-function TabNav({ id, active, setter, icon, label }: any) { const isActive = active === id; return ( <button onClick={() => setter(id)} className={`flex items-center gap-2 px-6 py-2.5 rounded-xl font-black text-sm transition-all ${isActive ? 'bg-[#002649] text-white shadow-md' : 'text-slate-500 hover:text-[#002649] hover:bg-slate-200/50'}`}> {icon} {label} </button> ); }
+function TabNav({ id, active, setter, icon, label }: TabNavProps) { const isActive = active === id; return ( <button onClick={() => setter(id)} className={`flex items-center gap-2 px-6 py-2.5 rounded-xl font-black text-sm transition-all ${isActive ? 'bg-[#002649] text-white shadow-md' : 'text-slate-500 hover:text-[#002649] hover:bg-slate-200/50'}`}> {icon} {label} </button> ); }
