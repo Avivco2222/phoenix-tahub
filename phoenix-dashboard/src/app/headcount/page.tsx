@@ -13,6 +13,43 @@ import {
   BarChart, Bar, PieChart, Pie, Cell, LineChart, Line
 } from 'recharts';
 
+// --- INTERFACES ---
+interface TeamRole {
+  name: string;
+  role: string;
+  standard: number;
+  current: number;
+  gap: number;
+}
+
+interface TrendPoint {
+  month: string;
+  opens: number;
+  hires: number;
+}
+
+interface TeamData {
+  teams: TeamRole[];
+  trend: TrendPoint[];
+}
+
+interface OrgUnit {
+  unit: string;
+  dept: string;
+  standard: number;
+  current: number;
+  open: number;
+  attrition: number;
+  hires: number;
+  sector: string;
+}
+
+interface StatCardProps {
+  label: string;
+  value: string | number;
+  icon: React.ReactNode;
+}
+
 // --- MOCK DATA ---
 const YEARLY_TREND_DATA = [
   { month: 'ינ', opens: 12, hires: 10, prevYearHires: 8 },
@@ -51,7 +88,7 @@ const MONTHLY_GROWTH = [
   { month: 'אפ', growth: 6 },
 ];
 
-const MOCK_TEAMS_ROLES: Record<string, any> = {
+const MOCK_TEAMS_ROLES: Record<string, TeamData> = {
   "כספים": {
     teams: [
       { name: "צוות כלכלני מטה", role: "כלכלן בכיר", standard: 5, current: 3, gap: -2 },
@@ -78,7 +115,7 @@ const MOCK_TEAMS_ROLES: Record<string, any> = {
 
 export default function HeadcountDashboard() {
   const [searchTerm, setSearchTerm] = useState("");
-  const [selectedUnit, setSelectedUnit] = useState<any>(null);
+  const [selectedUnit, setSelectedUnit] = useState<OrgUnit | null>(null);
   const [showPrevYear, setShowPrevYear] = useState(true);
 
   // חישובים ואלגוריתמים
@@ -308,7 +345,7 @@ export default function HeadcountDashboard() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-50">
-                    {(MOCK_TEAMS_ROLES[selectedUnit.unit]?.teams || MOCK_TEAMS_ROLES["כספים"].teams).map((item: any, i: number) => (
+                    {(MOCK_TEAMS_ROLES[selectedUnit.unit]?.teams || MOCK_TEAMS_ROLES["כספים"].teams).map((item: TeamRole, i: number) => (
                       <tr key={i} className="hover:bg-slate-50/50">
                         <td className="px-6 py-3 font-bold text-slate-700">{item.name}</td>
                         <td className="px-6 py-3 font-black text-[#002649]">{item.role}</td>
@@ -333,7 +370,7 @@ export default function HeadcountDashboard() {
 }
 
 // --- SUB-COMPONENTS ---
-function StatCard({ label, value, icon }: any) {
+function StatCard({ label, value, icon }: StatCardProps) {
   return (
     <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col justify-center transition-all hover:shadow-md hover:border-blue-100">
       <div className="flex justify-between items-start mb-2"><div className="p-1.5 bg-slate-50 rounded-lg">{icon}</div></div>
