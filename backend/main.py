@@ -1251,8 +1251,8 @@ async def auth_log(request: Request):
     try:
         payload = await request.json()
         event = str(payload.get("event", "UNKNOWN_EVENT"))
-        details = str(payload.get("details", ""))
-        timestamp = str(payload.get("timestamp", ""))
+        details = str(payload.get("details", ""))[:500]
+        timestamp = str(payload.get("timestamp", ""))[:50]
 
         # Sanitise: only allow known event names to prevent log injection
         allowed_events = {"SESSION_LOCKED", "SESSION_RESTORED", "UNLOCK_FAILED"}
