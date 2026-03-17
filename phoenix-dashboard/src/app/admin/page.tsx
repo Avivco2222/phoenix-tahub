@@ -4,9 +4,12 @@ import React, { useState, useRef, useEffect } from "react";
 import {
   Users, Building2, Receipt, Target, Clock, FileText, Loader2,
   CheckCircle2, Plus, HeartHandshake, Power, Briefcase, Calculator, Sparkles,
-  UserMinus, X, Zap, Scale, Save, BarChart3, Layers, ShieldCheck, AlertOctagon, RefreshCw, Trash2, Edit3
+  UserMinus, X, Zap, Scale, Save, BarChart3, Layers, ShieldCheck, AlertOctagon, RefreshCw, Trash2, Edit3,
+  Filter
 } from "lucide-react";
 import { XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line } from "recharts";
+import { AdminConfigProvider, useAdminConfig, evalFormula } from "./components/targets/useAdminConfig";
+import TargetsTab from "./components/targets/TargetsTab";
 
 export interface FileStatus {
   name: string;
@@ -273,7 +276,7 @@ function AdminCommandCenter() {
         <TabNav id="data" active={activeTab} setter={setActiveTab} icon={<FileText size={18}/>} label="ניהול דאטה (Live Dropzones)" />
         <TabNav id="rules" active={activeTab} setter={setActiveTab} icon={<Filter size={18}/>} label="אזור הסגר ומדיניות טיוב" />
         <TabNav id="analytics" active={activeTab} setter={setActiveTab} icon={<BarChart3 size={18}/>} label="מעקב ביצועים (AI Inbox)" />
-        <TabNav id="targets" active={activeTab} setter={setActiveTab} icon={<Target size={18}/>} label="יעדים ואוטומציות (בבנייה)" />
+        <TabNav id="targets" active={activeTab} setter={setActiveTab} icon={<Target size={18}/>} label="יעדים ואוטומציות" />
       </div>
 
       {/* TAB 1: DATA DROPZONES */}
@@ -464,9 +467,6 @@ function TypeBar({ label, pct, color, count }: TypeBarProps) { return ( <div cla
 function RecruiterRow({ name, dominant, time, rate, insight, color }: RecruiterRowProps) { const dotColor = color === "green" ? "bg-green-500" : color === "red" ? "bg-red-500" : "bg-orange-500"; return ( <tr className="hover:bg-slate-50 transition-colors group"><td className="p-4 font-black text-[#002649] flex items-center gap-3"><div className={`w-2 h-2 rounded-full ${dotColor}`} /> {name}</td><td className="p-4 font-bold text-slate-600 text-xs">{dominant}</td><td className="p-4 font-black text-[#002649]">{time}</td><td className="p-4"><span className={`px-2 py-1 rounded-lg font-bold text-[10px] ${color === 'red' ? 'bg-red-50 text-red-600' : 'bg-green-50 text-green-700'}`}>{rate}</span></td><td className="p-4 text-xs font-medium text-slate-500 italic max-w-xs">{insight}</td></tr> ); }
 const DROPZONE_COLOR_MAP: Record<string, string> = { blue: "border-blue-200 bg-blue-50/50 hover:border-blue-500", orange: "border-orange-200 bg-orange-50/50 hover:border-orange-500", green: "border-green-200 bg-green-50/50 hover:border-green-500", pink: "border-pink-200 bg-pink-50/50 hover:border-pink-500", purple: "border-purple-200 bg-purple-50/50 hover:border-purple-500", emerald: "border-emerald-200 bg-emerald-50/50 hover:border-emerald-500", red: "border-red-200 bg-red-50/50 hover:border-red-500" };
 function DropzoneBox({ title, icon, color, status, inputRef, onUpload, uploading }: DropzoneBoxProps) { const isError = status.status === "error"; return ( <button type="button" className={`border-2 border-dashed rounded-3xl p-6 transition-all cursor-pointer flex flex-col items-center text-center relative group w-full text-inherit ${isError ? 'border-red-500 bg-red-50' : DROPZONE_COLOR_MAP[color]}`} onClick={() => inputRef.current?.click()} > <input type="file" ref={inputRef} className="hidden" onChange={onUpload} accept=".csv, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/vnd.ms-excel" /> <div className={`w-14 h-14 rounded-full flex items-center justify-center shadow-sm mb-4 transition-transform ${isError ? 'bg-red-500 text-white' : 'bg-white text-[#002649] group-hover:scale-110'}`}> {uploading ? <Loader2 size={24} className="animate-spin text-slate-400"/> : isError ? <X size={24} /> : icon} </div> <h3 className="font-black text-[#002649] text-sm mb-1">{title}</h3> <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-4">גרור/לחץ להעלאה</div> {isError ? ( <div className="w-full bg-red-100/80 p-3 rounded-2xl text-[10px] font-bold text-red-800 text-right border border-red-200"> שגיאה: {status.errorMsg} </div> ) : ( <div className="w-full bg-white p-3 rounded-2xl text-[10px] space-y-1.5 text-right text-slate-600 shadow-sm border border-slate-100"> <div className="flex justify-between items-center border-b border-slate-100 pb-1.5"><span className="font-bold opacity-50">קובץ:</span><span className="font-black text-[#002649] truncate max-w-[100px]">{status.name}</span></div> <div className="flex justify-between items-center"><span className="font-bold opacity-50">רשומות תקינות:</span><span className="font-black text-green-600">{status.rows}</span></div> </div> )} </button> ); }
-import { Filter } from "lucide-react";
-import { AdminConfigProvider, useAdminConfig, evalFormula } from "./components/targets/useAdminConfig";
-import TargetsTab from "./components/targets/TargetsTab";
 function TabNav({ id, active, setter, icon, label }: TabNavProps) { const isActive = active === id; return ( <button onClick={() => setter(id)} className={`flex items-center gap-2 px-6 py-2.5 rounded-xl font-black text-sm transition-all ${isActive ? 'bg-[#002649] text-white shadow-md' : 'text-slate-500 hover:text-[#002649] hover:bg-slate-200/50'}`}> {icon} {label} </button> ); }
 
 export default function AdminPage() {

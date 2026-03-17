@@ -8,10 +8,15 @@ const VARIABLES = ["hires", "offers", "interviews", "avg_days_open", "applicatio
 const OPERATORS: Array<KpiFormula["op"]> = ["/", "*", "+", "-"];
 const OP_LABELS: Record<string, string> = { "/": "÷", "*": "×", "+": "+", "-": "−" };
 
+const MOCK_METRICS_VALIDATION: Record<string, number> = {
+  hires: 12, offers: 35, interviews: 89, avg_days_open: 23, applications: 210,
+};
+
 function isValid(f: KpiFormula): boolean {
   if (!f.label.trim()) return false;
   if (!f.varA) return false;
   if (f.op === "/" && f.varB === null) return false;
+  if (f.op === "/" && f.varB !== null && (MOCK_METRICS_VALIDATION[f.varB] ?? 0) === 0) return false;
   return true;
 }
 
