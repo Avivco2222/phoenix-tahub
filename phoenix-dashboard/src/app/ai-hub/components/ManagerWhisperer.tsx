@@ -61,6 +61,10 @@ export default function BrieflyManagerBrief() {
   const job = useMemo(() => SYSTEM_JOBS.find(j => j.id === selectedJob), [selectedJob]);
   const candidateName = useMemo(() => JOB_CANDIDATES[selectedJob]?.find(c => c.id === selectedCandidate)?.name || "המועמד", [selectedJob, selectedCandidate]);
 
+  // OFFLINE-SAFE: generateDraft() is intentionally 100% local.
+  // All data here is hardcoded mock. No API call is made.
+  // When real AI integration is added, replace this body with a fetch() call
+  // to NEXT_PUBLIC_API_URL/api/tools/generate-brief and keep the mock as fallback.
   const generateDraft = () => {
     setSelectedSkills(["חשיבה אנליטית", "AI ודאטה", "אמינות ודיוק"]);
     setSelectedLeadership("performance");
