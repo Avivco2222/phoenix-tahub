@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useMemo } from "react";
+import { useToast } from "@/components/Toast";
 import { 
   Send, CheckCircle2, Zap, FileText, Target, 
   MessageSquare, Briefcase, Sparkles, UserCheck, 
@@ -31,12 +32,14 @@ const SYSTEM_JOBS = [
   { id: "j2", title: "מפתח Backend Java", manager: "רונית לוי" },
 ];
 
-const JOB_CANDIDATES: Record<string, any[]> = {
+interface Candidate { id: string; name: string }
+const JOB_CANDIDATES: Record<string, Candidate[]> = {
   "j1": [{ id: "c1", name: "דניאל אהרוני" }],
   "j2": [{ id: "c2", name: "מיכל לוי" }],
 };
 
 export default function BrieflyManagerBrief() {
+  const { showToast } = useToast();
   const [step, setStep] = useState<"input" | "draft" | "preview">("input");
   const [selectedJob, setSelectedJob] = useState("");
   const [selectedCandidate, setSelectedCandidate] = useState("");
@@ -236,7 +239,7 @@ export default function BrieflyManagerBrief() {
               <h2 className="text-xl font-black text-[#002649]">תצוגת המנהל (Premium Intelligence Card)</h2>
               <div className="flex gap-4 items-center">
                 <button onClick={()=>setStep("draft")} className="text-[10px] font-black text-slate-400 hover:text-slate-600 transition-all uppercase tracking-widest">חזור לעריכה</button>
-                <button onClick={() => alert("הבריף שוגר בהצלחה!")} className="bg-[#EF6B00] text-white px-10 py-3 rounded-2xl font-black text-sm shadow-xl flex items-center gap-2 hover:bg-[#002649] transition-all"><Send size={18}/> שגר בריף</button>
+                <button onClick={() => showToast("הבריף שוגר בהצלחה! (שליחה אמיתית — בקרוב)", "coming-soon")} className="bg-[#EF6B00] text-white px-10 py-3 rounded-2xl font-black text-sm shadow-xl flex items-center gap-2 hover:bg-[#002649] transition-all"><Send size={18}/> שגר בריף</button>
               </div>
            </div>
 
@@ -350,7 +353,7 @@ export default function BrieflyManagerBrief() {
                   <div className="pt-8 border-t border-slate-100 flex flex-col items-center gap-6">
                     <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.3em] opacity-50">נא לבחור פעולה לקידום התהליך</p>
                     <div className="flex gap-4 w-full px-16">
-                      <button onClick={()=>alert("זימון נשלח!")} className="flex-1 bg-[#22c55e] text-white py-6 rounded-[2.5rem] font-black text-lg flex items-center justify-center gap-3 hover:bg-green-700 transition-all shadow-xl hover:scale-[1.03] transform"><CheckCircle2 size={24}/> מעוניין לראיין</button>
+                      <button onClick={() => showToast("זימון ראיון — סנכרון Outlook בקרוב", "coming-soon")} className="flex-1 bg-[#22c55e] text-white py-6 rounded-[2.5rem] font-black text-lg flex items-center justify-center gap-3 hover:bg-green-700 transition-all shadow-xl hover:scale-[1.03] transform"><CheckCircle2 size={24}/> מעוניין לראיין</button>
                       <button onClick={()=>setStep("input")} className="flex-1 bg-white text-slate-400 py-6 rounded-[2.5rem] font-black text-lg flex items-center justify-center gap-3 hover:bg-slate-50 transition-all border-2 border-slate-100 shadow-sm"><X size={20}/> פחות רלוונטי</button>
                     </div>
                     <div className="flex items-center gap-2 opacity-40"><Calendar size={12}/> <span className="text-[9px] font-bold">סנכרון Outlook פעיל</span></div>
