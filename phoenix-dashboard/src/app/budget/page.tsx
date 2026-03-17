@@ -8,6 +8,7 @@ import {
   CalendarDays, Flame, History
 } from "lucide-react";
 import { PieChart as RechartsPie, Pie, Cell, ResponsiveContainer, Tooltip as RechartsTooltip } from "recharts";
+import { useToast } from "@/components/Toast";
 
 interface Category {
   id: number;
@@ -72,6 +73,7 @@ function getStatusColor(status: string): string {
 }
 
 export default function UnifiedBudgetPage() {
+  const { showToast } = useToast();
   const [activeTab, setActiveTab] = useState("analytics");
   const [isLoading, setIsLoading] = useState(true);
   const [isOfflineMode, setIsOfflineMode] = useState(false);
@@ -213,7 +215,7 @@ export default function UnifiedBudgetPage() {
       
     } catch (err) {
       console.warn("[FinOps upload] File upload failed", err);
-      alert("שגיאה בהעלאת הקובץ. ודא ששרת הפייתון רץ.");
+      showToast("שגיאה בהעלאת הקובץ — ודא שהשרת פעיל", "error");
     } finally {
       setIsUploading(false);
       // איפוס התיבה כדי שאפשר יהיה להעלות שוב את אותו קובץ אם נרצה
