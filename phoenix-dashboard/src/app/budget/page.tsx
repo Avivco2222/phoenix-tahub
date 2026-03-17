@@ -100,6 +100,7 @@ export default function UnifiedBudgetPage() {
   const fetchFinopsData = async () => {
     setIsLoading(true);
     try {
+      setIsOfflineMode(false);
       const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/finops/data`);
       const data = await res.json();
       
