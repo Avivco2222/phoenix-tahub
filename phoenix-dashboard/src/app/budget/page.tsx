@@ -212,7 +212,7 @@ export default function UnifiedBudgetPage() {
       await handleSaveInvoice(newInvoice);
       
     } catch (err) {
-      console.error(err);
+      console.warn("[FinOps upload] File upload failed", err);
       alert("שגיאה בהעלאת הקובץ. ודא ששרת הפייתון רץ.");
     } finally {
       setIsUploading(false);
