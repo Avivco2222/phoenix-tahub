@@ -1270,3 +1270,60 @@ async def auth_log(request: Request):
         # Never crash — auth logging must not block the client
         print(f"[auth/log] Failed to write audit log: {e}")
         return {"status": "error", "message": str(e)}
+
+
+# ==========================================
+# ADMIN CONFIG — KPI Formulas, Rules, Visibility
+# ==========================================
+ADMIN_CONFIG_DEFAULTS = {
+    "formulas": [
+        {"id": "conv_rate", "label": "Conversion Rate %", "varA": "hires", "op": "/", "varB": "offers", "scale": 100},
+        {"id": "ttf", "label": "Time-to-Fill (avg)", "varA": "avg_days_open", "op": "+", "varB": None, "scale": 1},
+    ],
+    "rules": [
+        {"id": "r1", "metric": "interviews_per_week", "op": "<", "threshold": 7,
+         "action": "toast", "actionLabel": "ממוצע ראיונות נמוך מהיעד", "enabled": True},
+    ],
+    "visibility": {
+        "kpi_conversion": True,
+        "kpi_ttf": True,
+        "chart_sources": True,
+        "table_recruiters": True,
+    }
+}
+
+@app.get("/api/admin/config")
+async def get_admin_config():
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT value FROM system_settings WHERE key='admin_config'")
+    row = c.fetchone()
+    conn.close()
+    if row:
+        return json.loads(row[0])
+    return ADMIN_CONFIG_DEFAULTS
+
+@app.post("/api/admin/config")
+async def save_admin_config(request: Request, section: str = "general"):
+    payload = await request.json()
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT value FROM system_settings WHERE key='admin_config'")
+    row = c.fetchone()
+    existing = json.loads(row[0]) if row else {}
+    merged = {**existing, **payload}
+    c.execute(
+        "INSERT OR REPLACE INTO system_settings (key, value) VALUES ('admin_config', ?)",
+        (json.dumps(merged),)
+    )
+    conn.commit()
+    conn.close()
+    changed_keys = list(payload.keys())
+    log_audit_action(
+        action="ADMIN_CONFIG_UPDATE",
+        status="success",
+        details=f"section={section} | keys_changed={changed_keys}",
+        user="admin-frontend"
+    )
+    timestamp = pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")
+    return {"status": "saved", "timestamp": timestamp}
