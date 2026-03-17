@@ -130,7 +130,8 @@ interface EtlRule {
   active: boolean;
 }
 
-export default function AdminCommandCenter() {
+function AdminCommandCenter() {
+  const { config: adminConfig } = useAdminConfig();
   const [activeTab, setActiveTab] = useState("data");
   
   // --- Live Data States ---
@@ -400,7 +401,12 @@ export default function AdminCommandCenter() {
         <div className="space-y-8 animate-in slide-in-from-right-4">
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
             <StatMiniCard label="משימות AI שנוצרו" value={analyticsData.stats.total_tasks} sub="החודש" color="text-[#002649]" />
-            <StatMiniCard label="ממוצע סגירה שבועי" value={`${analyticsData.stats.avg_close_rate}%`} sub="יעד: 85%" color="text-green-600" />
+            <StatMiniCard
+              label={adminConfig.formulas.find(f => f.id === "conv_rate")?.label ?? "Conversion Rate %"}
+              value={`${evalFormula(adminConfig.formulas.find(f => f.id === "conv_rate") ?? adminConfig.formulas[0]).toFixed(1)}%`}
+              sub="מחושב לפי נוסחת ה-Admin"
+              color="text-green-600"
+            />
             <StatMiniCard label="זמן תגובה (חציוני)" value={analyticsData.stats.median_response_hours} sub="שעות" color="text-blue-600" />
             <StatMiniCard label="חריגות SLA חוזרות" value={analyticsData.stats.urgent_sla_breaches} sub="דחופות" color="text-red-500" />
           </div>
@@ -446,14 +452,8 @@ export default function AdminCommandCenter() {
         </div>
       )}
 
-      {/* TAB 4: TARGETS (Parked) */}
-      {activeTab === "targets" && (
-        <div className="flex flex-col items-center justify-center py-20 animate-in zoom-in-95">
-          <div className="w-24 h-24 bg-slate-100 rounded-full flex items-center justify-center mb-6 text-slate-400"><Workflow size={48} /></div>
-          <h2 className="text-2xl font-black text-[#002649]">מפעל היעדים בבנייה</h2>
-          <p className="text-slate-500 mt-2 text-center max-w-md">המודול הזה חונה כרגע בצד. אנחנו נחזור אליו לאחר שנסיים לייצב את מודולי הליבה של ארגז הכלים ובריאות המשרה.</p>
-        </div>
-      )}
+      {/* TAB 4: TARGETS & AUTOMATIONS */}
+      {activeTab === "targets" && <TargetsTab />}
     </div>
   );
 }
@@ -465,4 +465,14 @@ function RecruiterRow({ name, dominant, time, rate, insight, color }: RecruiterR
 const DROPZONE_COLOR_MAP: Record<string, string> = { blue: "border-blue-200 bg-blue-50/50 hover:border-blue-500", orange: "border-orange-200 bg-orange-50/50 hover:border-orange-500", green: "border-green-200 bg-green-50/50 hover:border-green-500", pink: "border-pink-200 bg-pink-50/50 hover:border-pink-500", purple: "border-purple-200 bg-purple-50/50 hover:border-purple-500", emerald: "border-emerald-200 bg-emerald-50/50 hover:border-emerald-500", red: "border-red-200 bg-red-50/50 hover:border-red-500" };
 function DropzoneBox({ title, icon, color, status, inputRef, onUpload, uploading }: DropzoneBoxProps) { const isError = status.status === "error"; return ( <button type="button" className={`border-2 border-dashed rounded-3xl p-6 transition-all cursor-pointer flex flex-col items-center text-center relative group w-full text-inherit ${isError ? 'border-red-500 bg-red-50' : DROPZONE_COLOR_MAP[color]}`} onClick={() => inputRef.current?.click()} > <input type="file" ref={inputRef} className="hidden" onChange={onUpload} accept=".csv, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/vnd.ms-excel" /> <div className={`w-14 h-14 rounded-full flex items-center justify-center shadow-sm mb-4 transition-transform ${isError ? 'bg-red-500 text-white' : 'bg-white text-[#002649] group-hover:scale-110'}`}> {uploading ? <Loader2 size={24} className="animate-spin text-slate-400"/> : isError ? <X size={24} /> : icon} </div> <h3 className="font-black text-[#002649] text-sm mb-1">{title}</h3> <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-4">גרור/לחץ להעלאה</div> {isError ? ( <div className="w-full bg-red-100/80 p-3 rounded-2xl text-[10px] font-bold text-red-800 text-right border border-red-200"> שגיאה: {status.errorMsg} </div> ) : ( <div className="w-full bg-white p-3 rounded-2xl text-[10px] space-y-1.5 text-right text-slate-600 shadow-sm border border-slate-100"> <div className="flex justify-between items-center border-b border-slate-100 pb-1.5"><span className="font-bold opacity-50">קובץ:</span><span className="font-black text-[#002649] truncate max-w-[100px]">{status.name}</span></div> <div className="flex justify-between items-center"><span className="font-bold opacity-50">רשומות תקינות:</span><span className="font-black text-green-600">{status.rows}</span></div> </div> )} </button> ); }
 import { Filter } from "lucide-react";
+import { AdminConfigProvider, useAdminConfig, evalFormula } from "./components/targets/useAdminConfig";
+import TargetsTab from "./components/targets/TargetsTab";
 function TabNav({ id, active, setter, icon, label }: TabNavProps) { const isActive = active === id; return ( <button onClick={() => setter(id)} className={`flex items-center gap-2 px-6 py-2.5 rounded-xl font-black text-sm transition-all ${isActive ? 'bg-[#002649] text-white shadow-md' : 'text-slate-500 hover:text-[#002649] hover:bg-slate-200/50'}`}> {icon} {label} </button> ); }
+
+export default function AdminPage() {
+  return (
+    <AdminConfigProvider>
+      <AdminCommandCenter />
+    </AdminConfigProvider>
+  );
+}
