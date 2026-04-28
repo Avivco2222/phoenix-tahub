@@ -52,7 +52,3 @@ node_modules/
 .next/
 The_FNX_TAHub_Backup_V1/
 The_FNX_TAHub_Backup_V2/
-# Python
-__pycache__/
-*.pyc
-.venv/
