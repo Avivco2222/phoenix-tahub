@@ -1,4 +1,3 @@
-@import url('https://fonts.googleapis.com/css2?family=Heebo:wght@300;400;500;700;900&display=swap');
 @import "tailwindcss";
 
 :root {
@@ -37,6 +36,116 @@ body {
   100% { transform: translateY(100vh) rotate(720deg) scale(0.5); opacity: 0; }
 }
 .animate-confetti { animation: confetti-fall linear forwards; }
+
+/* === Greeting icon — entrance + continuous animations === */
+
+/* Elegant entrance: starts small + rotated + transparent, springs into place,
+   slight overshoot for life, then settles. Runs once on mount. */
+@keyframes greeting-enter {
+  0%   { opacity: 0; transform: scale(0.7) translateY(5px); filter: blur(2px); }
+  60%  { opacity: 1; transform: scale(1.04) translateY(-1px); filter: blur(0); }
+  100% { opacity: 1; transform: scale(1) translateY(0); }
+}
+.animate-greeting-enter {
+  animation: greeting-enter 0.6s cubic-bezier(0.22, 1, 0.36, 1) both;
+  transform-origin: center;
+}
+
+/* The Phoenix orbit ring rotates very slowly. Delayed start so it kicks in after
+   the entrance animation finishes — feels like the ring "wakes up". */
+@keyframes greeting-orbit {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+.animate-greeting-orbit {
+  animation: greeting-orbit 18s linear infinite;
+  animation-delay: 0.85s;
+  transform-origin: center;
+}
+
+/* Inner icon: gentle breathing pulse — used by morning/evening tiles. */
+@keyframes greeting-pulse-soft {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50%      { transform: scale(1.05); opacity: 0.92; }
+}
+.animate-greeting-pulse-soft {
+  animation: greeting-pulse-soft 4s ease-in-out infinite;
+  animation-delay: 0.85s;
+}
+
+/* Noon variant: sun spinning slowly. */
+@keyframes greeting-spin-slow {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+.animate-greeting-spin-slow {
+  animation: greeting-spin-slow 22s linear infinite;
+  animation-delay: 0.85s;
+  transform-origin: center;
+}
+
+/* Night variant: gentle bob like moon hanging in the sky. */
+@keyframes greeting-bob-soft {
+  0%, 100% { transform: translateY(0)    rotate(-3deg); }
+  50%      { transform: translateY(-2px) rotate(3deg); }
+}
+.animate-greeting-bob-soft {
+  animation: greeting-bob-soft 5s ease-in-out infinite;
+  animation-delay: 0.85s;
+}
+
+/* === ICON POLISH TOKENS — consistent micro-interactions across the app === */
+
+/* Soft scale pulse — used on KPI/highlight icons. */
+@keyframes icon-pulse-soft {
+  0%, 100% { transform: scale(1); }
+  50%      { transform: scale(1.07); }
+}
+.icon-pulse-soft { animation: icon-pulse-soft 2.4s ease-in-out infinite; }
+
+/* Slow spin — for orbit/loop iconography. */
+@keyframes icon-spin-slow { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+.icon-spin-slow { animation: icon-spin-slow 12s linear infinite; }
+
+/* Tilt on hover — brings life to clickable icons (cards, tabs). */
+.icon-tilt { transition: transform 0.2s ease-out; }
+.icon-tilt:hover { transform: rotate(-4deg) scale(1.05); }
+
+/* Phoenix glow — orange halo for active/important elements. */
+.icon-glow-phoenix {
+  filter: drop-shadow(0 0 6px rgba(239, 107, 0, 0.45));
+  transition: filter 0.25s ease-out;
+}
+.icon-glow-phoenix-soft {
+  filter: drop-shadow(0 0 3px rgba(239, 107, 0, 0.3));
+}
+
+/* Sidebar nav: tiny RTL-aware nudge on hover. dir="rtl" is set on <html>, so
+   translateX(-2px) visually pulls the row in the reading direction. */
+.nav-nudge { transition: transform 0.2s ease-out; }
+.nav-nudge:hover { transform: translateX(-2px); }
+
+/* GlobalSearch hover-expand fallback: CSS-only hover so users get the expand
+   even on devices where React's mouseenter doesn't fire (or before hydration).
+   The `data-search-pill` element grows to 320px when its parent is hovered. */
+.search-wrapper:hover [data-search-pill] {
+  width: 320px !important;
+  background: white !important;
+  box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1), 0 2px 4px -2px rgba(0,0,0,0.1) !important;
+}
+
+/* Respect reduced motion preference. */
+@media (prefers-reduced-motion: reduce) {
+  .animate-greeting-enter,
+  .animate-greeting-orbit,
+  .animate-greeting-pulse-soft,
+  .animate-greeting-spin-slow,
+  .animate-greeting-bob-soft,
+  .icon-pulse-soft,
+  .icon-spin-slow,
+  .icon-tilt:hover,
+  .nav-nudge:hover { animation: none; transform: none; }
+}
 
 /* Print Settings for Executive Brief */
 @media print {

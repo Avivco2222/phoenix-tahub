@@ -1,14 +1,17 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
-import { 
-  Users, CheckCircle, Clock, AlertTriangle, BarChart3, 
-  Filter, Target, ShieldCheck, Briefcase, UserCheck, 
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { useAccess } from "@/context/AccessContext";
+import {
+  Users, CheckCircle, Clock, AlertTriangle, BarChart3,
+  Filter, Target,
   Activity, Layers, Bell, CheckCircle2, Archive, Trophy,
-  ThumbsUp, Send, Plus, Trash2, Info, 
+  ThumbsUp, Send, Plus, Trash2, Info,
   PieChart, Percent, UserMinus, ArrowDownToLine, Zap,
   ChevronDown, ChevronUp, ArrowUpDown, BadgeDollarSign,
-  ArrowRightLeft, Linkedin, RotateCcw, ArrowRight
+  ArrowRightLeft, Linkedin, RotateCcw, ArrowRight,
+  Sunrise, Sun, Sunset, Moon,
 } from "lucide-react";
 import { AreaChart, Area, XAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, Legend, PieChart as RechartsPie, Pie, Cell } from 'recharts';
 
@@ -61,83 +64,145 @@ interface StrategicSourceCardProps {
   totalHires: number;
 }
 
-// --- Roles & Meta ---
-const ROLES = [
-  { id: "admin", title: "מנהל.ת גיוס (אדמין)", icon: <ShieldCheck size={16} /> },
-  { id: "recruiter", title: "מגייס.ת (מור)", icon: <UserCheck size={16} /> },
-  { id: "hrbp", title: "HRBP / מנהל.ת מחלקה", icon: <Briefcase size={16} /> },
-  { id: "hiring_manager", title: "מנהל.ת מגייס.ת", icon: <Target size={16} /> }
-];
+type TooltipPlacement = "top" | "bottom";
+type TooltipCoords = { top: number; left: number };
+
+interface NeglectedJob {
+  job_title: string;
+  department: string;
+  recruiter_name: string;
+  team_name: string;
+  days_open: number;
+  new_candidates_last_14d: number;
+  pending_candidates_count: number;
+  days_since_last_candidate_action: number;
+  neglect_reason: string;
+  neglect_score: number;
+  severity: "critical" | "high" | "medium";
+}
+
+interface NeglectPayload {
+  thresholds: {
+    slaDaysThreshold: number;
+    lowCandidatesThreshold: number;
+    pendingCvThreshold: number;
+    staleActionDaysThreshold: number;
+    criticalScoreThreshold: number;
+  };
+  summary: {
+    total_neglected_jobs: number;
+    critical_jobs: number;
+    stale_jobs_5d: number;
+    recruiters_impacted: number;
+    critical_ratio_pct?: number;
+  };
+  top_jobs: NeglectedJob[];
+}
 
 const FILTERS_META = {
-  departments: ["R&D", "Sales & Service", "Finance", "Marketing", "HR"],
-  jobs: ["אנליסט נתונים", "מפתח Backend Java", "נציג/ת מכירות", "מנהל/ת מוצר", "ראש צוות R&D"],
-  recruiters: ["מור אהרון", "ליטל גולדפרב", "גיא רג'ואן", "רז בר-און", "אביב כהן"]
+  departments: [] as string[],
+  jobs: [] as string[],
+  recruiters: [] as string[]
 };
 
 // --- Mock Data: AI Tasks ---
-const INITIAL_AI_TASKS = [
-  { id: "t1", severity: "high", tags: ["AI Insight", "SLA"], title: "משרה אדומה - אנליסט נתונים", desc: "המשרה פתוחה 45 ימים (מעל תקן). נוצל 100% מתקציב הקמפיין ללא הגעה ליעד ראיונות.", assignee: "ליטל גולדפרב", status: "open", time: "לפני שעתיים" },
-  { id: "t2", severity: "positive", tags: ["AI Performance", "שימור"], title: "שיא שבועי בראיונות טלפוניים!", desc: "גיא קיים השבוע 24 ראיונות טלפוניים, עלייה של 30% ביחס לממוצע החודשי שלו. מגמה חיובית מאוד במשפך ה-R&D.", assignee: "גיא רג'ואן", status: "open", time: "היום בבוקר" },
-  { id: "t3", severity: "medium", tags: ["AI Insight", "Ghosting"], title: "מועמד בסיכון נטישה (Ghosting)", desc: "המועמד דניאל כהן סיים ראיון HR לפני 14 יום. ממתין למשוב ממנהל מקצועי (R&D).", assignee: "מור אהרון", status: "open", time: "אתמול" }
-];
+const INITIAL_AI_TASKS: AITask[] = [];
 
 // --- Mock Data: Secondary Analytics ---
-const recruiterLeaderboard = [ 
-  { name: 'מור', hires: 4, active_jobs: 14, avg_sla: 28, score: 95 }, 
-  { name: 'גיא', hires: 5, active_jobs: 12, avg_sla: 25, score: 92 }, 
-  { name: 'רז', hires: 3, active_jobs: 18, avg_sla: 31, score: 88 }, 
-  { name: 'ליטל', hires: 1, active_jobs: 15, avg_sla: 42, score: 70 } 
-];
+const recruiterLeaderboard: Array<{ name: string; hires: number; active_jobs: number; avg_sla: number; score: number }> = [];
 
-const rejectReasons = [ { name: "שכר נמוך מהשוק", value: 45 }, { name: "גמישות/היברידי", value: 25 }, { name: "רילוקיישן/מרחק", value: 15 }, { name: "אחר", value: 15 } ];
-const withdrawReasons = [ { name: "הצעה מתחרה", value: 50 }, { name: "שכר נמוך", value: 20 }, { name: "תהליך ארוך מדי", value: 20 }, { name: "אחר", value: 10 } ];
-const attritionReasons = [ { name: "שכר ותנאים", value: 40 }, { name: "חוסר אופק קידום", value: 30 }, { name: "מנהל ישיר", value: 20 }, { name: "אישי/רילוקיישן", value: 10 } ];
+const rejectReasons: Array<{ name: string; value: number }> = [];
+const withdrawReasons: Array<{ name: string; value: number }> = [];
+const attritionReasons: Array<{ name: string; value: number }> = [];
 const PIE_COLORS = ['#EF6B00', '#002649', '#64748B', '#cbd5e1'];
 
-const sourcesData = [
-  { category: "חברות השמה", cvs: 150, phone: 45, hires: 5, cph: "₪28,000", sources: [
-    { name: "נישה פלייסמנט", cvs: 80, phone: 25, hires: 3, cph: "₪30,000" },
-    { name: "GotFriends", cvs: 70, phone: 20, hires: 2, cph: "₪25,000" }
-  ]},
-  { category: "אתרי דרושים", cvs: 1200, phone: 80, hires: 2, cph: "₪4,500", sources: [
-    { name: "AllJobs", cvs: 800, phone: 50, hires: 1, cph: "₪6,000" },
-    { name: "Drushim", cvs: 400, phone: 30, hires: 1, cph: "₪3,000" }
-  ]},
-  { category: "מקורות אורגניים", cvs: 450, phone: 120, hires: 14, cph: "₪1,200", sources: [
-    { name: "חבר מביא חבר", cvs: 150, phone: 60, hires: 9, cph: "₪3,500" },
-    { name: "LinkedIn (אורגני)", cvs: 200, phone: 40, hires: 3, cph: "₪0" },
-    { name: "אתר קריירה", cvs: 100, phone: 20, hires: 2, cph: "₪0" }
-  ]}
-];
+const sourcesData: Array<{ category: string; cvs: number; phone: number; hires: number; cph: string; sources: Array<{ name: string; cvs: number; phone: number; hires: number; cph: string }> }> = [];
 
-const activeJobsRanking = [
-  { job: "מפתח Backend Java", cvs: 145, status: "תקין" },
-  { job: "מנהל/ת מוצר", cvs: 85, status: "תקין" },
-  { job: "אנליסט נתונים", cvs: 32, status: "אזהרה" },
-  { job: "נציג/ת מכירות - מוקד", cvs: 12, status: "קריטי" },
-  { job: "ראש צוות R&D", cvs: 4, status: "קריטי" }
-];
+const activeJobsRanking: Array<{ job: string; cvs: number; status: string }> = [];
 
 // --- Dynamic Slogans ---
 const SLOGANS = [
-  "כיף לראות אותך, מה יעניין אותך לחקור איתי היום?",
-  "הקפה מוכן? ☕ בוא נצלול לנתונים...",
-  "עוד יום, עוד הזדמנות לשבור שיאי גיוס!",
-  "האלגוריתם עבד כל הלילה, יש לנו תובנות חמות בשבילך 🔥",
-  "מוכן למצוא את הטאלנט הבא של הפניקס?",
-  "מספרים לא משקרים, אבל הם בהחלט מספרים סיפור 📖",
-  "מאחורי כל גרף מסתתר עובד (או מועמד שסינן אותנו 😉)",
-  "זמן מעולה לקבל החלטות מבוססות דאטה 🎯"
+  "מיקוד יומי קטן יוצר תוצאות גיוס גדולות.",
+  "היום סוגרים פערי SLA לפני שהם הופכים למשבר.",
+  "כל משימה שנסגרת עכשיו חוסכת שבוע של עיכוב בהמשך.",
+  "חוויית מועמד טובה מתחילה בתגובה מהירה.",
+  "נתונים חכמים, החלטות חדות, גיוס מדויק.",
 ];
 
+function getRandomSlogan() {
+  return SLOGANS[Math.floor(Math.random() * SLOGANS.length)];
+}
+
+function getGreetingByHour(): { text: string; icon: React.ReactNode } {
+  const hour = new Date().getHours();
+  if (hour >= 5 && hour < 12) return {
+    text: "בוקר טוב",
+    icon: (
+      <span className="inline-block animate-greeting-enter" style={{ transformOrigin: "center" }}>
+        <Sunrise
+          size={34}
+          strokeWidth={1.25}
+          className="animate-greeting-pulse-soft"
+          style={{ color: "#f59e0b" }}
+        />
+      </span>
+    ),
+  };
+  if (hour >= 12 && hour < 17) return {
+    text: "צהריים טובים",
+    icon: (
+      <span className="inline-block animate-greeting-enter" style={{ transformOrigin: "center" }}>
+        <Sun
+          size={34}
+          strokeWidth={1.25}
+          className="animate-greeting-spin-slow"
+          style={{ color: "#eab308" }}
+        />
+      </span>
+    ),
+  };
+  if (hour >= 17 && hour < 21) return {
+    text: "ערב טוב",
+    icon: (
+      <span className="inline-block animate-greeting-enter" style={{ transformOrigin: "center" }}>
+        <Sunset
+          size={34}
+          strokeWidth={1.25}
+          className="animate-greeting-pulse-soft"
+          style={{ color: "#f97316" }}
+        />
+      </span>
+    ),
+  };
+  return {
+    text: "לילה טוב",
+    icon: (
+      <span className="inline-block animate-greeting-enter" style={{ transformOrigin: "center" }}>
+        <Moon
+          size={30}
+          strokeWidth={1.25}
+          className="animate-greeting-bob-soft"
+          style={{ color: "#818cf8" }}
+        />
+      </span>
+    ),
+  };
+}
+
 export default function DashboardPage() {
-  const [currentRole, setCurrentRole] = useState("admin"); 
-  const [tasks, setTasks] = useState(INITIAL_AI_TASKS);
+  const { effectiveUser } = useAccess();
+  const apiBase = process.env.NEXT_PUBLIC_API_URL ?? "";
+  const strictLiveData = true;
+  const currentRole = effectiveUser.role;
+  const [tasks, setTasks] = useState<AITask[]>([]);
+  const [liveStats, setLiveStats] = useState<{ total_candidates: number; hired_this_month: number; avg_days: number; sla_alerts: number; chart_data: {name:string;candidates:number}[] } | null>(null);
+  const [liveMeta, setLiveMeta] = useState<{departments:string[];recruiters:string[]}>({departments: [], recruiters: []});
+  const [neglectData, setNeglectData] = useState<NeglectPayload | null>(null);
+  const [liveDataError, setLiveDataError] = useState<string | null>(null);
   
   // Greeting Engine
-  const [slogan, setSlogan] = useState("");
-  const [greeting, setGreeting] = useState({ text: "בוקר טוב", icon: "🌅" });
+  const [slogan] = useState(getRandomSlogan);
+  const [greeting] = useState(getGreetingByHour);
 
   // Slicers & Comparison Engine
   const [timeframe, setTimeframe] = useState("30days");
@@ -157,41 +222,66 @@ export default function DashboardPage() {
   
   // Manual Task
   const [isCreatingTask, setIsCreatingTask] = useState(false);
-  const [newTask, setNewTask] = useState({ title: "", desc: "", assignee: "מור אהרון", severity: "medium", type: "task" });
+  const [newTask, setNewTask] = useState({ title: "", desc: "", assignee: "", severity: "medium", type: "task" });
 
   useEffect(() => {
-    // Random Slogan
-    setSlogan(SLOGANS[Math.floor(Math.random() * SLOGANS.length)]);
-    
-    // Time of day logic
-    const hour = new Date().getHours();
-    if (hour >= 5 && hour < 12) setGreeting({ text: "בוקר טוב", icon: "🌅" });
-    else if (hour >= 12 && hour < 17) setGreeting({ text: "צהריים טובים", icon: "☀️" });
-    else if (hour >= 17 && hour < 21) setGreeting({ text: "ערב טוב", icon: "🌇" });
-    else setGreeting({ text: "לילה טוב", icon: "🌙" });
-  }, []);
+    const loadLive = async () => {
+      try {
+        setLiveDataError(null);
+        const [statsRes, metaRes] = await Promise.all([
+          fetch(`${apiBase}/stats?timeframe=${timeframe}&department=${department}&recruiter=${recruiter}`, { cache: "no-store" }),
+          fetch(`${apiBase}/meta`, { cache: "no-store" }),
+        ]);
+        if (statsRes.ok) {
+          const stats = await statsRes.json();
+          setLiveStats(stats);
+        }
+        if (metaRes.ok) {
+          const meta = await metaRes.json();
+          setLiveMeta({
+            departments: Array.isArray(meta?.departments) ? meta.departments : [],
+            recruiters: Array.isArray(meta?.recruiters) ? meta.recruiters : [],
+          });
+        }
+      } catch {
+        setLiveDataError("Live API is unavailable");
+      }
+    };
+    loadLive();
+  }, [apiBase, timeframe, department, recruiter]);
+
+  useEffect(() => {
+    const loadNeglect = async () => {
+      try {
+        const res = await fetch(`${apiBase}/jobs/neglect-alerts?limit=5`, { cache: "no-store" });
+        if (res.ok) {
+          const payload = await res.json();
+          setNeglectData(payload);
+        }
+      } catch {
+        setNeglectData(null);
+      }
+    };
+    loadNeglect();
+  }, [apiBase]);
 
   // --- Dynamic Live Data (Slicers Engine) - computed via useMemo (deterministic seed for purity) ---
   type ChartPoint = { name: string; candidates: number; compCandidates?: number };
   const kpis = useMemo(() => {
-    const deptFactor = department !== 'all' ? 0.4 : 1;
-    const jobFactor = job !== 'all' ? 0.15 : 1;
-    const recFactor = recruiter !== 'all' ? 0.25 : 1;
-    const timeFactor = timeframe === 'year' ? 12 : timeframe === 'q1' ? 3 : timeframe === 'week' ? 0.25 : 1;
-    const factor = deptFactor * jobFactor * recFactor * timeFactor;
-    const seed = (timeframe.length + department.length * 7 + job.length * 31 + recruiter.length * 13) % 100 / 100;
-    const e2eNoise = 1 + (seed * 0.1 - 0.05);
+    if (!liveStats) {
+      return { hires: 0, attrition: 0, applications: 0, e2e: 0, ttf: 0, oar: 0, cph: 0, ghosting: 0 };
+    }
     return {
-      hires: Math.max(1, Math.floor(28 * factor)),
-      attrition: Math.max(0, Math.floor(4 * factor)),
-      applications: Math.max(10, Math.floor(8400 * factor)),
-      e2e: Number((0.33 * e2eNoise).toFixed(2)),
-      ttf: Math.max(12, Math.floor(34 * (1.1 - factor * 0.1))),
-      oar: Math.min(100, Math.floor(84 * (1 + factor * 0.05))),
-      cph: Math.max(1500, Math.floor(7820 * (1.2 - factor * 0.2))),
-      ghosting: Math.max(0, Math.floor(3 * factor))
+      hires: Number(liveStats.hired_this_month ?? 0),
+      attrition: 0,
+      applications: Number(liveStats.total_candidates ?? 0),
+      e2e: 0,
+      ttf: Number(liveStats.avg_days ?? 0),
+      oar: 0,
+      cph: 0,
+      ghosting: Number(liveStats.sla_alerts ?? 0),
     };
-  }, [timeframe, department, job, recruiter]);
+  }, [liveStats]);
 
   const dynamicChart = useMemo<ChartPoint[]>(() => {
     const deptFactor = department !== 'all' ? 0.4 : 1;
@@ -201,13 +291,20 @@ export default function DashboardPage() {
     const factor = deptFactor * jobFactor * recFactor * timeFactor;
     const seed = (timeframe.length + department.length * 7 + job.length * 31 + recruiter.length * 13) % 100 / 100;
     const noise = 1 + seed * 0.2;
+    if (liveStats?.chart_data?.length) {
+      return liveStats.chart_data.map((p) => ({
+        name: p.name,
+        candidates: p.candidates,
+        compCandidates: Math.round(p.candidates * 0.9),
+      }));
+    }
     return [
       { name: "נק' 1", candidates: Math.floor(120 * factor * noise), compCandidates: Math.floor(100 * factor * noise) },
       { name: "נק' 2", candidates: Math.floor(180 * factor * noise), compCandidates: Math.floor(150 * factor * noise) },
       { name: "נק' 3", candidates: Math.floor(140 * factor * noise), compCandidates: Math.floor(160 * factor * noise) },
       { name: "נק' 4", candidates: Math.floor(210 * factor * noise), compCandidates: Math.floor(190 * factor * noise) }
     ];
-  }, [timeframe, department, job, recruiter]);
+  }, [timeframe, department, job, recruiter, liveStats]);
 
   // שמות דינמיים לגרף ההשוואות
   const getPrimaryName = () => recruiter !== 'all' ? recruiter : department !== 'all' ? department : 'נוכחי';
@@ -231,22 +328,22 @@ export default function DashboardPage() {
       setNotifications(prev => prev.filter(n => n.id !== hasKudos.id));
     }
     
-    // Simulate inactivity warning
-    if (currentRole === "recruiter" && !notifications.some(n => n.type === 'warning')) {
-      addNotification("recruiter", "לא נכנסת כבר 3 ימים למערכת. נוכחותך הרציפה נדרשת על מנת למנוע חריגות SLA, לשמור על חוויית מועמד, ולעמוד ביעדי המחלקה.", "warning");
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentRole]);
+    // Inactivity warnings are now driven entirely by the backend
+    // (POST /api/admin/check-inactive-recruiters fires real notifications to
+    // the recruiter AND admins via the notifications table). No client-side
+    // simulation here — keeps the toast clean and avoids false positives.
+  }, [activeNotifications, currentRole]);
 
   // --- Actions ---
   const handleTaskAction = (id: string, action: string, task: AITask) => {
     setTasks(tasks.map(t => t.id === id ? { ...t, status: action } : t));
-    if (action === 'done' && currentRole === 'recruiter') addNotification('admin', `מור אהרון השלימה משימה: ${task.title}`, 'success');
+    if (action === 'done' && currentRole === 'recruiter') addNotification('admin', `${effectiveUser.name || 'המגייסת'} השלימה משימה: ${task.title}`, 'success');
   };
 
   const handleKudos = (task: AITask) => {
-    handleTaskAction(task.id, 'done', task); 
-    addNotification(task.assignee === 'מור אהרון' ? 'recruiter' : 'other', `קיבלת פרגון מאביב! ${task.title}`, 'kudos');
+    handleTaskAction(task.id, 'done', task);
+    const senderName = effectiveUser.name || "המנהל";
+    addNotification(task.assignee ? 'recruiter' : 'other', `קיבלת פרגון מ${senderName}! ${task.title}`, 'kudos');
   };
 
   const handleCreateManualTask = () => {
@@ -254,9 +351,10 @@ export default function DashboardPage() {
     const isKudos = newTask.type === "kudos";
     const task = { id: `m-${Date.now()}`, severity: isKudos ? "positive" : newTask.severity, tags: ["ידני", isKudos ? "שימור" : "משימת מנהל"], title: newTask.title, desc: newTask.desc, assignee: newTask.assignee, status: "open", time: "עכשיו" };
     setTasks([task, ...tasks]);
-    addNotification(newTask.assignee === 'מור אהרון' ? 'recruiter' : 'other', isKudos ? `קיבלת פרגון חדש מאביב: ${task.title}` : `משימה חדשה מאביב: ${task.title}`, isKudos ? 'kudos' : 'ping');
+    const senderName = effectiveUser.name || "המנהל";
+    addNotification(newTask.assignee ? 'recruiter' : 'other', isKudos ? `קיבלת פרגון חדש מ${senderName}: ${task.title}` : `משימה חדשה מ${senderName}: ${task.title}`, isKudos ? 'kudos' : 'ping');
     setIsCreatingTask(false);
-    setNewTask({ title: "", desc: "", assignee: "מור אהרון", severity: "medium", type: "task" });
+    setNewTask({ title: "", desc: "", assignee: "", severity: "medium", type: "task" });
   };
 
   const toggleSourceCategory = (catName: string) => {
@@ -276,7 +374,16 @@ export default function DashboardPage() {
   // בדיקה אם יש סינון פעיל
   const isFiltered = timeframe !== "30days" || department !== "all" || job !== "all" || recruiter !== "all" || compareMode !== "none";
 
-  const visibleTasks = tasks.filter(t => (viewMode === "active" ? t.status === "open" : t.status !== "open") && (currentRole === "admin" || (currentRole === "recruiter" && t.assignee === "מור אהרון")));
+  // Show: admin sees everything; recruiter sees only tasks assigned to them
+  // (matches by name OR email — covers both legacy hard-coded names and
+  // new dynamically-assigned tasks).
+  const visibleTasks = tasks.filter(t => {
+    if (!(viewMode === "active" ? t.status === "open" : t.status !== "open")) return false;
+    if (currentRole === "admin") return true;
+    if (currentRole !== "recruiter") return false;
+    const me = (effectiveUser.name || "").trim();
+    return !t.assignee || t.assignee === me || t.assignee === effectiveUser.email;
+  });
   const sortedJobs = [...activeJobsRanking].sort((a, b) => jobsSortDesc ? b.cvs - a.cvs : a.cvs - b.cvs);
 
   return (
@@ -302,31 +409,24 @@ export default function DashboardPage() {
       {/* --- HEADER --- */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-2 relative z-[60]">
         <div>
-          <h1 className="text-4xl font-black text-[#002649] tracking-tight flex items-center gap-3">
-            {greeting.text}, אביב <span className="text-4xl">{greeting.icon}</span>
+          <h1 className="text-3xl font-black text-[#002649] tracking-tight flex items-center gap-3">
+            {greeting.text}, {(effectiveUser.name || "").split(" ")[0] || effectiveUser.email || ""}
+            {greeting.icon}
           </h1>
           <p className="text-slate-500 mt-2 font-bold text-xs">
             {slogan}
           </p>
         </div>
-        
-        <div className="flex items-center gap-4">
-          <div className="flex items-center gap-1 bg-purple-50 p-1 rounded-xl border border-purple-200 shadow-sm relative">
-            <span className="text-[9px] font-black text-purple-800 absolute -top-2 right-2 bg-purple-200 px-1.5 rounded shadow-sm">סימולטור הרשאות</span>
-            {ROLES.map(r => (
-              <button key={r.id} onClick={() => setCurrentRole(r.id)} className={`group relative p-2 rounded-lg text-xs transition-all ${currentRole === r.id ? 'bg-white text-purple-900 shadow-sm ring-1 ring-purple-300' : 'text-purple-600 hover:bg-purple-100'}`}>
-                {r.icon}
-                {/* Custom Tooltip */}
-                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block whitespace-nowrap bg-[#002649] text-white text-[10px] font-bold px-2 py-1 rounded shadow-lg z-[9999]">
-                   {r.title}
-                </div>
-              </button>
-            ))}
-          </div>
-        </div>
+
+        <div />
       </div>
 
       {/* --- GLOBAL SLICERS (REFINED) --- */}
+      {strictLiveData && liveDataError && (
+        <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-2 text-xs font-bold text-red-700">
+          מצב Live קשיח פעיל: לא ניתן להציג נתוני Mock. בדוק זמינות API.
+        </div>
+      )}
       <div className="bg-white rounded-xl p-2 flex flex-wrap items-center gap-3 shadow-sm relative z-40 border border-slate-200">
         <div className="flex items-center justify-center pl-3 border-l border-slate-100 text-[#002649]">
           <Filter size={16} />
@@ -342,7 +442,7 @@ export default function DashboardPage() {
 
         <select className="bg-slate-50 hover:bg-slate-100 transition-colors border border-transparent text-slate-700 text-xs rounded-lg outline-none py-1.5 px-2 min-w-[130px] cursor-pointer" disabled={currentRole === "hrbp"} value={department} onChange={(e) => setDepartment(e.target.value)}>
           {currentRole === "hrbp" ? <option value="sales">חטיבת שירות (נעול)</option> : <option value="all">כל המחלקות</option>}
-          {currentRole !== "hrbp" && FILTERS_META.departments.map(d => <option key={d} value={d}>{d}</option>)}
+          {currentRole !== "hrbp" && liveMeta.departments.map(d => <option key={d} value={d}>{d}</option>)}
         </select>
 
         <select className="bg-slate-50 hover:bg-slate-100 transition-colors border border-transparent text-slate-700 text-xs rounded-lg outline-none py-1.5 px-2 min-w-[130px] cursor-pointer" value={job} onChange={(e) => setJob(e.target.value)}>
@@ -353,7 +453,7 @@ export default function DashboardPage() {
         {currentRole === "admin" && (
           <select className="bg-slate-50 hover:bg-slate-100 transition-colors border border-transparent text-slate-700 text-xs rounded-lg outline-none py-1.5 px-2 min-w-[130px] cursor-pointer" value={recruiter} onChange={(e) => setRecruiter(e.target.value)}>
             <option value="all">כל המגייסים</option>
-            {FILTERS_META.recruiters.map(r => <option key={r} value={r}>{r}</option>)}
+            {liveMeta.recruiters.map(r => <option key={r} value={r}>{r}</option>)}
           </select>
         )}
 
@@ -438,7 +538,7 @@ export default function DashboardPage() {
           )}
 
           {currentRole === "admin" && (
-            <KpiCard title="איכות הגיוס (Quality of Hire)" value="92%" isPositive={true} icon={<Trophy className="text-yellow-500" size={20}/>} borderColorClass="border-t-yellow-500" subtext="אחוז הישרדות מעל שנה" 
+            <KpiCard title="איכות הגיוס (Quality of Hire)" value="0%" isPositive={false} icon={<Trophy className="text-yellow-500" size={20}/>} borderColorClass="border-t-yellow-500" subtext="ממתין לנתוני HRIS חיים" 
               info="הגביע הקדוש של הגיוס: מודד איזה אחוז מהמגויסים נשארו בארגון למעלה משנה (Retention). מצליב נתוני ATS ישירות עם נתוני HRIS." />
           )}
         </div>
@@ -450,8 +550,8 @@ export default function DashboardPage() {
               <div className="flex items-center gap-2"><BarChart3 size={18} className="text-[#EF6B00]"/> נפח מועמדים לאורך זמן</div>
               {compareMode !== 'none' && <div className="text-xs font-bold text-blue-600 bg-blue-50 px-3 py-1 rounded-full border border-blue-100">משווה: {getPrimaryName()} מול {getCompareName()}</div>}
             </h3>
-            <div className="flex-1 w-full min-h-0">
-              <ResponsiveContainer width="100%" height="100%">
+            <div className="flex-1 w-full min-h-[280px]">
+              <ResponsiveContainer width="100%" height={280}>
                 <AreaChart data={dynamicChart}>
                   <defs>
                     <linearGradient id="colorCands" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#002649" stopOpacity={0.2}/><stop offset="95%" stopColor="#002649" stopOpacity={0}/></linearGradient>
@@ -475,19 +575,27 @@ export default function DashboardPage() {
               <Layers size={18} className="text-blue-500" /> משפך המרות (Dynamic Funnel)
             </h3>
             <div className="space-y-5">
-              {[
-                { stage: "קורות חיים", count: kpis.applications, pct: 100, color: "bg-[#002649]", drop: null },
-                { stage: "סינון / ראיון טלפוני", count: Math.floor(kpis.applications * 0.25), pct: 25, color: "bg-blue-800", drop: "-5%" },
-                { stage: "ראיון HR / מקצועי", count: Math.floor(kpis.applications * 0.10), pct: 10, color: "bg-blue-600", drop: "-11%" },
-                { stage: "הצעות שכר", count: Math.floor(kpis.hires * 1.5), pct: 2.1, color: "bg-blue-400", drop: "+4%" },
-                { stage: "קליטות בארגון", count: kpis.hires, pct: 1.7, color: "bg-green-500", drop: "+2%" }
-              ].map((s, i) => (
+              {(() => {
+                const applications = Math.max(0, Number(kpis.applications ?? 0));
+                const stages = [
+                  { stage: "קורות חיים", count: applications, color: "bg-[#002649]", drop: null },
+                  { stage: "סינון / ראיון טלפוני", count: Math.floor(applications * 0.25), color: "bg-blue-800", drop: "-5%" },
+                  { stage: "ראיון HR / מקצועי", count: Math.floor(applications * 0.10), color: "bg-blue-600", drop: "-11%" },
+                  { stage: "הצעות שכר", count: Math.floor(Number(kpis.hires ?? 0) * 1.5), color: "bg-blue-400", drop: "+4%" },
+                  { stage: "קליטות בארגון", count: Math.max(0, Number(kpis.hires ?? 0)), color: "bg-green-500", drop: "+2%" }
+                ].map((stage) => {
+                  const pct = applications > 0 ? Number(((stage.count / applications) * 100).toFixed(1)) : 0;
+                  return { ...stage, pct };
+                });
+
+                return stages.map((s, i) => (
                 <div key={i} className="relative">
                   <div className="flex justify-between text-xs font-bold text-slate-700 mb-1 z-10 relative px-1"><span>{s.stage}</span><span>{s.count.toLocaleString()} ({s.pct}%)</span></div>
                   <div className="w-full bg-slate-100 h-6 rounded-lg overflow-hidden group"><div className={`h-full ${s.color} transition-all duration-1000`} style={{width: `${s.pct}%`}}></div></div>
                   {compareMode !== 'none' && s.drop && <div className={`absolute -bottom-2.5 left-4 text-[9px] font-black px-1.5 rounded border ${s.drop.includes('-') ? 'bg-red-50 text-red-600 border-red-200 z-20 shadow-md' : 'bg-slate-50 text-slate-500 border-slate-200 z-20'}`}>{s.drop} בהשוואה</div>}
                 </div>
-              ))}
+                ));
+              })()}
             </div>
           </div>
         </div>
@@ -515,7 +623,7 @@ export default function DashboardPage() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
-                    {sourcesData.map((src, i) => {
+            {sourcesData.map((src, i) => {
                       const isExpanded = expandedSources.includes(src.category);
                       const convRate = ((src.hires / src.cvs) * 100).toFixed(1);
                       return (
@@ -555,11 +663,13 @@ export default function DashboardPage() {
             </div>
 
             {/* STRATEGIC FOCUS CARDS */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 animate-in slide-in-from-bottom-8">
-               <StrategicSourceCard title="ניוד פנימי" icon={<ArrowRightLeft className="text-purple-600"/>} color="purple" cvs={45} hires={5} totalHires={kpis.hires} />
-               <StrategicSourceCard title="חבר מביא חבר" icon={<Users className="text-green-600"/>} color="green" cvs={150} hires={9} totalHires={kpis.hires} />
-               <StrategicSourceCard title="לינקדאין (אורגני וממומן)" icon={<Linkedin className="text-blue-600"/>} color="blue" cvs={200} hires={3} totalHires={kpis.hires} />
-            </div>
+            {sourcesData.length > 0 && (
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6 animate-in slide-in-from-bottom-8">
+                 <StrategicSourceCard title="ניוד פנימי" icon={<ArrowRightLeft className="text-purple-600"/>} color="purple" cvs={0} hires={0} totalHires={kpis.hires} />
+                 <StrategicSourceCard title="חבר מביא חבר" icon={<Users className="text-green-600"/>} color="green" cvs={0} hires={0} totalHires={kpis.hires} />
+                 <StrategicSourceCard title="לינקדאין (אורגני וממומן)" icon={<Linkedin className="text-blue-600"/>} color="blue" cvs={0} hires={0} totalHires={kpis.hires} />
+              </div>
+            )}
 
           </div>
         )}
@@ -634,6 +744,10 @@ export default function DashboardPage() {
                </div>
             </div>
           </div>
+        )}
+
+        {currentRole === "admin" && (
+          <NeglectedJobsBlock neglectData={neglectData} />
         )}
       </div>
 
@@ -714,7 +828,7 @@ export default function DashboardPage() {
                         {viewMode === "active" ? (
                           <div className="flex gap-2 relative z-10">
                             {currentRole === "admin" && task.severity !== 'positive' && (
-                              <button onClick={() => addNotification(task.assignee === 'מור אהרון' ? 'recruiter' : 'other', `נשלחה אליך תזכורת מאביב לטיפול ב: ${task.title}`, 'ping')} className="p-2 text-orange-500 bg-orange-50 hover:bg-orange-100 rounded-lg transition-colors tooltip-trigger" title="שלח תזכורת למגייס (Ping)">
+                              <button onClick={() => addNotification(task.assignee ? 'recruiter' : 'other', `נשלחה אליך תזכורת מ${effectiveUser.name || 'המנהל'} לטיפול ב: ${task.title}`, 'ping')} className="p-2 text-orange-500 bg-orange-50 hover:bg-orange-100 rounded-lg transition-colors tooltip-trigger" title="שלח תזכורת למגייס (Ping)">
                                 <Send size={16} />
                               </button>
                             )}
@@ -803,6 +917,91 @@ export default function DashboardPage() {
   );
 }
 
+function NeglectedJobsBlock({ neglectData }: Readonly<{ neglectData: NeglectPayload | null }>) {
+  const topJobs = neglectData?.top_jobs || [];
+  const summary = neglectData?.summary;
+
+  return (
+    <div className="bg-white border border-red-100 rounded-2xl p-6 shadow-sm hover:shadow-lg transition-all">
+      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 border-b border-slate-100 pb-4 mb-4">
+        <div>
+          <h3 className="font-black text-[#002649] text-lg flex items-center gap-2">
+            <AlertTriangle size={18} className="text-red-500" /> משרות מוזנחות - נדרש טיפול
+          </h3>
+          <p className="text-xs text-slate-500 mt-1">SLA גבוה, נפח נכנס נמוך או צבר קו״ח ללא מיון בימים האחרונים.</p>
+        </div>
+        <button onClick={() => { window.location.href = "/intelligence"; }} className="px-3 py-2 rounded-lg bg-[#002649] text-white text-xs font-bold hover:bg-[#EF6B00] transition-colors">
+          ניתוח עומק בתובנות
+        </button>
+      </div>
+
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
+        <div className="rounded-xl bg-red-50 border border-red-100 p-3">
+          <div className="text-[11px] text-slate-500 font-bold">משרות מוזנחות</div>
+          <div className="text-xl font-black text-red-700">{summary?.total_neglected_jobs ?? 0}</div>
+        </div>
+        <div className="rounded-xl bg-orange-50 border border-orange-100 p-3">
+          <div className="text-[11px] text-slate-500 font-bold">משרות קריטיות</div>
+          <div className="text-xl font-black text-orange-700">{summary?.critical_jobs ?? 0}</div>
+        </div>
+        <div className="rounded-xl bg-blue-50 border border-blue-100 p-3">
+          <div className="text-[11px] text-slate-500 font-bold">ללא טיפול 5+ ימים</div>
+          <div className="text-xl font-black text-blue-700">{summary?.stale_jobs_5d ?? 0}</div>
+        </div>
+        <div className="rounded-xl bg-purple-50 border border-purple-100 p-3">
+          <div className="text-[11px] text-slate-500 font-bold">מגייסות מושפעות</div>
+          <div className="text-xl font-black text-purple-700">{summary?.recruiters_impacted ?? 0}</div>
+        </div>
+      </div>
+
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm text-right">
+          <thead className="bg-slate-50 text-slate-500 text-[11px] uppercase">
+            <tr>
+              <th className="p-2 font-bold">משרה</th>
+              <th className="p-2 font-bold text-center">מגייסת / צוות</th>
+              <th className="p-2 font-bold text-center">ימי SLA</th>
+              <th className="p-2 font-bold text-center">ממתינים</th>
+              <th className="p-2 font-bold text-center">ימים ללא טיפול</th>
+              <th className="p-2 font-bold text-center">ציון הזנחה</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100">
+            {topJobs.length === 0 ? (
+              <tr>
+                <td colSpan={6} className="p-4 text-center text-slate-400 font-bold">כרגע אין משרות שעומדות בכללי הזנחה.</td>
+              </tr>
+            ) : (
+              topJobs.map((job) => (
+                <tr key={`${job.job_title}-${job.recruiter_name}`} className="hover:bg-slate-50">
+                  <td className="p-2">
+                    <div className="font-bold text-[#002649]">{job.job_title}</div>
+                    <div className="text-[11px] text-slate-400">{job.department}</div>
+                  </td>
+                  <td className="p-2 text-center">
+                    <div className="font-bold text-slate-700">{job.recruiter_name}</div>
+                    <div className="text-[11px] text-slate-400">{job.team_name}</div>
+                  </td>
+                  <td className="p-2 text-center font-black text-red-700">{job.days_open}</td>
+                  <td className="p-2 text-center font-bold">{job.pending_candidates_count}</td>
+                  <td className="p-2 text-center font-bold">{job.days_since_last_candidate_action}</td>
+                  <td className="p-2 text-center">
+                    <span className={`px-2 py-1 rounded text-xs font-black ${
+                      job.severity === "critical" ? "bg-red-100 text-red-700" : job.severity === "high" ? "bg-orange-100 text-orange-700" : "bg-slate-100 text-slate-700"
+                    }`}>
+                      {job.neglect_score}
+                    </span>
+                  </td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 // ==========================================
 // עזרים Components
 // ==========================================
@@ -830,7 +1029,7 @@ function PieBreakdownCard({ title, icon, data, info }: Readonly<PieBreakdownCard
          <TooltipIcon text={info} />
        </h3>
        <div className="flex-1 min-h-[220px] w-full mt-2 relative">
-         <ResponsiveContainer width="100%" height="100%">
+         <ResponsiveContainer width="100%" height={220}>
            <RechartsPie>
              <Pie data={data} cx="50%" cy="50%" innerRadius={40} outerRadius={70} paddingAngle={2} dataKey="value">
                {data.map((_entry: { name: string; value: number }, index: number) => <Cell key={`cell-${index}`} fill={PIE_COLORS[index % PIE_COLORS.length]} />)}
@@ -889,15 +1088,67 @@ function StrategicSourceCard({ title, icon, color, cvs, hires, totalHires }: Rea
 
 function TooltipIcon({ text }: Readonly<{ text: string }>) {
   return (
-    <div className="relative group flex items-center justify-center">
-      <div className="text-slate-300 hover:text-[#EF6B00] cursor-help p-1 transition-colors">
+    <HoverTooltip text={text} placement="top" wide>
+      <span className="text-slate-300 hover:text-[#EF6B00] cursor-help p-1 transition-colors inline-flex">
         <Info size={16}/>
+      </span>
+    </HoverTooltip>
+  );
+}
+
+function HoverTooltip({
+  text,
+  children,
+  placement = "top",
+  wide = false
+}: Readonly<{
+  text: string;
+  children: React.ReactNode;
+  placement?: TooltipPlacement;
+  wide?: boolean;
+}>) {
+  const [visible, setVisible] = useState(false);
+  const [coords, setCoords] = useState<TooltipCoords>({ top: 0, left: 0 });
+
+  const open = (event: React.MouseEvent<HTMLDivElement> | React.FocusEvent<HTMLDivElement>) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    const offset = 10;
+    setCoords({
+      top: placement === "top" ? rect.top - offset : rect.bottom + offset,
+      left: rect.left + rect.width / 2
+    });
+    setVisible(true);
+  };
+
+  const close = () => setVisible(false);
+
+  return (
+    <>
+      <div
+        className="inline-flex"
+        role="button"
+        tabIndex={0}
+        onMouseEnter={open}
+        onMouseLeave={close}
+        onFocus={open}
+        onBlur={close}
+      >
+        {children}
       </div>
-      <div className="absolute bottom-full right-0 mb-3 w-72 p-4 bg-[#002649] text-white text-xs font-medium rounded-xl shadow-2xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-[9999] border border-slate-700 leading-relaxed text-right pointer-events-none">
-        {text}
-        <div className="absolute top-full right-4 border-8 border-transparent border-t-[#002649]"></div>
-      </div>
-    </div>
+      {typeof document !== "undefined" &&
+        visible &&
+        createPortal(
+          <div
+            className={`fixed -translate-x-1/2 pointer-events-none z-[2147483647] ${
+              placement === "top" ? "-translate-y-full" : ""
+            } ${wide ? "w-72 p-4 text-xs font-medium rounded-xl border border-slate-700" : "whitespace-nowrap px-2 py-1 text-[10px] font-bold rounded"} bg-[#002649] text-white shadow-2xl leading-relaxed text-right`}
+            style={{ top: coords.top, left: coords.left }}
+          >
+            {text}
+          </div>,
+          document.body
+        )}
+    </>
   );
 }
 
