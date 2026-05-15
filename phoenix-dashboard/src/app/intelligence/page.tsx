@@ -2,72 +2,48 @@
 
 import React, { useState, useEffect } from "react";
 import { useToast } from "@/components/Toast";
-import { 
-  Brain, AlertTriangle, TrendingDown, Target, Zap, 
-  HeartHandshake, Users, CheckCircle2, AlertCircle, 
-  Download, Activity, TrendingUp, Info, Settings, 
-  X, Save, RotateCcw, Battery, BatteryWarning, Sparkles
+import { useAccess } from "@/context/AccessContext";
+import { AdminConfigProvider, useAdminConfig } from "@/app/admin/components/targets/useAdminConfig";
+import { PageHeader } from "@/components/PageHeader";
+import {
+  Brain, AlertTriangle, TrendingDown, Target, Zap,
+  HeartHandshake, Users, CheckCircle2, AlertCircle,
+  Download, Activity, TrendingUp, Info, Settings,
+  X, Save, RotateCcw, Battery, BatteryWarning, Sparkles,
+  LayoutGrid, ChevronDown, ChevronUp
 } from "lucide-react";
+import { RecruiterJobMatrix } from "./components/RecruiterJobMatrix";
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, 
   Tooltip as RechartsTooltip, ResponsiveContainer, 
   PieChart, Pie, Cell, Legend, ComposedChart, Line
 } from 'recharts';
 
-// --- Static Data & Mocks ---
-const totalHeadcount = 3500;
-const currentDisabilityCount = 98; 
-const targetDisabilityCount = Math.ceil(totalHeadcount * 0.03); 
+// --- Live-only defaults ---
+const totalHeadcount = 0;
+const currentDisabilityCount = 0;
+const targetDisabilityCount = 0;
 const gaugeData = [
-  { name: 'עובדים עם מוגבלות (קיים)', value: currentDisabilityCount },
-  { name: 'פער ליעד', value: targetDisabilityCount - currentDisabilityCount },
+  { name: 'עובדים עם מוגבלות (קיים)', value: 0 },
+  { name: 'פער ליעד', value: 0 },
 ];
 const GAUGE_COLORS = ['#EF6B00', '#f1f5f9'];
 const currentPct = ((currentDisabilityCount / totalHeadcount) * 100).toFixed(1);
 const gapToTarget = targetDisabilityCount - currentDisabilityCount;
 
-const MOCK_INTELLIGENCE_DATA = {
-  baseline: { current_hires: 28, avg_days: 38 },
-  ghosting_risks: [
-    { candidate: "דניאל כהן", job: "מפתח Backend Java", risk_score: 85, reason: "ממתין 8 ימים לפידבק מנהל" },
-    { candidate: "שיר גולן", job: "נציגת מכירות וביטוח", risk_score: 72, reason: "לא ענתה ל-2 הודעות סמס" },
-    { candidate: "אלכס רובין", job: "אנליסט נתונים", risk_score: 64, reason: "פער ציפיות שכר בסקר טלפוני" },
-    { candidate: "מיכל אהרוני", job: "מנהלת מוצר", risk_score: 55, reason: "ממתינה לזימון לראיון פרונטלי" }
-  ]
-};
+const MOCK_INTELLIGENCE_DATA = { baseline: { current_hires: 0, avg_days: 0 }, ghosting_risks: [] };
 
 // QoH (Quality of Hire) Data
-const qohData = [
-  { source: "חבר מביא חבר", hires: 45, retention1Yr: 88, perfScore: 9.2 },
-  { source: "לינקדאין (אורגני)", hires: 32, retention1Yr: 75, perfScore: 8.5 },
-  { source: "לינקדאין (ממומן)", hires: 68, retention1Yr: 60, perfScore: 7.8 },
-  { source: "חברות השמה", hires: 18, retention1Yr: 82, perfScore: 8.9 },
-  { source: "קמפיין סושיאל", hires: 120, retention1Yr: 45, perfScore: 7.1 },
-];
+const qohData: Array<{ source: string; hires: number; retention1Yr: number; perfScore: number }> = [];
 
 // Attrition Heatmap Data
-const heatmapData = [
-  { dept: "מוקד שירות לקוחות", "0-3m": 28, "3-6m": 15, "6-12m": 8, "1-2y": 5 },
-  { dept: "מכירות ארצי", "0-3m": 22, "3-6m": 18, "6-12m": 10, "1-2y": 6 },
-  { dept: "חטיבת כספים", "0-3m": 2, "3-6m": 4, "6-12m": 6, "1-2y": 8 },
-  { dept: "טכנולוגיה (R&D)", "0-3m": 1, "3-6m": 3, "6-12m": 5, "1-2y": 15 },
-  { dept: "מטה ומשאבי אנוש", "0-3m": 2, "3-6m": 2, "6-12m": 4, "1-2y": 7 },
-];
+const heatmapData: Array<{ dept: string; "0-3m": number; "3-6m": number; "6-12m": number; "1-2y": number }> = [];
 
 // Capacity Recruiter Data
-const recruitersData = [
-  { name: "מור אהרון", type: "tech", massJobs: 0, proJobs: 2, techJobs: 8 },
-  { name: "ליטל גולדפרב", type: "mass", massJobs: 15, proJobs: 1, techJobs: 0 },
-  { name: "גיא רג'ואן", type: "mixed", massJobs: 5, proJobs: 6, techJobs: 3 },
-  { name: "רז בר-און", type: "pro", massJobs: 0, proJobs: 12, techJobs: 1 },
-];
+const recruitersData: Array<{ name: string; type: string; massJobs: number; proJobs: number; techJobs: number }> = [];
 
 // Sentinel AI Insights (Cross-Correlation)
-const aiInsights = [
-  "זיהוי קורלציה (AI): עומס חריג על ליטל גולדפרב (Capacity: 22) מקביל לעלייה של 18% בנטישת מועמדים במשרות השירות. המלצה: העברת 2 משרות רוחב.",
-  "זיהוי פער (AI): שיעור קיבול הצעות שכר ב-R&D צנח ל-65%. הצלבה עם סימולטור השכר מעידה על פער שלילי של 8% מתחת לממוצע השוק.",
-  "המלצת תקציב (AI): מקור 'חבר מביא חבר' מציג שרידות (QoH) כפולה מקמפיין סושיאל. הסטת 10% מתקציב המימון אליו תחסוך מוערך של 45K ש״ח."
-];
+const aiInsights = ["אין תובנות עדכניות - המתנה לנתוני Live מהשרת."];
 
 interface GhostingRisk {
   candidate: string;
@@ -81,15 +57,51 @@ interface IntelligenceData {
   ghosting_risks: GhostingRisk[];
 }
 
-export default function IntelligenceAndReports() {
+interface NeglectJob {
+  job_title: string;
+  department: string;
+  recruiter_name: string;
+  team_name: string;
+  days_open: number;
+  new_candidates_last_14d: number;
+  pending_candidates_count: number;
+  days_since_last_candidate_action: number;
+  neglect_reason: string;
+  neglect_score: number;
+  severity: "critical" | "high" | "medium";
+}
+
+interface NeglectPayload {
+  summary: {
+    total_neglected_jobs: number;
+    critical_jobs: number;
+    stale_jobs_5d: number;
+    recruiters_impacted: number;
+  };
+  top_jobs: NeglectJob[];
+  recruiter_summary: {
+    recruiter_name: string;
+    team_name: string;
+    neglected_jobs: number;
+    critical_jobs: number;
+    avg_neglect_score: number;
+  }[];
+  weekly_trend: { week: string; new_openings: number }[];
+}
+
+function IntelligenceAndReportsInner() {
   const { showToast } = useToast();
+  const { effectiveUser } = useAccess();
+  const { config, save } = useAdminConfig();
+  const apiBase = process.env.NEXT_PUBLIC_API_URL ?? "";
+  const strictLiveData = true;
   const [data, setData] = useState<IntelligenceData | null>(null);
+  const [liveDataError, setLiveDataError] = useState<string | null>(null);
   const [budgetBoost, setBudgetBoost] = useState(0); 
   const [processSpeed, setProcessSpeed] = useState(0); 
   const [insightIndex, setInsightIndex] = useState(0);
   
-  // --- User Role Mock (In real app, fetch from auth context) ---
-  const isAdmin = true;
+  const isAdmin = effectiveUser.role === "admin";
 
   // --- Sticky Filters State ---
   const defaultFilters = { date: "Q1-2026", dept: "all", recruiter: "all" };
@@ -97,6 +109,7 @@ export default function IntelligenceAndReports() {
 
   // --- Admin Configuration State ---
   const [showAdmin, setShowAdmin] = useState(false);
+  const [showMatrix, setShowMatrix] = useState(false);
   const [adminConfig, setAdminConfig] = useState({
     earlyAttritionMonths: 12,
     capacityWeights: { mass: 1, pro: 1.5, tech: 2.5 } as Record<string, number>,
@@ -104,17 +117,63 @@ export default function IntelligenceAndReports() {
     threshold: 60,
     overrides: { depts: { "Service": 1.1 } as Record<string, number>, recruiters: {} as Record<string, number>, jobs: {} as Record<string, number> }
   });
+  const [neglectData, setNeglectData] = useState<NeglectPayload | null>(null);
 
   const [overrideDept, setOverrideDept] = useState("");
   const [overrideFactor, setOverrideFactor] = useState(1.1);
+  const filtersReady = false;
 
   useEffect(() => {
-    const timer = setTimeout(() => setData(MOCK_INTELLIGENCE_DATA), 600);
+    const loadIntelligence = async () => {
+      try {
+        setLiveDataError(null);
+        const [intRes, statsRes] = await Promise.all([
+          fetch(`${apiBase}/intelligence`, { cache: "no-store" }),
+          fetch(`${apiBase}/stats`, { cache: "no-store" }),
+        ]);
+        const intPayload = intRes.ok ? await intRes.json() : null;
+        const statsPayload = statsRes.ok ? await statsRes.json() : null;
+        if (intPayload && !intPayload.error) {
+          setData({
+            baseline: {
+              current_hires: Number(statsPayload?.hired_this_month ?? intPayload?.baseline?.current_hires ?? 0),
+              avg_days: Number(statsPayload?.avg_days ?? intPayload?.baseline?.avg_days ?? 0),
+            },
+            ghosting_risks: (intPayload.ghosting_risks || []).map((item: any) => ({
+              candidate: String(item.candidate ?? ""),
+              job: String(item.job ?? ""),
+              risk_score: Number(item.risk_score ?? 0),
+              reason: String(item.reason ?? `ימים בתהליך: ${item.days ?? 0}`),
+            })),
+          });
+          return;
+        }
+      } catch {
+        setLiveDataError("Live intelligence API unavailable");
+      }
+      setData({ baseline: { current_hires: 0, avg_days: 0 }, ghosting_risks: [] });
+    };
+    loadIntelligence();
     const aiTimer = setInterval(() => {
       setInsightIndex((prev) => (prev + 1) % aiInsights.length);
     }, 8000); // מחליף תובנת AI כל 8 שניות
-    return () => { clearTimeout(timer); clearInterval(aiTimer); };
-  }, []);
+    return () => { clearInterval(aiTimer); };
+  }, [apiBase, strictLiveData]);
+
+  useEffect(() => {
+    const loadNeglect = async () => {
+      try {
+        const res = await fetch(`${apiBase}/jobs/neglect-alerts?limit=20`, { cache: "no-store" });
+        if (res.ok) {
+          const payload = await res.json();
+          setNeglectData(payload);
+        }
+      } catch {
+        setNeglectData(null);
+      }
+    };
+    loadNeglect();
+  }, [apiBase]);
 
   const hasActiveFilters = filters.date !== defaultFilters.date || filters.dept !== defaultFilters.dept || filters.recruiter !== defaultFilters.recruiter;
   const resetFilters = () => setFilters(defaultFilters);
@@ -142,31 +201,34 @@ export default function IntelligenceAndReports() {
     setAdminConfig({ ...adminConfig, overrides: { ...adminConfig.overrides, depts: newDepts } });
   };
 
-  if (!data) return <div className="p-12 text-[#002649] font-black text-xl animate-pulse flex items-center justify-center gap-3"><Brain className="animate-bounce text-[#EF6B00]" size={32} /> מעלה חמ"ל אינטליגנציה וטוען תובנות AI...</div>;
+  // Render the page chrome immediately even when `data` is still loading.
+  // The previous full-screen loader masked the rest of the UI for 1-2s on every
+  // navigation; per design guidance the loading state is now in-place per block.
+  const isLoading = !data;
+  const baselineHires = data?.baseline?.current_hires ?? 0;
+  const baselineDays = data?.baseline?.avg_days ?? 0;
+  const ghostingCount = data?.ghosting_risks?.length ?? 0;
 
-  const projectedHires = Math.round(data.baseline.current_hires * (1 + (budgetBoost / 100)));
-  const projectedDays = Math.round(data.baseline.avg_days * (1 - (processSpeed / 100)));
+  const projectedHires = Math.round(baselineHires * (1 + (budgetBoost / 100)));
+  const projectedDays = Math.round(baselineDays * (1 - (processSpeed / 100)));
+  const oarValue = baselineHires > 0
+    ? Math.round((baselineHires / (baselineHires + ghostingCount)) * 100)
+    : 0;
+  const internalMobilityValue = 0;
+  const earlyAttritionValue = 0;
 
   return (
     <div className="w-full min-h-screen bg-slate-50/30 pb-20 text-right overflow-x-hidden" dir="rtl">
       
       {/* --- STICKY HEADER & COMPACT FILTERS --- */}
       <div className="sticky top-0 z-50 bg-white/95 backdrop-blur-md border-b border-slate-200 px-6 py-4 shadow-sm space-y-4">
-        <div className="max-w-[1600px] mx-auto flex justify-between items-start">
-          
-          {/* Right Side: Title (Fixed layout for RTL) */}
-          <div className="flex items-start gap-3">
-            <Brain className="text-[#EF6B00] mt-1" size={32} />
-            <div>
-              <h1 className="text-3xl font-black text-[#002649]">
-                חמ"ל אינטליגנציה אסטרטגית
-              </h1>
-              <p className="text-slate-500 font-bold text-sm mt-1">TAHub Command Center - מבט על, תחזיות וביצועי עומק</p>
-            </div>
-          </div>
-          
-          {/* Left Side: Action Buttons */}
-          <div className="flex items-center gap-3">
+        <div className="max-w-[1600px] mx-auto">
+          <PageHeader
+            icon={<Brain size={28} strokeWidth={1.75} />}
+            title='חמ"ל אינטליגנציה אסטרטגית'
+            subtitle="TAHub Command Center · מבט על, תחזיות וביצועי עומק"
+            actions={
+              <div className="flex items-center gap-3">
             {hasActiveFilters && (
               <button onClick={resetFilters} className="text-xs text-slate-400 hover:text-red-500 font-bold flex items-center gap-1.5 px-3 py-2 bg-slate-50 rounded-xl transition-all border border-transparent hover:border-red-100">
                   <RotateCcw size={14} /> נקה סננים
@@ -184,7 +246,9 @@ export default function IntelligenceAndReports() {
                   <span className="relative inline-flex rounded-full h-3 w-3 bg-[#EF6B00]"></span>
                 </span>
             </button>
-          </div>
+              </div>
+            }
+          />
         </div>
 
         {/* --- FILTER BAR & AI SENTINEL COMPACT --- */}
@@ -192,22 +256,23 @@ export default function IntelligenceAndReports() {
           
           {/* Filters (Compact) */}
           <div className="flex items-center gap-2">
-            <select className="bg-white border border-slate-200 py-1.5 px-3 rounded-lg text-xs font-bold outline-none text-[#002649] shadow-sm hover:border-[#EF6B00]/50 transition-colors" value={filters.date} onChange={(e) => setFilters({...filters, date: e.target.value})}>
+            <select disabled={!filtersReady} className="bg-white border border-slate-200 py-1.5 px-3 rounded-lg text-xs font-bold outline-none text-[#002649] shadow-sm hover:border-[#EF6B00]/50 transition-colors disabled:opacity-60 disabled:cursor-not-allowed" value={filters.date} onChange={(e) => setFilters({...filters, date: e.target.value})}>
               <option value="Q1-2026">רבעון נוכחי (Q1 2026)</option>
               <option value="YTD">מתחילת השנה (YTD)</option>
               <option value="2025">שנה קודמת (2025)</option>
             </select>
-            <select className="bg-white border border-slate-200 py-1.5 px-3 rounded-lg text-xs font-bold outline-none text-[#002649] shadow-sm hover:border-[#EF6B00]/50 transition-colors" value={filters.dept} onChange={(e) => setFilters({...filters, dept: e.target.value})}>
+            <select disabled={!filtersReady} className="bg-white border border-slate-200 py-1.5 px-3 rounded-lg text-xs font-bold outline-none text-[#002649] shadow-sm hover:border-[#EF6B00]/50 transition-colors disabled:opacity-60 disabled:cursor-not-allowed" value={filters.dept} onChange={(e) => setFilters({...filters, dept: e.target.value})}>
               <option value="all">כל החטיבות בהפניקס</option>
               <option value="R&D">טכנולוגיה (R&D)</option>
               <option value="Service">שירות ומוקדים</option>
               <option value="Finance">כספים</option>
             </select>
-            <select className="bg-white border border-slate-200 py-1.5 px-3 rounded-lg text-xs font-bold outline-none text-[#002649] shadow-sm hover:border-[#EF6B00]/50 transition-colors" value={filters.recruiter} onChange={(e) => setFilters({...filters, recruiter: e.target.value})}>
+            <select disabled={!filtersReady} className="bg-white border border-slate-200 py-1.5 px-3 rounded-lg text-xs font-bold outline-none text-[#002649] shadow-sm hover:border-[#EF6B00]/50 transition-colors disabled:opacity-60 disabled:cursor-not-allowed" value={filters.recruiter} onChange={(e) => setFilters({...filters, recruiter: e.target.value})}>
               <option value="all">כל המגייסים בצוות</option>
               {recruitersData.map(r => <option key={r.name} value={r.name}>{r.name}</option>)}
             </select>
           </div>
+          {!filtersReady && <div className="text-[10px] font-black text-slate-400">סינונים אינטראקטיביים — בקרוב</div>}
 
           {/* Sentinel AI Ticker */}
           <div className="flex-1 flex items-center gap-2 overflow-hidden px-2 border-r border-slate-200 mr-2 pr-4">
@@ -223,26 +288,31 @@ export default function IntelligenceAndReports() {
 
       {/* --- MAIN SCROLLABLE CONTENT --- */}
       <div className="max-w-[1600px] mx-auto px-8 py-8 space-y-12">
+        {strictLiveData && liveDataError && (
+          <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-2 text-xs font-bold text-red-700">
+            מצב Live קשיח פעיל: מוצגים נתונים חיים בלבד. כרגע השרת לא זמין.
+          </div>
+        )}
 
         {/* --- SECTION 1: EXECUTIVE KPIs (Top Level) --- */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
           <MetricCard 
-            label="זמן איוש ממוצע (TTF)" actual="38 ימים" target="35 ימים" status="warning" trend="+8%" 
+            label="זמן איוש ממוצע (TTF)" actual={`${baselineDays} ימים`} target="35 ימים" status={baselineDays > 35 ? "warning" : "success"} trend="—" trendDirection="down"
             tooltipDesc="הזמן הממוצע שעובר מפתיחת תקן המשרה ועד לחתימת חוזה של המועמד הנבחר."
             tooltipFormula="Σ (תאריך חתימה - תאריך פתיחת משרה) / סך הגיוסים"
           />
           <MetricCard 
-            label="שיעור קיבול הצעות (OAR)" actual="72%" target="80%" status="danger" trend="-4%" 
+            label="שיעור קיבול הצעות (OAR)" actual={`${oarValue}%`} target="80%" status={oarValue >= 80 ? "success" : "danger"} trend="—" trendDirection="up"
             tooltipDesc="מדד תחרותיות המציג את אחוז המועמדים שחתמו על חוזה מתוך סך הצעות השכר שהוגשו."
             tooltipFormula="(הצעות שנחתמו / סך הצעות שהוגשו) * 100"
           />
           <MetricCard 
-            label="שיעור ניוד פנימי" actual="18%" target="15%" status="success" trend="+3%" 
+            label="שיעור ניוד פנימי" actual={`${internalMobilityValue}%`} target="15%" status={internalMobilityValue >= 15 ? "success" : "warning"} trend="—" trendDirection="up"
             tooltipDesc="אחוז המשרות שאוישו מתוך מצבת העובדים הקיימת בארגון מתוך סך כל הגיוסים."
             tooltipFormula="(גיוסים פנימיים / סך כל הגיוסים) * 100"
           />
           <MetricCard 
-            label="שיעור עזיבה מוקדמת" actual="14%" target="10%" status="danger" trend="+2.5%" 
+            label="שיעור עזיבה מוקדמת" actual={`${earlyAttritionValue}%`} target="10%" status={earlyAttritionValue <= 10 ? "success" : "danger"} trend="—" trendDirection="down"
             tooltipDesc={`אחוז העובדים שעזבו את הפניקס בטרם השלימו ${adminConfig.earlyAttritionMonths} חודשי העסקה.`}
             tooltipFormula={`(עוזבים בותק < ${adminConfig.earlyAttritionMonths} חודשים) / (סך העוזבים) * 100`}
           />
@@ -344,6 +414,66 @@ export default function IntelligenceAndReports() {
           </div>
         </div>
 
+        <div className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm">
+          <div className="flex items-center gap-3 mb-8">
+            <div className="p-3 bg-red-50 text-red-500 rounded-2xl"><AlertTriangle size={24} /></div>
+            <div>
+              <h3 className="font-black text-2xl text-[#002649]">עומק: משרות מוזנחות לפי מגייסת/צוות</h3>
+              <p className="text-slate-500 font-bold mt-1 text-sm">פירוק מנהלי למשרות עם SLA גבוה וצבר ללא טיפול.</p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+            <div className="bg-red-50 border border-red-100 rounded-2xl p-4">
+              <div className="text-xs text-slate-500 font-black">סה״כ מוזנחות</div>
+              <div className="text-2xl font-black text-red-700">{neglectData?.summary.total_neglected_jobs ?? 0}</div>
+            </div>
+            <div className="bg-orange-50 border border-orange-100 rounded-2xl p-4">
+              <div className="text-xs text-slate-500 font-black">קריטיות</div>
+              <div className="text-2xl font-black text-orange-700">{neglectData?.summary.critical_jobs ?? 0}</div>
+            </div>
+            <div className="bg-blue-50 border border-blue-100 rounded-2xl p-4">
+              <div className="text-xs text-slate-500 font-black">ללא טיפול 5+ ימים</div>
+              <div className="text-2xl font-black text-blue-700">{neglectData?.summary.stale_jobs_5d ?? 0}</div>
+            </div>
+            <div className="bg-purple-50 border border-purple-100 rounded-2xl p-4">
+              <div className="text-xs text-slate-500 font-black">מגייסות מושפעות</div>
+              <div className="text-2xl font-black text-purple-700">{neglectData?.summary.recruiters_impacted ?? 0}</div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-8">
+            <div className="bg-slate-50 border border-slate-200 rounded-2xl p-5 min-h-[280px]">
+              <h4 className="font-black text-[#002649] mb-4">פיזור עומס הזנחה לפי מגייסת</h4>
+              <ResponsiveContainer width="100%" height={220}>
+                <BarChart data={neglectData?.recruiter_summary || []}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                  <XAxis dataKey="recruiter_name" axisLine={false} tickLine={false} tick={{ fill: "#64748B", fontSize: 11 }} />
+                  <YAxis axisLine={false} tickLine={false} tick={{ fill: "#94a3b8", fontSize: 11 }} />
+                  <RechartsTooltip contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 10px 25px -5px rgba(0,0,0,0.1)' }} />
+                  <Legend iconType="circle" wrapperStyle={{ fontSize: '12px', fontWeight: 'bold' }} />
+                  <Bar dataKey="neglected_jobs" name="משרות מוזנחות" fill="#002649" radius={[6, 6, 0, 0]} />
+                  <Bar dataKey="critical_jobs" name="קריטיות" fill="#EF6B00" radius={[6, 6, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+
+            <div className="bg-slate-50 border border-slate-200 rounded-2xl p-5 min-h-[280px]">
+              <h4 className="font-black text-[#002649] mb-4">מגמת פתיחת משרות בסיכון (8 שבועות)</h4>
+              <ResponsiveContainer width="100%" height={220}>
+                <ComposedChart data={neglectData?.weekly_trend || []}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                  <XAxis dataKey="week" axisLine={false} tickLine={false} tick={{ fill: "#64748B", fontSize: 10 }} />
+                  <YAxis axisLine={false} tickLine={false} tick={{ fill: "#94a3b8", fontSize: 11 }} />
+                  <RechartsTooltip contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 10px 25px -5px rgba(0,0,0,0.1)' }} />
+                  <Bar dataKey="new_openings" name="פתיחות משרה" fill="#cbd5e1" radius={[6, 6, 0, 0]} />
+                  <Line type="monotone" dataKey="new_openings" name="מגמה" stroke="#EF6B00" strokeWidth={3} dot={{r: 5, fill: '#EF6B00'}} />
+                </ComposedChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+        </div>
+
         {/* --- SECTION 4: QoH AND PREDICTIVE --- */}
         <div className="grid grid-cols-1 xl:grid-cols-2 gap-8">
           
@@ -384,7 +514,7 @@ export default function IntelligenceAndReports() {
             </h3>
             <p className="text-slate-500 font-bold mb-6 text-sm">התראות חיות על טאלנטים בסיכון</p>
             <div className="space-y-4 overflow-y-auto pr-2 flex-1">
-              {data.ghosting_risks.map((risk: GhostingRisk, idx: number) => (
+              {(data?.ghosting_risks ?? []).map((risk: GhostingRisk, idx: number) => (
                 <div key={idx} className="bg-red-50/40 border border-red-100 p-4 rounded-2xl flex items-center justify-between">
                   <div>
                     <div className="font-black text-red-900 text-base">{risk.candidate}</div>
@@ -545,14 +675,37 @@ export default function IntelligenceAndReports() {
             </div>
 
             <div className="mt-12 pt-6 border-t border-slate-100">
-                <button onClick={() => setShowAdmin(false)} className="w-full py-5 bg-[#002649] text-white rounded-2xl font-black flex items-center justify-center gap-3 hover:bg-[#EF6B00] transition-all shadow-xl shadow-blue-900/20 text-xl tracking-wide">
+                <button onClick={() => { void save(({ ...(config as object), intelligenceAlgo: adminConfig } as unknown) as Partial<import("@/app/admin/components/targets/useAdminConfig").AdminConfig>, "visibility"); setShowAdmin(false); }} className="w-full py-5 bg-[#002649] text-white rounded-2xl font-black flex items-center justify-center gap-3 hover:bg-[#EF6B00] transition-all shadow-xl shadow-blue-900/20 text-xl tracking-wide">
                     <Save size={24}/> שמור הגדרות
                 </button>
             </div>
           </div>
         </div>
       )}
+
+      {/* ── Recruiter × Job Matrix ────────────────────────────────────── */}
+      <section className="mt-8 px-6 pb-6">
+        <button
+          onClick={() => setShowMatrix(s => !s)}
+          className="w-full flex items-center justify-between bg-white rounded-2xl border border-slate-200 p-4 hover:bg-slate-50 transition-colors shadow-sm"
+        >
+          <span className="font-bold text-[#002649] flex items-center gap-2 text-sm">
+            <LayoutGrid size={16} className="text-[#EF6B00]" />
+            טבלת מגייסים × משרות — Pipeline רוחבי
+          </span>
+          {showMatrix ? <ChevronUp size={16} className="text-slate-400"/> : <ChevronDown size={16} className="text-slate-400"/>}
+        </button>
+        {showMatrix && <RecruiterJobMatrix />}
+      </section>
     </div>
+  );
+}
+
+export default function IntelligenceAndReports() {
+  return (
+    <AdminConfigProvider>
+      <IntelligenceAndReportsInner />
+    </AdminConfigProvider>
   );
 }
 
@@ -562,7 +715,7 @@ function InfoTooltip({ description, formula }: { description: string, formula: s
   return (
     <div className="group relative inline-flex items-center mr-2 z-50">
       <Info size={16} className="text-slate-300 cursor-help hover:text-[#EF6B00] transition-colors" />
-      <div className="absolute top-full mt-2 left-1/2 -translate-x-1/2 hidden group-hover:block w-[320px] p-4 bg-[#002649] text-white text-right rounded-2xl shadow-2xl border border-blue-800">
+      <div className="absolute top-full mt-2 left-1/2 -translate-x-1/2 hidden group-hover:block w-[320px] max-w-[calc(100vw-2rem)] p-4 bg-[#002649] text-white text-right rounded-2xl shadow-2xl border border-blue-800">
         <p className="font-medium text-sm leading-relaxed mb-3">{description}</p>
         <div className="bg-slate-900/50 p-2.5 rounded-xl border border-white/10">
           <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">נוסחת חישוב:</p>
@@ -578,11 +731,12 @@ interface MetricCardProps {
   actual: string | number;
   target: string | number;
   status: "success" | "warning" | "danger";
+  trendDirection: "up" | "down";
   trend: string;
   tooltipDesc: string;
   tooltipFormula: string;
 }
-function MetricCard({ label, actual, target, status, trend, tooltipDesc, tooltipFormula }: MetricCardProps) {
+function MetricCard({ label, actual, target, status, trendDirection, trend, tooltipDesc, tooltipFormula }: MetricCardProps) {
   const statusColors: Record<"success" | "warning" | "danger", string> = { success: "text-green-500", warning: "text-amber-500", danger: "text-red-500" };
   const bgColors: Record<"success" | "warning" | "danger", string> = { success: "bg-green-50 text-green-700", warning: "bg-amber-50 text-amber-700", danger: "bg-red-50 text-red-700" };
   
@@ -599,7 +753,7 @@ function MetricCard({ label, actual, target, status, trend, tooltipDesc, tooltip
         </div>
       </div>
       <div className={`text-[11px] font-black mt-4 inline-flex items-center gap-1 w-max px-3 py-1.5 rounded-xl ${bgColors[status]}`}>
-        {status === 'success' ? <TrendingDown size={14}/> : <TrendingUp size={14}/>}
+        {trendDirection === "down" ? <TrendingDown size={14}/> : <TrendingUp size={14}/>}
         {trend} מול רבעון קודם
       </div>
     </div>

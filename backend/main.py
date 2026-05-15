@@ -6569,3 +6569,155 @@ def admin_active_schema():
         "ingest_types": list(INGEST_HANDLERS.keys()),
     }
 
+
+# ── Recruiter × Job Matrix ────────────────────────────────────────────────────
+
+@app.get("/api/recruiter-job-matrix")
+async def recruiter_job_matrix(
+    recruiter: Optional[str] = None,
+    dept: Optional[str] = None,
+    active_only: bool = True,
+    _user: dict = Depends(require_session_role("admin", "hrbp")),
+):
+    """Cross-sectional pipeline matrix: for each (recruiter, job) pair return
+    stage counts, funnel conversion rates, and a health indicator.
+
+    - Pipeline view: current active candidates by stage
+    - Funnel view: total ever reached each stage → conversion %
+    """
+    cache_params = {"recruiter": recruiter or "", "dept": dept or "", "active_only": active_only}
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    try:
+        cached = get_cached_response(conn, "recruiter_job_matrix", cache_params)
+        if cached:
+            return cached
+
+        sql = """
+            SELECT
+                a.app_id,
+                a.recruiter,
+                a.job_id,
+                COALESCE(j.job_title, a.job_id) AS job_title,
+                COALESCE(j.department, '') AS department,
+                a.stage_code,
+                a.status,
+                a.days_in_process,
+                o.status AS onboarding_status
+            FROM applications a
+            LEFT JOIN jobs j ON a.job_id = j.id
+            LEFT JOIN onboarding o ON a.candidate_id = o.id
+            WHERE a.recruiter IS NOT NULL AND TRIM(a.recruiter) != ''
+        """
+        params: list = []
+        if recruiter:
+            sql += " AND a.recruiter = ?"
+            params.append(recruiter)
+        if dept:
+            sql += " AND COALESCE(j.department, '') = ?"
+            params.append(dept)
+
+        rows = conn.execute(sql, params).fetchall()
+    finally:
+        conn.close()
+
+    # Compute unified stage per row
+    from collections import defaultdict
+
+    # group: {(recruiter, job_id, job_title, department): {stage: count_active, ...}}
+    # We track both "ever reached" (funnel) and "currently active" (pipeline)
+    groups: dict[tuple, dict] = defaultdict(lambda: {
+        "stages_active": defaultdict(int),   # not REJECTED
+        "stages_funnel": defaultdict(int),   # all historical (every row ever)
+        "days_sum": 0.0,
+        "active_count": 0,
+    })
+
+    REJECTED_STATUS_HEBREW = {"דחייה", "הסרה", "ויתור", "הקפאה"}
+
+    for row in rows:
+        unified = _compute_unified_stage(row["stage_code"], row["onboarding_status"])
+        key = (row["recruiter"], row["job_id"] or "", row["job_title"] or "", row["department"] or "")
+        g = groups[key]
+
+        # Funnel: count every application in each stage (historical total)
+        g["stages_funnel"][unified] += 1
+
+        # Pipeline: only active (not rejected via stage or Hebrew status)
+        is_rejected = (
+            unified == "REJECTED"
+            or str(row["status"] or "").strip() in REJECTED_STATUS_HEBREW
+        )
+        if not is_rejected:
+            g["stages_active"][unified] += 1
+            g["active_count"] += 1
+            try:
+                g["days_sum"] += float(row["days_in_process"] or 0)
+            except (TypeError, ValueError):
+                pass
+
+    # Build output list
+    PIPELINE_STAGES = ["ACTIVE", "SCREEN", "INTERVIEW", "OFFER", "HIRED", "AWAITING_START", "STARTED"]
+    result = []
+
+    for (rec, job_id, job_title, department), g in groups.items():
+        active_count = g["active_count"]
+        avg_days = round(g["days_sum"] / active_count, 1) if active_count else 0.0
+
+        stages_active = {s: g["stages_active"].get(s, 0) for s in PIPELINE_STAGES}
+        stages_funnel = {s: g["stages_funnel"].get(s, 0) for s in PIPELINE_STAGES}
+
+        if active_only and active_count == 0:
+            continue
+
+        # Funnel conversion rates (based on historical totals)
+        def _rate(a: int, b: int) -> float:
+            return round(a / b, 3) if b else 0.0
+
+        screen_n   = stages_funnel["SCREEN"]
+        interview_n = stages_funnel["INTERVIEW"]
+        offer_n    = stages_funnel["OFFER"]
+        hired_n    = stages_funnel["HIRED"] + stages_funnel["AWAITING_START"] + stages_funnel["STARTED"]
+
+        funnel_rates = {
+            "screen_to_interview": _rate(interview_n, screen_n),
+            "interview_to_offer":  _rate(offer_n, interview_n),
+            "offer_to_hired":      _rate(hired_n, offer_n),
+        }
+
+        # Health heuristic
+        active_screen = stages_active["SCREEN"]
+        active_later  = stages_active["INTERVIEW"] + stages_active["OFFER"]
+        if (active_screen >= 5 and active_later == 0) or avg_days > 45:
+            health = "stuck"
+        elif avg_days > 30 or (active_count > 0 and active_screen / active_count > 0.80):
+            health = "slow"
+        else:
+            health = "ok"
+
+        result.append({
+            "recruiter":      rec,
+            "job_id":         job_id,
+            "job_title":      job_title,
+            "department":     department,
+            "stages":         stages_active,
+            "stages_funnel":  stages_funnel,
+            "total_active":   active_count,
+            "total_all_time": sum(g["stages_funnel"].values()),
+            "avg_days":       avg_days,
+            "funnel_rates":   funnel_rates,
+            "health":         health,
+        })
+
+    result.sort(key=lambda r: (r["recruiter"], r["job_title"]))
+
+    cache_conn = sqlite3.connect(DB_PATH)
+    try:
+        set_cached_response(cache_conn, "recruiter_job_matrix", cache_params, result, ttl_seconds=300)
+    except Exception:
+        pass
+    finally:
+        cache_conn.close()
+
+    return result
+
