@@ -3023,6 +3023,374 @@ async def generate_pdf_report(payload: dict, _: str = Depends(require_admin)):
         background=BackgroundTask(_cleanup_generated_file, file_path),
     )
 
+@app.post("/api/tools/generate-manager-report")
+async def generate_manager_report(payload: dict, _: dict = Depends(require_session_role("admin", "hrbp", "recruiter"))):
+    """
+    דוח מרכז למנהל: משפך גיוס בטווח תאריכים + סטטוס נוכחי, לפי משרה.
+    מקבל: job_id (או job_title), date_from (ISO), date_to (ISO).
+    """
+    import tempfile, traceback
+
+    job_id_param   = (payload.get("job_id") or "").strip()
+    job_title_param = (payload.get("job_title") or "").strip()
+    date_from      = (payload.get("date_from") or "").strip()
+    date_to        = (payload.get("date_to") or "").strip()
+
+    if not (job_id_param or job_title_param):
+        raise HTTPException(status_code=400, detail="job_id or job_title is required")
+
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    try:
+        # ── 1. Job meta ────────────────────────────────────────────────────
+        if job_id_param:
+            job_row = conn.execute(
+                "SELECT * FROM jobs WHERE id = ?", [job_id_param]
+            ).fetchone()
+        else:
+            job_row = conn.execute(
+                "SELECT * FROM jobs WHERE job_title = ? COLLATE NOCASE", [job_title_param]
+            ).fetchone()
+
+        if not job_row:
+            raise HTTPException(status_code=404, detail="Job not found")
+
+        job = dict(job_row)
+        effective_job_id = job["id"]
+        job_title   = job.get("job_title", effective_job_id)
+        department  = job.get("department", "—")
+
+        # ── 2. All applications for this job ───────────────────────────────
+        apps = conn.execute(
+            """SELECT a.app_id, a.candidate_id, a.status, a.recruiter,
+                      a.stage_code, a.days_in_process, a.start_date,
+                      c.name AS candidate_name,
+                      o.status AS onboarding_status
+               FROM applications a
+               LEFT JOIN candidates c ON a.candidate_id = c.id
+               LEFT JOIN onboarding o ON a.candidate_id = o.id
+               WHERE a.job_id = ?
+               ORDER BY a.start_date""",
+            [effective_job_id]
+        ).fetchall()
+        apps = [dict(r) for r in apps]
+
+        # Compute unified stage
+        for r in apps:
+            r["unified_stage"] = _compute_unified_stage(r.get("stage_code"), r.get("onboarding_status"))
+    finally:
+        conn.close()
+
+    # ── 3. Defaults for date range ──────────────────────────────────────
+    all_dates = [r["start_date"] for r in apps if r.get("start_date")]
+    earliest  = min(all_dates) if all_dates else date_from or "2020-01-01"
+    today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    if not date_from: date_from = earliest[:10]
+    if not date_to:   date_to   = today_str
+
+    # ── 4. Segment: funnel (started in range) vs current (all active) ──
+    ACTIVE_STAGES   = {"ACTIVE", "SCREEN", "INTERVIEW", "OFFER"}
+    POSITIVE_STAGES = {"ACTIVE", "SCREEN", "INTERVIEW", "OFFER", "HIRED", "AWAITING_START", "STARTED"}
+
+    funnel_apps = [
+        r for r in apps
+        if r.get("start_date") and date_from <= r["start_date"][:10] <= date_to
+    ]
+    current_apps = [r for r in apps if r["unified_stage"] in POSITIVE_STAGES]
+
+    # Stage counts
+    def _counts(rows: list[dict]) -> dict[str, int]:
+        c: dict[str, int] = {s: 0 for s in UNIFIED_STAGES}
+        for r in rows:
+            c[r["unified_stage"]] = c.get(r["unified_stage"], 0) + 1
+        return c
+
+    funnel_counts  = _counts(funnel_apps)
+    current_counts = _counts(current_apps)
+
+    # Conversion rates for funnel
+    def _rate(a: int, b: int) -> str:
+        return f"{round(a / b * 100)}%" if b else "—"
+
+    # Avg days + SLA
+    days_list = [r["days_in_process"] for r in current_apps if r.get("days_in_process")]
+    avg_days  = round(sum(days_list) / len(days_list), 1) if days_list else 0
+    sla_threshold = 45
+    sla_breaches  = sum(1 for d in days_list if d > sla_threshold)
+
+    # Recruiter (most common in apps, fall back to job table)
+    from collections import Counter
+    recruiter_counts = Counter(r["recruiter"] for r in apps if r.get("recruiter"))
+    main_recruiter   = recruiter_counts.most_common(1)[0][0] if recruiter_counts else "—"
+
+    # ── 5. Build PDF ───────────────────────────────────────────────────
+    pdf = FPDF()
+    pdf.set_auto_page_break(auto=True, margin=18)
+
+    # Try to load Arial for Hebrew support (Windows)
+    ARIAL_PATH = r"C:\Windows\Fonts\arial.ttf"
+    ARIAL_BOLD_PATH = r"C:\Windows\Fonts\arialbd.ttf"
+    HEB_FONT = "Arial"
+    use_heb = False
+    try:
+        if os.path.exists(ARIAL_PATH):
+            pdf.add_font(HEB_FONT, "", ARIAL_PATH, uni=True)
+        if os.path.exists(ARIAL_BOLD_PATH):
+            pdf.add_font(HEB_FONT, "B", ARIAL_BOLD_PATH, uni=True)
+        use_heb = True
+    except Exception:
+        use_heb = False
+
+    def _font(bold: bool = False, size: int = 11):
+        style = "B" if bold else ""
+        if use_heb:
+            pdf.set_font(HEB_FONT, style, size)
+        else:
+            pdf.set_font("Helvetica", style, size)
+
+    def _rtl(text: str) -> str:
+        """Reverse Hebrew line for fpdf RTL approximation when no bidi engine."""
+        if not use_heb:
+            return text
+        return text  # fpdf2 with uni=True handles RTL display adequately
+
+    BRAND_DARK   = (0, 38, 73)      # #002649
+    BRAND_ORANGE = (239, 107, 0)    # #EF6B00
+    LIGHT_GRAY   = (245, 247, 250)
+    MID_GRAY     = (100, 116, 139)
+    TEXT_DARK    = (30, 41, 59)
+
+    # ── Cover ────────────────────────────────────────────────────────
+    pdf.add_page()
+
+    # Top bar
+    pdf.set_fill_color(*BRAND_DARK)
+    pdf.rect(0, 0, 210, 32, "F")
+    _font(bold=True, size=18)
+    pdf.set_text_color(255, 255, 255)
+    pdf.set_xy(10, 8)
+    pdf.cell(0, 12, "FNX TAHub  |  Manager Position Report", ln=True)
+    _font(size=10)
+    pdf.set_xy(10, 22)
+    pdf.cell(0, 8, f"Generated: {today_str}", ln=True)
+
+    pdf.set_text_color(*TEXT_DARK)
+    pdf.set_xy(10, 40)
+
+    # Job details box
+    pdf.set_fill_color(*LIGHT_GRAY)
+    pdf.rect(10, 38, 190, 46, "F")
+    _font(bold=True, size=15)
+    pdf.set_text_color(*BRAND_DARK)
+    pdf.set_xy(14, 42)
+    pdf.multi_cell(182, 9, job_title, align="R" if use_heb else "L")
+    _font(size=10)
+    pdf.set_text_color(*MID_GRAY)
+    pdf.set_xy(14, 56)
+    pdf.cell(90, 7, f"Department: {department}")
+    pdf.cell(90, 7, f"Recruiter: {main_recruiter}", ln=True)
+    pdf.set_xy(14, 64)
+    pdf.cell(90, 7, f"Period: {date_from}  to  {date_to}")
+    pdf.cell(90, 7, f"Open since: {earliest[:10]}", ln=True)
+
+    pdf.set_text_color(*TEXT_DARK)
+    pdf.ln(14)
+
+    # ── Section helper ───────────────────────────────────────────────
+    def _section_header(title: str):
+        pdf.set_fill_color(*BRAND_ORANGE)
+        pdf.rect(10, pdf.get_y(), 5, 8, "F")
+        pdf.set_xy(18, pdf.get_y())
+        _font(bold=True, size=13)
+        pdf.set_text_color(*BRAND_DARK)
+        pdf.cell(0, 8, title, ln=True)
+        pdf.set_text_color(*TEXT_DARK)
+        pdf.ln(2)
+
+    def _kpi_row(items: list[tuple[str, str]]):
+        """Draw a row of KPI boxes."""
+        x0 = 10
+        w  = int(190 / len(items))
+        y0 = pdf.get_y()
+        for label, value in items:
+            pdf.set_fill_color(*LIGHT_GRAY)
+            pdf.rect(x0, y0, w - 2, 20, "F")
+            _font(bold=True, size=14)
+            pdf.set_text_color(*BRAND_DARK)
+            pdf.set_xy(x0 + 2, y0 + 1)
+            pdf.cell(w - 4, 10, str(value), align="C")
+            _font(size=8)
+            pdf.set_text_color(*MID_GRAY)
+            pdf.set_xy(x0 + 2, y0 + 11)
+            pdf.cell(w - 4, 7, label, align="C")
+            x0 += w
+        pdf.set_xy(10, y0 + 22)
+        pdf.set_text_color(*TEXT_DARK)
+
+    def _stage_table(counts: dict[str, int], show_stages: list[str], title_prefix: str = ""):
+        headers = show_stages
+        col_w   = int(190 / len(headers))
+        y0      = pdf.get_y()
+
+        # Header row
+        pdf.set_fill_color(*BRAND_DARK)
+        pdf.set_text_color(255, 255, 255)
+        _font(bold=True, size=9)
+        x = 10
+        for h in headers:
+            pdf.set_xy(x, y0)
+            pdf.cell(col_w - 1, 8, h, align="C", fill=True)
+            x += col_w
+        pdf.ln(8)
+
+        # Value row
+        y0 = pdf.get_y()
+        x  = 10
+        pdf.set_text_color(*TEXT_DARK)
+        for h in headers:
+            val = counts.get(h, 0)
+            fill_color = (254, 226, 226) if val >= 8 else (255, 251, 235) if val >= 4 else (248, 250, 252)
+            pdf.set_fill_color(*fill_color)
+            _font(bold=(val > 0), size=12)
+            pdf.set_xy(x, y0)
+            pdf.cell(col_w - 1, 10, str(val) if val else "—", align="C", fill=True)
+            x += col_w
+        pdf.ln(12)
+        pdf.set_text_color(*TEXT_DARK)
+
+    def _candidate_list(stage: str, rows: list[dict], max_rows: int = 8):
+        subset = [r for r in rows if r["unified_stage"] == stage][:max_rows]
+        if not subset:
+            return
+        _font(bold=True, size=9)
+        pdf.set_text_color(*BRAND_DARK)
+        pdf.set_xy(10, pdf.get_y())
+        pdf.cell(0, 7, f"  {stage} ({len(subset)} candidates):", ln=True)
+        _font(size=9)
+        pdf.set_text_color(*TEXT_DARK)
+        for r in subset:
+            name = r.get("candidate_name") or r.get("app_id", "—")
+            days = r.get("days_in_process") or 0
+            status = r.get("status") or "—"
+            line  = f"      • {name}   |   {days} days   |   {status}"
+            pdf.set_xy(10, pdf.get_y())
+            pdf.cell(0, 6, line, ln=True)
+        pdf.ln(2)
+
+    # ── Section 1: Current Pipeline ──────────────────────────────────
+    _section_header("Current Pipeline Status (as of today)")
+
+    _kpi_row([
+        ("Active Candidates", str(len(current_apps))),
+        ("Avg Days in Process", str(avg_days)),
+        ("SLA Breaches (>45d)", str(sla_breaches)),
+        ("Hired (all time)", str(sum(1 for r in apps if r["unified_stage"] in {"HIRED","AWAITING_START","STARTED"}))),
+    ])
+
+    _stage_table(current_counts, ["SCREEN", "INTERVIEW", "OFFER", "HIRED", "AWAITING_START", "STARTED"])
+
+    # Candidate lists per active stage
+    _font(bold=True, size=10)
+    pdf.set_text_color(*BRAND_DARK)
+    pdf.cell(0, 7, "Candidate Detail:", ln=True)
+    pdf.ln(1)
+    for stg in ["OFFER", "INTERVIEW", "SCREEN"]:
+        _candidate_list(stg, current_apps)
+
+    pdf.ln(4)
+
+    # ── Section 2: Recruitment Funnel (date range) ───────────────────
+    _section_header(f"Recruitment Funnel  ({date_from} → {date_to})")
+
+    total_in_period = len(funnel_apps)
+    _kpi_row([
+        ("Applications in Period", str(total_in_period)),
+        ("Screen → Interview", _rate(funnel_counts["INTERVIEW"], funnel_counts["SCREEN"])),
+        ("Interview → Offer",  _rate(funnel_counts["OFFER"],     funnel_counts["INTERVIEW"])),
+        ("Offer → Hired",      _rate(funnel_counts["HIRED"] + funnel_counts["AWAITING_START"] + funnel_counts["STARTED"], funnel_counts["OFFER"])),
+    ])
+
+    if total_in_period:
+        _stage_table(funnel_counts, ["SCREEN", "INTERVIEW", "OFFER", "HIRED", "AWAITING_START", "STARTED"])
+    else:
+        _font(size=10)
+        pdf.set_text_color(*MID_GRAY)
+        pdf.cell(0, 8, "  No applications recorded in this date range.", ln=True)
+        pdf.set_text_color(*TEXT_DARK)
+
+    pdf.ln(4)
+
+    # ── Section 3: Manager Insights ──────────────────────────────────
+    _section_header("Manager Insights")
+    _font(size=10)
+    pdf.set_text_color(*TEXT_DARK)
+
+    insights: list[str] = []
+
+    # Bottleneck detection
+    screen_n   = current_counts.get("SCREEN", 0)
+    interview_n = current_counts.get("INTERVIEW", 0)
+    offer_n    = current_counts.get("OFFER", 0)
+    hired_n    = sum(current_counts.get(s, 0) for s in ["HIRED", "AWAITING_START", "STARTED"])
+
+    if screen_n >= 5 and interview_n == 0:
+        insights.append(f"BOTTLENECK: {screen_n} candidates stuck at Screening with zero progression to Interview. Recommend reviewing screening criteria or recruiter capacity.")
+    elif screen_n > interview_n * 3:
+        insights.append(f"Screening funnel is wide ({screen_n} candidates) but conversion to Interview is low ({interview_n}). Consider expediting review of pending CVs.")
+
+    if interview_n >= 3 and offer_n == 0:
+        insights.append(f"Interview stage has {interview_n} candidates with no Offer made yet. Verify interview feedback is being collected and decisions are pending.")
+
+    if offer_n >= 2:
+        insights.append(f"ATTENTION: {offer_n} active Offer(s). Ensure compensation packages are competitive and candidates have been followed up recently.")
+
+    if sla_breaches > 0:
+        insights.append(f"SLA ALERT: {sla_breaches} candidate(s) have been in process for over {sla_threshold} days. Immediate action required to prevent candidate drop-off.")
+
+    if avg_days > 35:
+        insights.append(f"Average time-in-process is {avg_days} days, above the 35-day benchmark. Consider streamlining interview scheduling or approval cycles.")
+    elif avg_days <= 20 and len(current_apps) > 0:
+        insights.append(f"Excellent velocity: average time-in-process is just {avg_days} days — well below the 35-day benchmark.")
+
+    if total_in_period == 0 and len(current_apps) > 0:
+        insights.append(f"No new applications received in the selected period ({date_from} → {date_to}). Consider reviewing sourcing channels or reposting the position.")
+
+    if not insights:
+        insights.append("Pipeline appears healthy. Continue monitoring conversion rates and ensure candidate communications are timely.")
+
+    for i, insight in enumerate(insights, 1):
+        pdf.set_xy(10, pdf.get_y())
+        _font(bold=True, size=10)
+        pdf.set_text_color(*BRAND_ORANGE)
+        pdf.cell(8, 7, f"{i}.")
+        _font(size=10)
+        pdf.set_text_color(*TEXT_DARK)
+        pdf.multi_cell(180, 7, insight)
+        pdf.ln(2)
+
+    # ── Footer ───────────────────────────────────────────────────────
+    pdf.set_y(-18)
+    pdf.set_fill_color(*BRAND_DARK)
+    pdf.rect(0, pdf.get_y(), 210, 18, "F")
+    _font(size=8)
+    pdf.set_text_color(180, 190, 210)
+    pdf.set_xy(10, pdf.get_y() + 4)
+    pdf.cell(0, 6, f"FNX TAHub  |  Confidential Manager Report  |  {today_str}", align="C")
+
+    # ── Save & return ────────────────────────────────────────────────
+    safe_title = "".join(c if c.isalnum() or c in " -_" else "_" for c in job_title)[:40]
+    filename   = f"manager_report_{safe_title}_{today_str}_{uuid.uuid4().hex[:4]}.pdf"
+    file_path  = os.path.join(tempfile.gettempdir(), filename)
+    pdf.output(file_path)
+
+    return FileResponse(
+        path=file_path,
+        filename=filename,
+        media_type="application/pdf",
+        background=BackgroundTask(_cleanup_generated_file, file_path),
+    )
+
+
 @app.post("/api/tools/generate-offer-pdf")
 async def generate_offer_pdf(request: Request, _: str = Depends(require_admin)):
     """
