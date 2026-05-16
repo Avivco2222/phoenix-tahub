@@ -274,6 +274,16 @@ class FinopsCategoryPayload(BaseModel):
 
 class OnboardingUpdatePayload(BaseModel):
     status_only: Optional[bool] = False
+    status: Optional[str] = None
+    buddy: Optional[str] = None
+    equipment_ready: Optional[bool] = None
+    start_date: Optional[str] = None
+    notes: Optional[str] = None
+    name: Optional[str] = None
+    id_num: Optional[str] = None
+    role: Optional[str] = None
+    department: Optional[str] = None
+    manager: Optional[str] = None
 
 
 class OnboardingBulkUpdatePayload(BaseModel):
@@ -1044,6 +1054,22 @@ def _compute_unified_stage(stage_code: str | None, onboarding_status: str | None
 # `ACTIVE` is the default bucket for any status that does not match the
 # lexicon (e.g. raw "חדש" / "בתהליך" / "ממתין") — keeps unmatched rows visible.
 UNIFIED_STAGES = ["ACTIVE", "SCREEN", "INTERVIEW", "OFFER", "HIRED", "AWAITING_START", "STARTED", "REJECTED"]
+
+
+def _nan_safe_records(df: "pd.DataFrame") -> list:
+    """Convert a DataFrame to records list, replacing NaN/inf floats with None for JSON safety.
+
+    Python's json.dumps raises ValueError on float('nan') and float('inf'). pandas DataFrames
+    frequently have NaN floats in numeric columns when a DB row has NULL.  This utility converts
+    them to Python None so FastAPI can serialize them as JSON null values.
+    """
+    import math
+    raw = df.to_dict(orient="records")
+    def safe(v):
+        if isinstance(v, float) and (math.isnan(v) or math.isinf(v)):
+            return None
+        return v
+    return [{k: safe(v) for k, v in row.items()} for row in raw]
 
 
 # =====================================================================
@@ -2212,6 +2238,7 @@ def get_candidates(
     job_id: str = "",
     days_min: Optional[int] = None,
     days_max: Optional[int] = None,
+    _: dict = Depends(require_dual_role("admin", "hrbp", "recruiter", "hiring_manager")),
 ):
     """Unified pipeline + onboarding view.
 
@@ -2284,7 +2311,7 @@ def get_candidates(
     total = len(df)
     df_page = df.iloc[offset:offset + limit]
     return {
-        "data": df_page.to_dict(orient="records"),
+        "data": _nan_safe_records(df_page),
         "page": page,
         "total": total,
         "total_by_stage": total_by_stage,
@@ -2293,7 +2320,12 @@ def get_candidates(
 
 @app.get("/api/jobs")
 @app.get("/jobs")
-def get_jobs(status: str = "all"):
+def get_jobs(
+    status: str = "all",
+    department: str = "",
+    search: str = "",
+    _: dict = Depends(require_dual_role("admin", "hrbp", "recruiter", "hiring_manager")),
+):
     """Returns jobs (open + closed by default) with per-stage candidate breakdown.
 
     Query param `status`:
@@ -2374,6 +2406,16 @@ def get_jobs(status: str = "all"):
         jobs_summary = [j for j in jobs_summary if j["is_active"]]
     elif status_norm == "closed":
         jobs_summary = [j for j in jobs_summary if not j["is_active"]]
+
+    # Filter by department
+    if department:
+        jobs_summary = [j for j in jobs_summary if department.lower() in (j.get("department") or "").lower()]
+
+    # Filter by search (job title or department)
+    if search:
+        jobs_summary = [j for j in jobs_summary
+                        if search.lower() in (j.get("job_title") or "").lower()
+                        or search.lower() in (j.get("department") or "").lower()]
 
     # Open jobs first, then sorted by sla_breaches/max_days desc; closed at the end.
     jobs_summary.sort(
@@ -3024,7 +3066,7 @@ async def generate_pdf_report(payload: dict, _: str = Depends(require_admin)):
     )
 
 @app.post("/api/tools/generate-manager-report")
-async def generate_manager_report(payload: dict, _: dict = Depends(require_session_role("admin", "hrbp", "recruiter"))):
+async def generate_manager_report(payload: dict, _: dict = Depends(require_dual_role("admin", "hrbp", "recruiter"))):
     """
     דוח מרכז למנהל: משפך גיוס בטווח תאריכים + סטטוס נוכחי, לפי משרה.
     מקבל: job_id (או job_title), date_from (ISO), date_to (ISO).
@@ -3552,11 +3594,16 @@ def create_onboarding(payload: OnboardingPayload, _: dict = Depends(require_dual
 
 
 @app.get("/api/onboarding")
-def list_onboarding(_: dict = Depends(require_dual_role("admin", "hrbp", "recruiter"))):
+def list_onboarding(
+    status: Optional[str] = None,
+    _: dict = Depends(require_dual_role("admin", "hrbp", "recruiter"))
+):
     conn = sqlite3.connect(DB_PATH)
     try:
         rows = pd.read_sql("SELECT * FROM onboarding ORDER BY created_at DESC", conn)
-        return rows.to_dict(orient="records")
+        if status:
+            rows = rows[rows["status"].astype(str).str.lower() == status.lower()]
+        return _nan_safe_records(rows)
     finally:
         conn.close()
 
@@ -4725,6 +4772,40 @@ async def mark_notification_read(note_id: str, user: dict = Depends(get_session_
     return {"status": "ok", "read_at": now}
 
 
+@app.post("/api/notifications/mark-all-read")
+async def mark_all_notifications_read(user: dict = Depends(get_session_user)):
+    """Mark all unread notifications as read for the current user."""
+    now = datetime.now(timezone.utc).isoformat()
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    try:
+        c.execute(
+            "UPDATE notifications SET read_at = ? WHERE user_id = ? AND read_at IS NULL",
+            (now, user.get("sub")),
+        )
+        affected = c.rowcount
+        conn.commit()
+    finally:
+        conn.close()
+    return {"status": "ok", "marked_read": affected}
+
+
+@app.get("/api/notifications/count")
+async def get_notification_count(user: dict = Depends(get_session_user)):
+    """Return unread notification count for the current user."""
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    try:
+        c.execute(
+            "SELECT COUNT(*) FROM notifications WHERE user_id = ? AND read_at IS NULL",
+            (user.get("sub"),),
+        )
+        count = c.fetchone()[0]
+    finally:
+        conn.close()
+    return {"count": int(count)}
+
+
 @app.delete("/api/notifications/{note_id}")
 async def delete_notification(note_id: str, user: dict = Depends(get_session_user)):
     """Permanently delete a notification. Only the owner can delete their own notifications."""
@@ -5300,7 +5381,7 @@ async def check_my_inactivity(user: dict = Depends(get_session_user)):
 @app.get("/api/candidates/{candidate_key}")
 def get_candidate_detail(
     candidate_key: str,
-    _: dict = Depends(require_dual_role("admin", "hrbp", "recruiter")),
+    _: dict = Depends(require_dual_role("admin", "hrbp", "recruiter", "hiring_manager")),
 ):
     """Detail view for a single candidate. The path key matches by
     candidate.id, candidate name (LOWER), or onboarding.id_num — whichever
@@ -5377,7 +5458,7 @@ def get_candidate_detail(
 @app.get("/api/jobs/{job_key}/candidates")
 def get_job_candidates(
     job_key: str,
-    _: dict = Depends(require_dual_role("admin", "hrbp", "recruiter")),
+    _: dict = Depends(require_dual_role("admin", "hrbp", "recruiter", "hiring_manager")),
 ):
     """Candidates of a single job, grouped by unified_stage. Path key matches
     by job.id (preferred) or job.job_title (fallback)."""
@@ -5436,6 +5517,160 @@ def get_job_candidates(
 
     conn.close()
     return {"job": job_meta, "by_stage": by_stage, "total": int(len(matches))}
+
+
+# =====================================================================
+# STAGE ADVANCEMENT — PATCH /api/candidates/{candidate_key}/stage
+# =====================================================================
+
+@app.patch("/api/candidates/{candidate_key}/stage")
+def advance_candidate_stage(
+    candidate_key: str,
+    payload: dict,
+    user: dict = Depends(require_dual_role("admin", "hrbp", "recruiter", "hiring_manager")),
+):
+    """Advance (or change) a candidate's stage.
+
+    Body:
+        stage_code  (str)  — new UNIFIED_STAGES value e.g. "INTERVIEW", "OFFER"
+        notes       (str, optional) — reason / free-text
+    """
+    stage_code = (payload.get("stage_code") or "").strip().upper()
+    notes = (payload.get("notes") or "").strip()
+
+    if stage_code not in UNIFIED_STAGES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"stage_code חייב להיות אחד מ: {', '.join(UNIFIED_STAGES)}"
+        )
+
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        # Resolve candidate key → application row
+        df = get_unified_data(conn)
+        if df.empty:
+            raise HTTPException(status_code=404, detail="המועמד לא נמצא")
+
+        key = (candidate_key or "").strip().lower()
+        matches = df[
+            (df["candidate_id"].astype(str).str.lower() == key)
+            | (df["candidate_name"].astype(str).str.lower() == key)
+            | (df["id_num"].astype(str).str.lower() == key)
+        ]
+        if matches.empty:
+            raise HTTPException(status_code=404, detail="המועמד לא נמצא")
+
+        row = matches.sort_values("start_date", ascending=False).iloc[0]
+        app_id = row.get("app_id") or row.get("candidate_id")
+        candidate_name = row.get("candidate_name", "")
+        old_stage = row.get("stage_code", "")
+
+        c = conn.cursor()
+
+        # Map UNIFIED_STAGES back to a Hebrew status label for display
+        STAGE_TO_STATUS = {
+            "ACTIVE": "פעיל",
+            "SCREEN": "סינון",
+            "INTERVIEW": "ראיון",
+            "OFFER": "הצעה",
+            "HIRED": "גיוס",
+            "AWAITING_START": "ממתין לקליטה",
+            "STARTED": "קליטה",
+            "REJECTED": "דחייה",
+        }
+        new_status = STAGE_TO_STATUS.get(stage_code, stage_code)
+        now_iso = datetime.now(timezone.utc).isoformat()
+
+        # Try updating applications table first
+        updated = 0
+        try:
+            c.execute(
+                "UPDATE applications SET stage_code = ?, status = ?, updated_at = ? WHERE app_id = ?",
+                (stage_code, new_status, now_iso, str(app_id))
+            )
+            updated = c.rowcount
+        except Exception:
+            pass
+
+        # Fallback: update candidates table if applications didn't work
+        if not updated:
+            try:
+                c.execute(
+                    "UPDATE candidates SET stage_code = ?, status = ?, updated_at = ? WHERE id = ?",
+                    (stage_code, new_status, now_iso, str(app_id))
+                )
+                updated = c.rowcount
+            except Exception:
+                pass
+
+        if not updated:
+            raise HTTPException(status_code=404, detail="לא ניתן לעדכן — מועמד לא נמצא ב-DB")
+
+        # Log stage transition to audit_logs
+        details = f"Stage changed: {old_stage} → {stage_code}"
+        if notes:
+            details += f" | {notes}"
+        try:
+            c.execute(
+                "INSERT INTO audit_logs (id, timestamp, action, status, details, user) VALUES (?,?,?,?,?,?)",
+                (str(uuid.uuid4()), now_iso, "STAGE_CHANGE", "info", f"{candidate_name}: {details}", user.get("email", "system"))
+            )
+        except Exception:
+            pass  # audit log failure should not block the update
+
+        conn.commit()
+    finally:
+        conn.close()
+
+    log_audit_action("STAGE_CHANGE", "info", f"{candidate_name}: {old_stage}→{stage_code}", user.get("email"))
+    return {
+        "status": "ok",
+        "candidate": candidate_key,
+        "old_stage": old_stage,
+        "new_stage": stage_code,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+# =====================================================================
+# PIPELINE SUMMARY — GET /api/pipeline/summary
+# =====================================================================
+
+@app.get("/api/pipeline/summary")
+def get_pipeline_summary(
+    _: dict = Depends(require_dual_role("admin", "hrbp", "recruiter", "hiring_manager")),
+):
+    """Stage-level pipeline counts and basic KPIs."""
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        df = get_unified_data(conn)
+    except Exception:
+        df = pd.DataFrame()
+    finally:
+        conn.close()
+
+    if df.empty:
+        return {
+            "stages": {s: 0 for s in UNIFIED_STAGES},
+            "total": 0,
+            "active_total": 0,
+        }
+
+    df["unified_stage"] = df.apply(
+        lambda row: _compute_unified_stage(row.get("stage_code"), row.get("onboarding_status")),
+        axis=1,
+    )
+
+    counts = df["unified_stage"].value_counts().to_dict()
+    stage_summary = {s: int(counts.get(s, 0)) for s in UNIFIED_STAGES}
+    active_stages = {"SCREEN", "INTERVIEW", "OFFER", "ACTIVE"}
+    active_total = sum(stage_summary.get(s, 0) for s in active_stages)
+
+    return {
+        "stages": stage_summary,
+        "total": int(len(df)),
+        "active_total": active_total,
+    }
 
 
 # =====================================================================
