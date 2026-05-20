@@ -56,3 +56,13 @@ The_FNX_TAHub_Backup_V2/
 __pycache__/
 *.pyc
 .venv/
+
+# SQLite databases
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Claude Code worktrees and local merge backups
+.claude/worktrees/
+*.pre-merge-backup
