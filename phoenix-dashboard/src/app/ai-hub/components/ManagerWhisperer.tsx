@@ -178,7 +178,7 @@ export default function BrieflyManagerBrief() {
               </div>
 
               <div className="space-y-2"><label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">תובנות מהתהליך (עד 5 בולטים)</label>
-                {draft.detailedInsights.map((insight, idx)=>(<input key={idx} value={insight} onChange={e=>{let n=[...draft.detailedInsights]; n[idx]=e.target.value; setDraft({...draft, detailedInsights:n})}} className="w-full p-2.5 bg-slate-50 border border-slate-100 rounded-xl text-xs font-bold outline-none focus:border-blue-200" placeholder={`תובנה ${idx+1}...`} />))}
+                {draft.detailedInsights.map((insight, idx)=>(<input key={idx} value={insight} onChange={e=>{const n=[...draft.detailedInsights]; n[idx]=e.target.value; setDraft({...draft, detailedInsights:n})}} className="w-full p-2.5 bg-slate-50 border border-slate-100 rounded-xl text-xs font-bold outline-none focus:border-blue-200" placeholder={`תובנה ${idx+1}...`} />))}
               </div>
 
               {/* --- Restored Skills Selection --- */}
@@ -231,8 +231,8 @@ export default function BrieflyManagerBrief() {
                         <button onClick={()=>moveQuestion(i, 'up')} className="p-0.5 hover:text-[#EF6B00] text-slate-300"><ArrowUp size={12}/></button>
                         <button onClick={()=>moveQuestion(i, 'down')} className="p-0.5 hover:text-[#EF6B00] text-slate-300"><ArrowDown size={12}/></button>
                       </div>
-                      <input value={q} onChange={e=>{let n=[...draft.interviewQuestions]; n[i]=e.target.value; setDraft({...draft, interviewQuestions:n})}} className="flex-1 bg-transparent border-none text-[10px] font-bold text-[#002649] outline-none" placeholder="הזיני שאלה..." />
-                      <button onClick={()=>{let n=[...draft.interviewQuestions]; n.splice(i,1); setDraft({...draft, interviewQuestions:n})}} className="text-slate-300 hover:text-red-500 p-1"><X size={14}/></button>
+                      <input value={q} onChange={e=>{const n=[...draft.interviewQuestions]; n[i]=e.target.value; setDraft({...draft, interviewQuestions:n})}} className="flex-1 bg-transparent border-none text-[10px] font-bold text-[#002649] outline-none" placeholder="הזיני שאלה..." />
+                      <button onClick={()=>{const n=[...draft.interviewQuestions]; n.splice(i,1); setDraft({...draft, interviewQuestions:n})}} className="text-slate-300 hover:text-red-500 p-1"><X size={14}/></button>
                     </div>
                   ))}
                 </div>

@@ -139,7 +139,7 @@ function IntelligenceAndReportsInner() {
               current_hires: Number(statsPayload?.hired_this_month ?? intPayload?.baseline?.current_hires ?? 0),
               avg_days: Number(statsPayload?.avg_days ?? intPayload?.baseline?.avg_days ?? 0),
             },
-            ghosting_risks: (intPayload.ghosting_risks || []).map((item: any) => ({
+            ghosting_risks: (intPayload.ghosting_risks || []).map((item: Record<string, unknown>) => ({
               candidate: String(item.candidate ?? ""),
               job: String(item.job ?? ""),
               risk_score: Number(item.risk_score ?? 0),
