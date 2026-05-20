@@ -1,0 +1,30 @@
+{
+  "schema_version": "1.0",
+  "description": "Canonical ingestion contract for manual Excel/XML uploads",
+  "required_columns": [
+    "name",
+    "job_title",
+    "email",
+    "status",
+    "recruiter",
+    "start_date",
+    "department",
+    "source"
+  ],
+  "types": {
+    "name": "string",
+    "job_title": "string",
+    "email": "string",
+    "status": "string",
+    "recruiter": "string",
+    "start_date": "date",
+    "department": "string",
+    "source": "string"
+  },
+  "enums": {
+    "stage_code": ["ACTIVE", "SCREEN", "INTERVIEW", "OFFER", "HIRED", "REJECTED"]
+  },
+  "date_format": "YYYY-MM-DD",
+  "xml_root": "records",
+  "xml_row_tag": "row"
+}

@@ -1,0 +1,192 @@
+{
+  "started_at": "2026-05-08T16:00:15.371870+00:00",
+  "reset": {
+    "status_code": 200,
+    "body": {
+      "purged": {
+        "applications": 1,
+        "candidates": 1,
+        "jobs": 1,
+        "data_logs": 1,
+        "ingestion_batches": 1,
+        "rejected_rows": 0,
+        "batch_entity_changes": 3,
+        "batch_snapshots_state": 0,
+        "stg_applications": 1,
+        "etl_rule_audit": 0,
+        "kpi_snapshot": 1,
+        "funnel_snapshot": 5,
+        "job_health_snapshot": 1,
+        "query_cache": 1
+      },
+      "reset_at": "2026-05-08T16:00:15.393622"
+    }
+  },
+  "preflight": {
+    "status_code": 200,
+    "body": {
+      "filename": "e2e-baseline.csv",
+      "schema_version": "1.0",
+      "payload_hash": "a8c1353a65fae636a1c53a3a8ad192f212a16086dc934994b5d4be5348225a8f",
+      "rows_received": 1,
+      "duplicate_rows": 0,
+      "duplicate_rate": 0.0,
+      "mandatory_missing_counts": {
+        "name": 0,
+        "job_title": 0,
+        "email": 0,
+        "status": 0,
+        "recruiter": 0,
+        "department": 0,
+        "start_date": 0,
+        "source": 0
+      },
+      "mandatory_issue_rows": 0,
+      "error_rate": 0.0,
+      "can_ingest": true,
+      "max_error_rate": 0.2
+    },
+    "local_payload_hash": "a8c1353a65fae636a1c53a3a8ad192f212a16086dc934994b5d4be5348225a8f"
+  },
+  "upload": {
+    "status_code": 200,
+    "body": {
+      "message": "ETL Completed successfully",
+      "batch_id": "bat-5d850fb39e",
+      "rows_processed": 1,
+      "quality_report": {
+        "rows_received": 1,
+        "rows_loaded": 1,
+        "rows_rejected": 0,
+        "duplicate_rows": 0,
+        "error_rate": 0.0,
+        "duplicate_rate": 0.0
+      }
+    }
+  },
+  "api_validation": {
+    "/stats": {
+      "status_code": 200,
+      "body_preview": {
+        "total_candidates": 1,
+        "hired_this_month": 0,
+        "avg_days": 0,
+        "sla_alerts": 0,
+        "chart_data": [
+          {
+            "name": "May",
+            "candidates": 1
+          }
+        ]
+      }
+    },
+    "/jobs": {
+      "status_code": 200,
+      "body_preview": [
+        {
+          "job_title": "Backend Engineer",
+          "department": "R&D",
+          "recruiter": "מור",
+          "active_candidates": 1,
+          "avg_days": 0,
+          "max_days": 0,
+          "sla_breaches": 0,
+          "health": "good"
+        }
+      ]
+    },
+    "/candidates": {
+      "status_code": 200,
+      "body_preview": {
+        "data": [
+          {
+            "candidate_name": "E2E User",
+            "email": "e2e.user@example.com",
+            "source": "Excel",
+            "job_title": "Backend Engineer",
+            "department": "R&D",
+            "status": "חדש",
+            "recruiter": "מור",
+            "start_date": "2026-05-08",
+            "days_in_process": 0,
+            "upload_log_id": "e5192c23",
+            "stage_code": "ACTIVE"
+          }
+        ],
+        "page": 1,
+        "total": 1
+      }
+    },
+    "/intelligence": {
+      "status_code": 200,
+      "body_preview": {
+        "funnel": [
+          {
+            "stage": "קורות חיים (Sourcing)",
+            "count": 1,
+            "percentage": 100
+          },
+          {
+            "stage": "סינון ראשוני / טלפוני",
+            "count": 0,
+            "percentage": 0
+          },
+          {
+            "stage": "ראיונות (HR + מקצועי)",
+            "count": 0,
+            "percentage": 0
+          },
+          {
+            "stage": "הצעות שכר",
+            "count": 0,
+            "percentage": 0
+          },
+          {
+            "stage": "קליטות בפועל",
+            "count": 0,
+            "percentage": 0
+          }
+        ],
+        "ghosting_risks": [],
+        "baseline": {
+          "avg_days": 0,
+          "current_hires": 0
+        }
+      }
+    }
+  },
+  "idempotency_replay": {
+    "status_code": 200,
+    "body": {
+      "message": "Idempotent replay accepted",
+      "batch_id": "bat-5d850fb39e",
+      "rows_processed": 1,
+      "replayed": true
+    }
+  },
+  "rollback": {
+    "status_code": 200,
+    "body": {
+      "message": "Batch bat-5d850fb39e reverted successfully"
+    }
+  },
+  "batch_board": {
+    "status_code": 200,
+    "body": [
+      {
+        "batch_id": "bat-5d850fb39e",
+        "filename": "e2e-baseline.csv",
+        "schema_version": "1.0",
+        "status": "reverted",
+        "rows_received": 1,
+        "rows_loaded": 1,
+        "rows_rejected": 0,
+        "duplicate_rows": 0,
+        "quality_score": 100.0,
+        "started_at": "2026-05-08T16:00:15.507270",
+        "finished_at": "2026-05-08T16:00:15.690176"
+      }
+    ]
+  },
+  "finished_at": "2026-05-08T16:00:15.712274+00:00"
+}

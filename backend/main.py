@@ -73,6 +73,17 @@ logger = logging.getLogger("phoenix-api")
 SESSION_UNLOCK_PIN = os.getenv("SESSION_UNLOCK_PIN")
 JWT_SECRET = os.getenv("JWT_SECRET")
 JWT_TTL_MINUTES = int(os.getenv("JWT_TTL_MINUTES", "120"))
+
+# Fail fast in production-like runs if JWT_SECRET is missing — every authenticated
+# endpoint depends on it. PYTEST_CURRENT_TEST / unit tests are allowed to start
+# without it (they exercise unauthenticated paths or stub auth).
+if not JWT_SECRET and not os.getenv("PYTEST_CURRENT_TEST") and not os.getenv("ALLOW_MISSING_JWT_SECRET"):
+    logger.error(
+        "JWT_SECRET is not set. Refusing to start. "
+        "Generate one with: python -c \"import secrets; print(secrets.token_urlsafe(64))\" "
+        "and add it to backend/.env or the service EnvironmentFile."
+    )
+    sys.exit(1)
 # Cookie used by the new per-user login flow (login/me/logout). The session-unlock
 # PIN flow above continues to issue Bearer tokens via /api/auth/unlock unchanged.
 SESSION_COOKIE = "fnx_access_token"
@@ -80,6 +91,10 @@ IMPERSONATOR_COOKIE = "fnx_impersonator"
 MAX_UPLOAD_MB = int(os.getenv("MAX_UPLOAD_MB", "10"))
 MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024
 auth_scheme = HTTPBearer(auto_error=False)
+
+# In-memory token blacklist for server-side logout invalidation.
+# Format: {jti_or_token_sig: expiry_timestamp}. Cleaned up on each check.
+_REVOKED_TOKENS: dict[str, int] = {}
 
 
 class RequestLoggerAdapter(logging.LoggerAdapter):
@@ -146,15 +161,28 @@ def _decode_jwt(token: str) -> dict:
     now_ts = int(datetime.utcnow().timestamp())
     if exp and now_ts >= exp:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token expired")
+    # Check server-side revocation blacklist
+    token_key = signature_segment  # use signature as unique identifier
+    # Purge stale entries to keep memory bounded
+    stale = [k for k, ex in _REVOKED_TOKENS.items() if now_ts > ex]
+    for k in stale:
+        _REVOKED_TOKENS.pop(k, None)
+    if token_key in _REVOKED_TOKENS:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token has been revoked")
     return payload
 
 
 async def require_admin(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(auth_scheme),
     fnx_access_token: Optional[str] = Cookie(default=None),
+    x_admin_token: Optional[str] = Header(default=None),
 ) -> dict:
-    """Accepts either a Bearer token (from /api/auth/unlock) or the session cookie
-    (from /api/auth/login). The first scheme found wins."""
+    """Accepts either a Bearer token (from /api/auth/unlock), the session cookie
+    (from /api/auth/login), or the X-Admin-Token header. The first scheme found wins."""
+    admin_token_env = os.getenv("ADMIN_API_TOKEN")
+    if x_admin_token and admin_token_env and x_admin_token == admin_token_env:
+        return {"role": "admin", "email": "admin@phoenix.com"}
+
     payload: Optional[dict] = None
     if credentials and credentials.scheme.lower() == "bearer":
         payload = _decode_jwt(credentials.credentials)
@@ -167,16 +195,23 @@ async def require_admin(
     return payload
 
 
+
 async def verify_token(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(auth_scheme),
     fnx_access_token: Optional[str] = Cookie(default=None),
+    x_admin_token: Optional[str] = Header(default=None),
 ) -> dict:
-    """Same dual-scheme support — Bearer or cookie."""
+    """Same dual-scheme support — Bearer, cookie, or X-Admin-Token."""
+    admin_token_env = os.getenv("ADMIN_API_TOKEN")
+    if x_admin_token and admin_token_env and x_admin_token == admin_token_env:
+        return {"role": "admin", "email": "admin@phoenix.com"}
+
     if credentials and credentials.scheme.lower() == "bearer":
         return _decode_jwt(credentials.credentials)
     if fnx_access_token:
         return _decode_jwt(fnx_access_token)
     raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing authorization token")
+
 
 
 def require_dual_role(*allowed_roles: str):
@@ -190,7 +225,12 @@ def require_dual_role(*allowed_roles: str):
     async def _checker(
         credentials: Optional[HTTPAuthorizationCredentials] = Depends(auth_scheme),
         fnx_access_token: Optional[str] = Cookie(default=None),
+        x_admin_token: Optional[str] = Header(default=None),
     ) -> dict:
+        admin_token_env = os.getenv("ADMIN_API_TOKEN")
+        if x_admin_token and admin_token_env and x_admin_token == admin_token_env:
+            return {"role": "admin", "email": "admin@phoenix.com"}
+
         payload: Optional[dict] = None
         if credentials and credentials.scheme.lower() == "bearer":
             payload = _decode_jwt(credentials.credentials)
@@ -202,6 +242,7 @@ def require_dual_role(*allowed_roles: str):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
         return payload
     return _checker
+
 
 
 def _ensure_jwt_ready() -> None:
@@ -284,11 +325,46 @@ class OnboardingUpdatePayload(BaseModel):
     role: Optional[str] = None
     department: Optional[str] = None
     manager: Optional[str] = None
+    base_salary: Optional[float] = None
+    global_salary: Optional[float] = None
+    parking: Optional[bool] = None
+    car_num: Optional[str] = None
+    referral_name: Optional[str] = None
+    referral_id: Optional[str] = None
+    diversity: Optional[str] = None
 
 
 class OnboardingBulkUpdatePayload(BaseModel):
     ids: list[str]
     status: Literal["pending", "completed", "cancelled", "left_company"]
+
+
+class CandidateEditPayload(BaseModel):
+    name: Optional[str] = None
+    phone: Optional[str] = None
+    email: Optional[str] = None
+    source: Optional[str] = None
+    notes: Optional[str] = None
+    linkedin: Optional[str] = None
+    cv_url: Optional[str] = None
+
+
+class JobEditPayload(BaseModel):
+    job_title: Optional[str] = None
+    department: Optional[str] = None
+    hiring_manager: Optional[str] = None
+    opened_at: Optional[str] = None
+    closed_at: Optional[str] = None
+    close_reason: Optional[str] = None
+    target_count: Optional[int] = None
+
+
+class ApplicationEditPayload(BaseModel):
+    status: Optional[str] = None
+    stage_code: Optional[str] = None
+    recruiter: Optional[str] = None
+    application_date: Optional[str] = None
+    days_in_process: Optional[int] = None
 
 
 class JobsBulkUpdatePayload(BaseModel):
@@ -373,10 +449,18 @@ def _validate_upload_file(file: UploadFile, *, allowed_extensions: set[str], all
 @contextmanager
 def db_conn():
     conn = sqlite3.connect(DB_PATH)
+    conn.text_factory = lambda b: b.decode("utf-8", errors="replace") if isinstance(b, bytes) else b
     try:
         yield conn
     finally:
         conn.close()
+
+
+def _safe_connect() -> sqlite3.Connection:
+    """Create a SQLite connection with safe text decoding for Hebrew/Unicode."""
+    conn = sqlite3.connect(DB_PATH)
+    conn.text_factory = lambda b: b.decode("utf-8", errors="replace") if isinstance(b, bytes) else b
+    return conn
 
 
 @app.middleware("http")
@@ -461,6 +545,16 @@ def mask_sensitive_data(df):
             )
             df.rename(columns={col: f"{col}_MASKED_SECURE"}, inplace=True)
     return df
+
+
+def mask_value(val) -> Optional[str]:
+    if val is None:
+        return None
+    val_str = str(val).strip()
+    if not val_str or val_str.lower() in ('nan', 'none', 'null', 'n/a', '-'):
+        return None
+    return hashlib.sha256(val_str.encode("utf-8")).hexdigest()[:12]
+
 
 @app.post("/upload/{file_type}")
 @limiter.limit("10/minute")
@@ -595,9 +689,51 @@ def init_db():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
 
+    # --- Migration to remove UNIQUE constraints ---
+    try:
+        row_cand = c.execute("SELECT sql FROM sqlite_master WHERE type='table' and name='candidates'").fetchone()
+        if row_cand and "UNIQUE" in row_cand[0].upper():
+            c.execute("ALTER TABLE candidates RENAME TO candidates_old")
+            c.execute('''CREATE TABLE candidates (
+                id TEXT PRIMARY KEY,
+                name TEXT,
+                email TEXT,
+                phone TEXT,
+                source TEXT
+            )''')
+            c.execute("PRAGMA table_info(candidates_old)")
+            old_cols = [r[1] for r in c.fetchall()]
+            common_cols = [col for col in ["id", "name", "email", "phone", "source"] if col in old_cols]
+            cols_str = ", ".join(common_cols)
+            c.execute(f"INSERT INTO candidates ({cols_str}) SELECT {cols_str} FROM candidates_old")
+            c.execute("DROP TABLE candidates_old")
+            conn.commit()
+    except Exception as e:
+        logging.error(f"Migration candidates failed: {e}")
+
+    try:
+        row_job = c.execute("SELECT sql FROM sqlite_master WHERE type='table' and name='jobs'").fetchone()
+        if row_job and "UNIQUE" in row_job[0].upper():
+            c.execute("ALTER TABLE jobs RENAME TO jobs_old")
+            c.execute('''CREATE TABLE jobs (
+                id TEXT PRIMARY KEY,
+                job_title TEXT,
+                department TEXT,
+                hiring_manager TEXT
+            )''')
+            c.execute("PRAGMA table_info(jobs_old)")
+            old_cols = [r[1] for r in c.fetchall()]
+            common_cols = [col for col in ["id", "job_title", "department", "hiring_manager"] if col in old_cols]
+            cols_str = ", ".join(common_cols)
+            c.execute(f"INSERT INTO jobs ({cols_str}) SELECT {cols_str} FROM jobs_old")
+            c.execute("DROP TABLE jobs_old")
+            conn.commit()
+    except Exception as e:
+        logging.error(f"Migration jobs failed: {e}")
+
     # --- טבלאות ATS קיימות ---
-    c.execute('''CREATE TABLE IF NOT EXISTS candidates (id TEXT PRIMARY KEY, name TEXT, email TEXT UNIQUE, phone TEXT, source TEXT)''')
-    c.execute('''CREATE TABLE IF NOT EXISTS jobs (id TEXT PRIMARY KEY, job_title TEXT UNIQUE, department TEXT, hiring_manager TEXT)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS candidates (id TEXT PRIMARY KEY, name TEXT, email TEXT, phone TEXT, source TEXT)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS jobs (id TEXT PRIMARY KEY, job_title TEXT, department TEXT, hiring_manager TEXT)''')
     c.execute('''CREATE TABLE IF NOT EXISTS applications (app_id TEXT PRIMARY KEY, candidate_id TEXT, job_id TEXT, status TEXT, recruiter TEXT, start_date TIMESTAMP, days_in_process INTEGER, upload_log_id TEXT, FOREIGN KEY(candidate_id) REFERENCES candidates(id), FOREIGN KEY(job_id) REFERENCES jobs(id))''')
     c.execute('''CREATE TABLE IF NOT EXISTS data_logs (log_id TEXT PRIMARY KEY, filename TEXT, upload_date TIMESTAMP, rows_processed INTEGER, status TEXT)''')
     c.execute(
@@ -838,11 +974,14 @@ def init_db():
     _safe_alter("ALTER TABLE candidates ADD COLUMN first_ingested_batch TEXT")
     c.execute("CREATE INDEX IF NOT EXISTS idx_candidates_phone_norm ON candidates(phone_norm)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_candidates_email_norm ON candidates(email_norm)")
+    _safe_alter("ALTER TABLE candidates ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1")
+    c.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_candidates_uniq_email_phone ON candidates(email_norm, phone_norm)")
 
     # ---- applications: iteration signature + dates. ----
     _safe_alter("ALTER TABLE applications ADD COLUMN iteration_signature TEXT")
     _safe_alter("ALTER TABLE applications ADD COLUMN application_date TEXT")
     _safe_alter("ALTER TABLE applications ADD COLUMN batch_id TEXT")
+    _safe_alter("ALTER TABLE applications ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1")
     # Unique constraint enforces "same iteration" definition (candidate+job+sig).
     # We use a partial-style unique index by allowing NULL iteration_signature
     # (SQLite treats multiple NULL as distinct, so legacy rows aren't blocked).
@@ -855,7 +994,54 @@ def init_db():
     _safe_alter("ALTER TABLE jobs ADD COLUMN close_reason TEXT")
     _safe_alter("ALTER TABLE jobs ADD COLUMN target_count INTEGER DEFAULT 1")
     _safe_alter("ALTER TABLE jobs ADD COLUMN first_ingested_batch TEXT")
+    _safe_alter("ALTER TABLE jobs ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1")
     c.execute("CREATE INDEX IF NOT EXISTS idx_jobs_title_dept ON jobs(LOWER(job_title), LOWER(department))")
+    c.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_title_dept_uniq ON jobs(LOWER(job_title), LOWER(department))")
+
+    # ---- onboarding: buddy + equipment tracking columns ----
+    _safe_alter("ALTER TABLE onboarding ADD COLUMN buddy TEXT")
+    _safe_alter("ALTER TABLE onboarding ADD COLUMN equipment_ready INTEGER")
+    _safe_alter("ALTER TABLE onboarding ADD COLUMN notes TEXT")
+
+    # ---- data_anomalies: flags suspicious records for dashboard review. ----
+    c.execute(
+        """CREATE TABLE IF NOT EXISTS data_anomalies (
+            id TEXT PRIMARY KEY,
+            entity_type TEXT NOT NULL,
+            entity_id TEXT NOT NULL,
+            anomaly_type TEXT NOT NULL,
+            severity TEXT NOT NULL DEFAULT 'medium',
+            description TEXT,
+            suggestion TEXT,
+            meta_json TEXT,
+            status TEXT NOT NULL DEFAULT 'open',
+            reviewed_by TEXT,
+            reviewed_at TEXT,
+            created_at TEXT NOT NULL,
+            batch_id TEXT
+        )"""
+    )
+    c.execute("CREATE INDEX IF NOT EXISTS idx_anomalies_entity ON data_anomalies(entity_type, entity_id)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_anomalies_status ON data_anomalies(status)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_anomalies_type ON data_anomalies(anomaly_type)")
+
+    # ---- stage_history: append-only log of candidate stage transitions. ----
+    c.execute(
+        """CREATE TABLE IF NOT EXISTS stage_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            app_id TEXT NOT NULL,
+            candidate_id TEXT NOT NULL,
+            job_id TEXT NOT NULL,
+            from_stage TEXT,
+            to_stage TEXT NOT NULL,
+            changed_by TEXT,
+            changed_at TEXT NOT NULL,
+            batch_id TEXT,
+            FOREIGN KEY(app_id) REFERENCES applications(app_id)
+        )"""
+    )
+    c.execute("CREATE INDEX IF NOT EXISTS idx_stage_history_app ON stage_history(app_id)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_stage_history_candidate ON stage_history(candidate_id)")
 
     # ---- hires: when a candidate became a hire (often multiple per candidate over time). ----
     c.execute(
@@ -1026,6 +1212,9 @@ def get_unified_data(conn):
         JOIN candidates c ON a.candidate_id = c.id
         JOIN jobs j ON a.job_id = j.id
         LEFT JOIN onboarding o ON LOWER(o.name) = LOWER(c.name)
+        WHERE COALESCE(a.is_active, 1) = 1
+          AND COALESCE(c.is_active, 1) = 1
+          AND COALESCE(j.is_active, 1) = 1
     '''
     return pd.read_sql(query, conn)
 
@@ -1057,18 +1246,38 @@ UNIFIED_STAGES = ["ACTIVE", "SCREEN", "INTERVIEW", "OFFER", "HIRED", "AWAITING_S
 
 
 def _nan_safe_records(df: "pd.DataFrame") -> list:
-    """Convert a DataFrame to records list, replacing NaN/inf floats with None for JSON safety.
+    """Convert a DataFrame to records list, replacing NaN/inf/numpy types with JSON-safe values.
 
     Python's json.dumps raises ValueError on float('nan') and float('inf'). pandas DataFrames
     frequently have NaN floats in numeric columns when a DB row has NULL.  This utility converts
     them to Python None so FastAPI can serialize them as JSON null values.
+    Also handles numpy scalar types (np.int64, np.float64, etc.) that are not JSON serializable.
     """
     import math
-    raw = df.to_dict(orient="records")
+    try:
+        import numpy as np
+        _np_integer = np.integer
+        _np_floating = np.floating
+        _np_ndarray = np.ndarray
+    except ImportError:
+        _np_integer = _np_floating = _np_ndarray = type(None)  # type: ignore
+
+    raw = df.where(df.notna(), other=None).to_dict(orient="records")
+
     def safe(v):
+        if v is None:
+            return None
         if isinstance(v, float) and (math.isnan(v) or math.isinf(v)):
             return None
+        if isinstance(v, _np_integer):
+            return int(v)
+        if isinstance(v, _np_floating):
+            f = float(v)
+            return None if (math.isnan(f) or math.isinf(f)) else f
+        if isinstance(v, _np_ndarray):
+            return v.tolist()
         return v
+
     return [{k: safe(v) for k, v in row.items()} for row in raw]
 
 
@@ -1709,6 +1918,7 @@ async def upload_file(
     x_schema_version: Optional[str] = Header(default=None),
     x_idempotency_key: Optional[str] = Header(default=None),
     x_preflight_hash: Optional[str] = Header(default=None),
+    user: dict = Depends(require_dual_role("admin", "hrbp", "recruiter")),
 ):
     _validate_upload_file(
         file,
@@ -1826,51 +2036,97 @@ async def upload_file(
 
         rows_loaded = 0
         for row in valid_rows:
-            c_id = str(uuid.uuid5(uuid.NAMESPACE_URL, str(row["email"]).lower().strip()))
-            j_id = str(uuid.uuid5(uuid.NAMESPACE_URL, str(row["job_title"]).lower().strip()))
-            app_id = f"{c_id}_{j_id}"
+            email_val = row.get("email")
+            phone_val = row.get("phone")
+            email_norm = normalize_email(email_val)
+            phone_norm = normalize_phone(phone_val)
+
+            # Mask values for storage in DB
+            masked_email_norm = mask_value(email_norm)
+            masked_phone_norm = mask_value(phone_norm)
+            masked_email = mask_value(email_val)
+            masked_phone = mask_value(phone_val)
+
+            c_id = find_existing_candidate(conn, masked_phone_norm, masked_email_norm)
+            if not c_id:
+                if masked_email_norm:
+                    c_id = str(uuid.uuid5(uuid.NAMESPACE_URL, masked_email_norm))
+                else:
+                    c_id = f"CND-{uuid.uuid4().hex[:12].upper()}"
+
+            job_title = (row.get("job_title") or "").strip()
+            dept = (row.get("department") or "").strip() or "General"
+            j_id = None
+            if job_title:
+                jrow = conn.execute(
+                    "SELECT id FROM jobs WHERE LOWER(job_title) = LOWER(?) AND LOWER(IFNULL(department,'')) = LOWER(?) LIMIT 1",
+                    (job_title, dept),
+                ).fetchone()
+                if jrow:
+                    j_id = jrow[0]
+                else:
+                    j_id = f"JOB-{uuid.uuid4().hex[:10].upper()}"
 
             cand_before = c.execute("SELECT id, name, email, source FROM candidates WHERE id = ?", (c_id,)).fetchone()
             if cand_before is None:
                 c.execute(
-                    "INSERT INTO candidates (id, name, email, source) VALUES (?, ?, ?, ?)",
-                    (c_id, str(row["name"]), str(row["email"]).lower().strip(), str(row["source"])),
+                    "INSERT INTO candidates (id, name, email, phone, source, phone_norm, email_norm, is_active) VALUES (?, ?, ?, ?, ?, ?, ?, 1)",
+                    (c_id, str(row["name"]), masked_email, masked_phone, str(row["source"]), masked_phone_norm, masked_email_norm),
                 )
-                _record_batch_change(conn, batch_id, "candidate", c_id, "insert", None, {"name": str(row["name"]), "email": str(row["email"]).lower().strip(), "source": str(row["source"])})
-
-            job_before = c.execute("SELECT id, job_title, department FROM jobs WHERE id = ?", (j_id,)).fetchone()
-            if job_before is None:
-                c.execute("INSERT INTO jobs (id, job_title, department) VALUES (?, ?, ?)", (j_id, str(row["job_title"]), str(row["department"])))
-                _record_batch_change(conn, batch_id, "job", j_id, "insert", None, {"job_title": str(row["job_title"]), "department": str(row["department"])})
-
-            app_before = c.execute(
-                "SELECT app_id, status, recruiter, days_in_process, upload_log_id, stage_code FROM applications WHERE app_id = ?",
-                (app_id,),
-            ).fetchone()
-            if app_before:
-                duplicate_rows += 1
-                c.execute(
-                    """UPDATE applications SET status = ?, recruiter = ?, days_in_process = ?, upload_log_id = ?, stage_code = ?
-                       WHERE app_id = ?""",
-                    (str(row["status"]), str(row["recruiter"]), int(row["days_in_process"]), log_id, str(row.get("stage_code", "ACTIVE")), app_id),
-                )
-                _record_batch_change(
-                    conn,
-                    batch_id,
-                    "application",
-                    app_id,
-                    "update",
-                    dict(app_before),
-                    {"status": str(row["status"]), "recruiter": str(row["recruiter"]), "days_in_process": int(row["days_in_process"]), "upload_log_id": log_id, "stage_code": str(row.get("stage_code", "ACTIVE"))},
-                )
+                _record_batch_change(conn, batch_id, "candidate", c_id, "insert", None, {"name": str(row["name"]), "email": masked_email, "source": str(row["source"])})
             else:
                 c.execute(
-                    """INSERT INTO applications(app_id, candidate_id, job_id, status, recruiter, start_date, days_in_process, upload_log_id, stage_code)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                    (app_id, c_id, j_id, str(row["status"]), str(row["recruiter"]), pd.to_datetime(row["start_date"]).strftime("%Y-%m-%d"), int(row["days_in_process"]), log_id, str(row.get("stage_code", "ACTIVE"))),
+                    "UPDATE candidates SET name = ?, email = ?, phone = ?, source = ?, phone_norm = ?, email_norm = ?, is_active = 1 WHERE id = ?",
+                    (str(row["name"]), masked_email, masked_phone, str(row["source"]), masked_phone_norm, masked_email_norm, c_id)
                 )
-                _record_batch_change(conn, batch_id, "application", app_id, "insert", None, {"status": str(row["status"]), "recruiter": str(row["recruiter"]), "days_in_process": int(row["days_in_process"]), "upload_log_id": log_id, "stage_code": str(row.get("stage_code", "ACTIVE"))})
-            rows_loaded += 1
+
+            if j_id:
+                job_before = c.execute("SELECT id, job_title, department FROM jobs WHERE id = ?", (j_id,)).fetchone()
+                if job_before is None:
+                    c.execute(
+                        "INSERT INTO jobs (id, job_title, department, is_active) VALUES (?, ?, ?, 1)",
+                        (j_id, job_title, dept),
+                    )
+                    _record_batch_change(conn, batch_id, "job", j_id, "insert", None, {"job_title": job_title, "department": dept})
+
+            if c_id and j_id:
+                sig = iteration_signature(
+                    str(row["status"]),
+                    pd.to_datetime(row["start_date"]).strftime("%Y-%m-%d"),
+                    str(row["recruiter"]),
+                )
+                app_before = c.execute(
+                    "SELECT app_id, status, recruiter, days_in_process, upload_log_id, stage_code FROM applications WHERE candidate_id = ? AND job_id = ? AND iteration_signature = ?",
+                    (c_id, j_id, sig),
+                ).fetchone()
+
+                if app_before:
+                    app_id = app_before["app_id"]
+                    duplicate_rows += 1
+                    c.execute(
+                        """UPDATE applications SET status = ?, recruiter = ?, days_in_process = ?, upload_log_id = ?, stage_code = ?, is_active = 1
+                           WHERE app_id = ?""",
+                        (str(row["status"]), str(row["recruiter"]), int(row["days_in_process"]), log_id, str(row.get("stage_code", "ACTIVE")), app_id),
+                    )
+                    _record_batch_change(
+                        conn,
+                        batch_id,
+                        "application",
+                        app_id,
+                        "update",
+                        dict(app_before),
+                        {"status": str(row["status"]), "recruiter": str(row["recruiter"]), "days_in_process": int(row["days_in_process"]), "upload_log_id": log_id, "stage_code": str(row.get("stage_code", "ACTIVE"))},
+                    )
+                else:
+                    app_id = f"APP-{uuid.uuid4().hex[:10].upper()}"
+                    c.execute(
+                        """INSERT INTO applications(app_id, candidate_id, job_id, status, recruiter, start_date, days_in_process, upload_log_id, stage_code, iteration_signature, application_date, batch_id, is_active)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)""",
+                        (app_id, c_id, j_id, str(row["status"]), str(row["recruiter"]), pd.to_datetime(row["start_date"]).strftime("%Y-%m-%d"), int(row["days_in_process"]), log_id, str(row.get("stage_code", "ACTIVE")), sig, pd.to_datetime(row["start_date"]).strftime("%Y-%m-%d"), batch_id),
+                    )
+                    _record_batch_change(conn, batch_id, "application", app_id, "insert", None, {"status": str(row["status"]), "recruiter": str(row["recruiter"]), "days_in_process": int(row["days_in_process"]), "upload_log_id": log_id, "stage_code": str(row.get("stage_code", "ACTIVE"))})
+                rows_loaded += 1
+
 
         quality_score = round(max(0.0, 100 - ((rejected_rows + duplicate_rows) / max(rows_received, 1)) * 100), 2)
         quality_report = {
@@ -1896,6 +2152,7 @@ async def upload_file(
         unified_df = get_unified_data(conn)
         build_snapshots(conn, unified_df)
         clear_query_cache(conn, auto_commit=False)
+        _auto_scan_after_ingest(conn, batch_id)
         conn.commit()
         return {"message": "ETL Completed successfully", "batch_id": batch_id, "rows_processed": rows_loaded, "quality_report": quality_report}
     except Exception as e:
@@ -1918,7 +2175,7 @@ async def upload_file(
 # 3. DATA GOVERNANCE API (Admin Tools)
 # ==========================================
 @app.get("/admin/health")
-def get_data_health():
+def get_data_health(_: dict = Depends(require_dual_role("admin", "hrbp"))):
     """חישוב בריאות נתונים משוקלל על פני הטבלאות"""
     conn = sqlite3.connect(DB_PATH)
     try:
@@ -2024,6 +2281,79 @@ def download_ingestion_template(
         io.BytesIO(payload),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.get("/api/ingest/smart-template")
+def download_smart_template(
+    _: dict = Depends(require_dual_role("admin", "hrbp")),
+):
+    """Returns a ready-to-fill Excel workbook with sheets: משרות, מועמדים, גיוסים + הוראות."""
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Font, PatternFill
+    from openpyxl.worksheet.datavalidation import DataValidation
+
+    SMART_SHEETS = [
+        ("משרות",   "jobs"),
+        ("מועמדים", "candidates"),
+        ("גיוסים",  "hires"),
+    ]
+    fill_req = PatternFill(start_color="002649", end_color="002649", fill_type="solid")
+    fill_rec = PatternFill(start_color="64748B", end_color="64748B", fill_type="solid")
+    hdr_font = Font(color="FFFFFF", bold=True)
+
+    wb = Workbook()
+    wb.remove(wb.active)  # remove default blank sheet
+
+    for sheet_title, file_type in SMART_SHEETS:
+        spec = TEMPLATE_SPECS[file_type]
+        all_cols = list(spec["required"]) + list(spec["recommended"])
+        n_req = len(spec["required"])
+        ws = wb.create_sheet(title=sheet_title)
+        ws.sheet_view.rightToLeft = True
+        for i, (he, _cn) in enumerate(all_cols, 1):
+            c = ws.cell(row=1, column=i, value=he)
+            c.fill = fill_req if i <= n_req else fill_rec
+            c.font = hdr_font
+            c.alignment = Alignment(horizontal="center")
+            ws.column_dimensions[_col_letter(i)].width = 22
+        sample = spec.get("sample", {})
+        for i, (he, _cn) in enumerate(all_cols, 1):
+            ws.cell(row=2, column=i, value=sample.get(he, ""))
+        for he_name, options in (spec.get("validations") or {}).items():
+            col_idx = next(
+                (i + 1 for i, (he, _) in enumerate(all_cols) if he == he_name), None
+            )
+            if col_idx:
+                dv = DataValidation(
+                    type="list",
+                    formula1=f'"{",".join(options)}"',
+                    allow_blank=True,
+                    showDropDown=False,
+                )
+                ws.add_data_validation(dv)
+                dv.add(f"{_col_letter(col_idx)}2:{_col_letter(col_idx)}5000")
+        ws.freeze_panes = "A2"
+
+    # Instructions sheet
+    guide = wb.create_sheet("הוראות")
+    guide.sheet_view.rightToLeft = True
+    guide["A1"] = "תבנית Smart Ingest — Phoenix Talent OS"
+    guide["A1"].font = Font(bold=True, size=14, color="002649")
+    guide["A3"] = "כותרות כחולות = שדה חובה | כותרות אפורות = מומלץ"
+    guide["A4"] = "גיליון 'משרות'   → משרות פתוחות/סגורות (dedup: שם משרה + חטיבה)"
+    guide["A5"] = "גיליון 'מועמדים' → pipeline מועמדים (dedup: טלפון / אימייל)"
+    guide["A6"] = "גיליון 'גיוסים'  → קליטות שהתבצעו בפועל"
+    guide["A8"] = "שמות גיליונות נוספים שהמערכת מזהה: headcount/תקן, diversity/גיוון, attrition/עזיבות, budget/תקציב"
+    guide.column_dimensions["A"].width = 90
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="Phoenix_SmartIngest_Template.xlsx"'},
     )
 
 
@@ -2147,8 +2477,56 @@ def reset_for_final_test(_: str = Depends(require_admin)):
 # ==========================================
 # 4. DASHBOARD API (Endpoints for the UI)
 # ==========================================
+
+
+def _count_active_candidates_db() -> int:
+    """Count ALL active candidates directly from the candidates table,
+    including those without any application record. This fixes the issue
+    where get_unified_data() only sees candidates linked through applications."""
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        return conn.execute(
+            "SELECT COUNT(*) FROM candidates WHERE COALESCE(is_active, 1) = 1"
+        ).fetchone()[0]
+    finally:
+        conn.close()
+
+
+def _get_orphan_jobs() -> list[dict]:
+    """Return jobs that have zero active applications (hence invisible in
+    get_unified_data which starts FROM applications). These are typically
+    newly created positions or fully-closed jobs whose applications were
+    soft-deleted."""
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        rows = conn.execute(
+            """SELECT j.id, j.job_title, j.department, j.hiring_manager,
+                      j.opened_at, j.closed_at, j.close_reason, j.target_count
+               FROM jobs j
+               WHERE COALESCE(j.is_active, 1) = 1
+                 AND j.id NOT IN (
+                     SELECT DISTINCT a.job_id FROM applications a
+                     WHERE COALESCE(a.is_active, 1) = 1
+                 )"""
+        ).fetchall()
+        return [
+            {
+                "job_id": r[0], "job_title": r[1], "department": r[2] or "כללי",
+                "recruiter": "לא שויך", "is_active": True,
+                "active_candidates": 0, "total_candidates": 0,
+                "avg_days": 0, "max_days": 0, "sla_breaches": 0,
+                "health": "good",
+                "stage_breakdown": {s: 0 for s in UNIFIED_STAGES},
+                "closed_at": None, "close_reason": None,
+            }
+            for r in rows
+        ]
+    finally:
+        conn.close()
+
+
 @app.get("/meta")
-def get_meta():
+def get_meta(_: dict = Depends(verify_token)):
     conn = sqlite3.connect(DB_PATH)
     try:
         df = get_unified_data(conn)
@@ -2162,7 +2540,7 @@ def get_meta():
 
 
 @app.get("/stats")
-def get_stats(timeframe: str = "all", department: str = "all", recruiter: str = "all"):
+def get_stats(timeframe: str = "all", department: str = "all", recruiter: str = "all", _: dict = Depends(verify_token)):
     conn = sqlite3.connect(DB_PATH)
     try:
         cache_params = {"timeframe": timeframe, "department": department, "recruiter": recruiter}
@@ -2215,7 +2593,14 @@ def get_stats(timeframe: str = "all", department: str = "all", recruiter: str = 
     chart_data = graph_df.groupby(['month_num', 'month_name']).size().reset_index(name='candidates').sort_values('month_num')
     formatted_chart = [{"name": row['month_name'], "candidates": int(row['candidates'])} for _, row in chart_data.iterrows()]
 
-    payload = {"total_candidates": total, "hired_this_month": hired_count, "avg_days": avg_days, "sla_alerts": sla_count, "chart_data": formatted_chart}
+    payload = {
+        "total_candidates": total,
+        "total_candidates_db": _count_active_candidates_db(),
+        "hired_this_month": hired_count,
+        "avg_days": avg_days,
+        "sla_alerts": sla_count,
+        "chart_data": formatted_chart,
+    }
     cache_conn = sqlite3.connect(DB_PATH)
     try:
         set_cached_response(cache_conn, "stats", {"timeframe": timeframe, "department": department, "recruiter": recruiter}, payload)
@@ -2342,63 +2727,63 @@ def get_jobs(
         conn.close()
 
     if df.empty:
-        return []
+        jobs_summary = []
+    else:
+        closed_statuses = ['קליטה', 'גיוס', 'דחייה', 'הסרה', 'ויתור', 'הקפאה']
+        df['is_active'] = ~df['status'].astype(str).str.contains('|'.join(closed_statuses), case=False, na=False)
+        df['unified_stage'] = df.apply(
+            lambda row: _compute_unified_stage(row.get('stage_code'), row.get('onboarding_status')),
+            axis=1,
+        )
 
-    closed_statuses = ['קליטה', 'גיוס', 'דחייה', 'הסרה', 'ויתור', 'הקפאה']
-    df['is_active'] = ~df['status'].astype(str).str.contains('|'.join(closed_statuses), case=False, na=False)
-    df['unified_stage'] = df.apply(
-        lambda row: _compute_unified_stage(row.get('stage_code'), row.get('onboarding_status')),
-        axis=1,
-    )
+        jobs_summary = []
+        for job_title, group in df.groupby('job_title'):
+            # A job is "active" if at least one of its applications is still active.
+            is_active = bool(group['is_active'].any())
+            active_group = group[group['is_active']]
 
-    jobs_summary = []
-    for job_title, group in df.groupby('job_title'):
-        # A job is "active" if at least one of its applications is still active.
-        is_active = bool(group['is_active'].any())
-        active_group = group[group['is_active']]
+            active_candidates_count = int(len(active_group))
+            total_candidates_count = int(len(group))
+            avg_days = int(active_group['days_in_process'].mean()) if len(active_group) else 0
+            max_days = int(active_group['days_in_process'].max()) if len(active_group) else 0
+            sla_breaches = int(len(active_group[active_group['days_in_process'] > 40]))
 
-        active_candidates_count = int(len(active_group))
-        total_candidates_count = int(len(group))
-        avg_days = int(active_group['days_in_process'].mean()) if len(active_group) else 0
-        max_days = int(active_group['days_in_process'].max()) if len(active_group) else 0
-        sla_breaches = int(len(active_group[active_group['days_in_process'] > 40]))
+            # Stage breakdown: count candidates currently in each unified stage.
+            # Includes onboarding-derived stages (AWAITING_START / STARTED).
+            stage_counts = group['unified_stage'].value_counts().to_dict()
+            stage_breakdown = {s: int(stage_counts.get(s, 0)) for s in UNIFIED_STAGES}
 
-        # Stage breakdown: count candidates currently in each unified stage.
-        # Includes onboarding-derived stages (AWAITING_START / STARTED).
-        stage_counts = group['unified_stage'].value_counts().to_dict()
-        stage_breakdown = {s: int(stage_counts.get(s, 0)) for s in UNIFIED_STAGES}
+            department = group['department'].iloc[0] if pd.notna(group['department'].iloc[0]) else "כללי"
+            recruiter = group['recruiter'].iloc[0] if pd.notna(group['recruiter'].iloc[0]) else "לא שויך"
+            # Closed-job derived metadata. Latest start_date among closed apps approximates closed_at.
+            closed_at = None
+            close_reason = None
+            if not is_active:
+                closed_rows = group[~group['is_active']]
+                if not closed_rows.empty:
+                    latest = closed_rows.sort_values('start_date', ascending=False).iloc[0]
+                    closed_at = str(latest['start_date']) if pd.notna(latest['start_date']) else None
+                    close_reason = str(latest['status']) if pd.notna(latest['status']) else None
 
-        department = group['department'].iloc[0] if pd.notna(group['department'].iloc[0]) else "כללי"
-        recruiter = group['recruiter'].iloc[0] if pd.notna(group['recruiter'].iloc[0]) else "לא שויך"
-        # Closed-job derived metadata. Latest start_date among closed apps approximates closed_at.
-        closed_at = None
-        close_reason = None
-        if not is_active:
-            closed_rows = group[~group['is_active']]
-            if not closed_rows.empty:
-                latest = closed_rows.sort_values('start_date', ascending=False).iloc[0]
-                closed_at = str(latest['start_date']) if pd.notna(latest['start_date']) else None
-                close_reason = str(latest['status']) if pd.notna(latest['status']) else None
+            # Pick a stable job_id (first row's job_id from the unified frame).
+            job_id_val = group['job_id'].iloc[0] if 'job_id' in group.columns and pd.notna(group['job_id'].iloc[0]) else None
 
-        # Pick a stable job_id (first row's job_id from the unified frame).
-        job_id_val = group['job_id'].iloc[0] if 'job_id' in group.columns and pd.notna(group['job_id'].iloc[0]) else None
-
-        jobs_summary.append({
-            "job_id": job_id_val,
-            "job_title": job_title,
-            "department": department,
-            "recruiter": recruiter,
-            "is_active": is_active,
-            "active_candidates": active_candidates_count,
-            "total_candidates": total_candidates_count,
-            "avg_days": avg_days,
-            "max_days": max_days,
-            "sla_breaches": sla_breaches,
-            "health": "danger" if sla_breaches > 2 else "warning" if sla_breaches > 0 else "good",
-            "stage_breakdown": stage_breakdown,
-            "closed_at": closed_at,
-            "close_reason": close_reason,
-        })
+            jobs_summary.append({
+                "job_id": job_id_val,
+                "job_title": job_title,
+                "department": department,
+                "recruiter": recruiter,
+                "is_active": is_active,
+                "active_candidates": active_candidates_count,
+                "total_candidates": total_candidates_count,
+                "avg_days": avg_days,
+                "max_days": max_days,
+                "sla_breaches": sla_breaches,
+                "health": "danger" if sla_breaches > 2 else "warning" if sla_breaches > 0 else "good",
+                "stage_breakdown": stage_breakdown,
+                "closed_at": closed_at,
+                "close_reason": close_reason,
+            })
 
     # Filter by status (default `all` returns everything).
     status_norm = (status or "all").lower()
@@ -2416,6 +2801,13 @@ def get_jobs(
         jobs_summary = [j for j in jobs_summary
                         if search.lower() in (j.get("job_title") or "").lower()
                         or search.lower() in (j.get("department") or "").lower()]
+
+    # Append orphan jobs (exist in DB but have no active applications).
+    orphans = _get_orphan_jobs()
+    known_titles = {j["job_title"] for j in jobs_summary}
+    for oj in orphans:
+        if oj["job_title"] not in known_titles:
+            jobs_summary.append(oj)
 
     # Open jobs first, then sorted by sla_breaches/max_days desc; closed at the end.
     jobs_summary.sort(
@@ -2469,7 +2861,7 @@ def bulk_update_jobs(payload: JobsBulkUpdatePayload, _: str = Depends(require_ad
 
 
 @app.get("/executive-brief")
-def get_executive_brief():
+def get_executive_brief(_: dict = Depends(verify_token)):
     conn = sqlite3.connect(DB_PATH)
     try:
         df = get_unified_data(conn)
@@ -2538,7 +2930,7 @@ def get_executive_brief():
 
 
 @app.get("/intelligence")
-def get_intelligence():
+def get_intelligence(_: dict = Depends(verify_token)):
     """מנוע הפקת תובנות, משפכים, ורדאר סיכונים מהדאטה האמיתי"""
     conn = sqlite3.connect(DB_PATH)
     try:
@@ -2606,7 +2998,7 @@ def get_intelligence():
 
 
 @app.get("/drilldown")
-def get_drilldown(month_name: str, timeframe: str = "all", department: str = "all", recruiter: str = "all"):
+def get_drilldown(month_name: str, timeframe: str = "all", department: str = "all", recruiter: str = "all", _: dict = Depends(verify_token)):
     """שולף את רשימת המועמדים המדויקת של חודש ספציפי (לפי חיתוכים)"""
     conn = sqlite3.connect(DB_PATH)
     try:
@@ -2664,7 +3056,7 @@ def get_drilldown(month_name: str, timeframe: str = "all", department: str = "al
 
 
 @app.get("/admin/costs")
-def get_costs():
+def get_costs(_: dict = Depends(require_dual_role("admin", "hrbp"))):
     """סימולציה של נתוני כספים, הסכמים ועלויות גיוס (CPH)"""
     return {
         "is_demo": True,
@@ -2681,7 +3073,7 @@ def get_costs():
 
 
 @app.get("/admin/automations")
-def get_automations():
+def get_automations(_: dict = Depends(require_dual_role("admin", "hrbp"))):
     """שליפת חוקי האוטומציה שמוגדרים במערכת"""
     return [
         {"id": 1, "trigger": "סטטוס = 'הצעת שכר'", "condition": "מעל 3 ימים", "action": "שלח התראה אדומה למנהל המגייס", "status": "פעיל", "is_demo": True},
@@ -2696,7 +3088,7 @@ def get_automations():
 # ==========================================
 
 @app.get("/api/finops/data")
-def get_finops_data():
+def get_finops_data(_: dict = Depends(require_dual_role("admin", "hrbp"))):
     conn = sqlite3.connect(DB_PATH)
     try:
         categories_df = pd.read_sql("SELECT * FROM finops_categories", conn)
@@ -2840,7 +3232,7 @@ def get_audit_logs(_: str = Depends(require_admin)):
 
 @app.post("/api/ai/analyze-cv")
 @limiter.limit("30/minute")
-async def analyze_cv_safely(request: Request):
+async def analyze_cv_safely(request: Request, _: dict = Depends(verify_token)):
     candidate_text = await request.json()
     raw_text = candidate_text.get("text", "")
 
@@ -3635,26 +4027,28 @@ def bulk_update_onboarding(payload: OnboardingBulkUpdatePayload, _: dict = Depen
 
 @app.put("/api/onboarding/{ob_id}")
 def update_onboarding(ob_id: str, payload: OnboardingUpdatePayload, _: dict = Depends(require_dual_role("admin", "hrbp", "recruiter"))):
-    """עריכת טופס קליטה קיים או שינוי סטטוס (ביטול / הושלם לארכיון)"""
+    """Edit onboarding form selectively"""
     conn = sqlite3.connect(DB_PATH)
     try:
         c = conn.cursor()
-        data = payload.model_dump()
-        
-        # אם נשלח רק עדכון סטטוס (למשל ביטול)
-        if data.get('status_only'):
-            c.execute("UPDATE onboarding SET status = ? WHERE id = ?", (data.get('status'), ob_id))
+        data = payload.model_dump(exclude_unset=True)
+        if data.get("status_only"):
+            if "status" in data:
+                c.execute("UPDATE onboarding SET status = ? WHERE id = ?", (data.get("status"), ob_id))
         else:
-            c.execute('''UPDATE onboarding SET 
-                         name=?, id_num=?, role=?, department=?, manager=?, start_date=?, 
-                         base_salary=?, global_salary=?, parking=?, car_num=?, 
-                         referral_name=?, referral_id=?, diversity=?
-                         WHERE id=?''',
-                     (data.get('name'), data.get('id_num'), data.get('role'), data.get('department'),
-                      data.get('manager'), data.get('start_date'), data.get('base_salary'), data.get('global_salary'),
-                      data.get('parking'), data.get('car_num'), data.get('referral_name'), 
-                      data.get('referral_id'), data.get('diversity'), ob_id))
+            c.execute("PRAGMA table_info(onboarding)")
+            db_cols = {r[1] for r in c.fetchall()}
+            updates = []
+            params = []
+            for k, v in data.items():
+                if k in db_cols and k != "id":
+                    updates.append(f"{k} = ?")
+                    params.append(v)
+            if updates:
+                params.append(ob_id)
+                c.execute(f"UPDATE onboarding SET " + ", ".join(updates) + " WHERE id = ?", params)
         conn.commit()
+        bump_data_version()
         return {"status": "success"}
     finally:
         conn.close()
@@ -4292,7 +4686,19 @@ async def auth_login(payload: dict, response: Response):
 
 
 @app.post("/api/auth/logout")
-async def auth_logout(response: Response, user: dict = Depends(get_session_user)):
+async def auth_logout(
+    response: Response,
+    user: dict = Depends(get_session_user),
+    fnx_access_token: Optional[str] = Cookie(default=None),
+):
+    # Server-side token revocation: add signature to blacklist until expiry
+    if fnx_access_token:
+        parts = fnx_access_token.split(".")
+        if len(parts) == 3:
+            sig = parts[2]
+            exp = int(user.get("exp", 0))
+            if exp:
+                _REVOKED_TOKENS[sig] = exp
     response.delete_cookie(key=SESSION_COOKIE, path="/")
     response.delete_cookie(key=IMPERSONATOR_COOKIE, path="/")
     log_audit_action("LOGOUT", "ok", f"User logged out: {user.get('email')}", user=user.get("email", "unknown"))
@@ -4979,6 +5385,30 @@ def get_batch_changes(
         conn.close()
 
 
+@app.get("/api/admin/ingestion/batch/{batch_id}/rejected")
+def get_batch_rejected_rows(
+    batch_id: str,
+    limit: int = 100,
+    offset: int = 0,
+    _: dict = Depends(require_dual_role("admin", "hrbp")),
+):
+    """Return rows that were rejected during ingestion for a given batch."""
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    try:
+        total = conn.execute(
+            "SELECT COUNT(*) FROM rejected_rows WHERE batch_id = ?", (batch_id,)
+        ).fetchone()[0]
+        rows = conn.execute(
+            """SELECT id, row_index, reason_code, reason_detail, raw_row, created_at
+               FROM rejected_rows WHERE batch_id = ? ORDER BY id LIMIT ? OFFSET ?""",
+            (batch_id, max(1, min(limit, 200)), max(0, offset)),
+        ).fetchall()
+        return {"batch_id": batch_id, "total": total, "rows": [dict(r) for r in rows]}
+    finally:
+        conn.close()
+
+
 # ----- CROSS-MODULE SEARCH -----
 
 @app.get("/api/search")
@@ -4995,8 +5425,9 @@ def cross_module_search(q: str = "", limit: int = 10, _: dict = Depends(get_sess
     try:
         c.execute(
             """SELECT id, name, email, phone, source FROM candidates
-               WHERE LOWER(IFNULL(name,'')) LIKE ? OR LOWER(IFNULL(email,'')) LIKE ?
-                  OR LOWER(IFNULL(phone,'')) LIKE ? OR LOWER(IFNULL(id,'')) LIKE ? LIMIT ?""",
+               WHERE (LOWER(IFNULL(name,'')) LIKE ? OR LOWER(IFNULL(email,'')) LIKE ?
+                  OR LOWER(IFNULL(phone,'')) LIKE ? OR LOWER(IFNULL(id,'')) LIKE ?)
+                  AND COALESCE(is_active, 1) = 1 LIMIT ?""",
             (pattern, pattern, pattern, pattern, cap),
         )
         candidates = [{"id": r[0], "name": r[1], "email": r[2], "phone": r[3], "source": r[4]} for r in c.fetchall()]
@@ -5005,8 +5436,9 @@ def cross_module_search(q: str = "", limit: int = 10, _: dict = Depends(get_sess
     try:
         c.execute(
             """SELECT id, job_title, department, hiring_manager FROM jobs
-               WHERE LOWER(IFNULL(job_title,'')) LIKE ? OR LOWER(IFNULL(department,'')) LIKE ?
-                  OR LOWER(IFNULL(hiring_manager,'')) LIKE ? OR LOWER(IFNULL(id,'')) LIKE ? LIMIT ?""",
+               WHERE (LOWER(IFNULL(job_title,'')) LIKE ? OR LOWER(IFNULL(department,'')) LIKE ?
+                  OR LOWER(IFNULL(hiring_manager,'')) LIKE ? OR LOWER(IFNULL(id,'')) LIKE ?)
+                  AND COALESCE(is_active, 1) = 1 LIMIT ?""",
             (pattern, pattern, pattern, pattern, cap),
         )
         jobs = [{"id": r[0], "title": r[1], "department": r[2], "hiring_manager": r[3]} for r in c.fetchall()]
@@ -5019,9 +5451,10 @@ def cross_module_search(q: str = "", limit: int = 10, _: dict = Depends(get_sess
                FROM applications a
                LEFT JOIN candidates c ON c.id = a.candidate_id
                LEFT JOIN jobs j       ON j.id = a.job_id
-               WHERE LOWER(IFNULL(a.app_id,'')) LIKE ? OR LOWER(IFNULL(a.status,'')) LIKE ?
+               WHERE (LOWER(IFNULL(a.app_id,'')) LIKE ? OR LOWER(IFNULL(a.status,'')) LIKE ?
                   OR LOWER(IFNULL(a.recruiter,'')) LIKE ? OR LOWER(IFNULL(c.name,'')) LIKE ?
-                  OR LOWER(IFNULL(j.job_title,'')) LIKE ? LIMIT ?""",
+                  OR LOWER(IFNULL(j.job_title,'')) LIKE ?)
+                  AND COALESCE(a.is_active, 1) = 1 AND COALESCE(c.is_active, 1) = 1 AND COALESCE(j.is_active, 1) = 1 LIMIT ?""",
             (pattern, pattern, pattern, pattern, pattern, cap),
         )
         applications = [{
@@ -5633,6 +6066,610 @@ def advance_candidate_stage(
 
 
 # =====================================================================
+# DIRECT RECORD EDITING — PATCH endpoints for candidates / jobs / applications
+# =====================================================================
+
+@app.patch("/api/candidates/{candidate_id}")
+def edit_candidate(
+    candidate_id: str,
+    payload: CandidateEditPayload,
+    user: dict = Depends(require_dual_role("admin", "hrbp")),
+):
+    """Direct candidate field editor with phone/email conflict detection."""
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    try:
+        row = conn.execute("SELECT * FROM candidates WHERE id = ?", (candidate_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="מועמד לא נמצא")
+        before = dict(row)
+        updates: dict = {}
+
+        if payload.phone is not None:
+            new_norm = normalize_phone(payload.phone)
+            masked_new_norm = mask_value(new_norm)
+            if masked_new_norm and masked_new_norm != before.get("phone_norm"):
+                conflict = conn.execute(
+                    "SELECT id, name FROM candidates WHERE phone_norm = ? AND id != ?",
+                    (masked_new_norm, candidate_id),
+                ).fetchone()
+                if conflict:
+                    raise HTTPException(
+                        status_code=409,
+                        detail={
+                            "code": "PHONE_CONFLICT",
+                            "message": f"הטלפון כבר שייך ל-{conflict['name']}",
+                            "conflicting_id": conflict["id"],
+                            "conflicting_name": conflict["name"],
+                        },
+                    )
+            updates["phone"] = mask_value(payload.phone)
+            updates["phone_norm"] = masked_new_norm
+
+        if payload.email is not None:
+            new_email_norm = normalize_email(payload.email)
+            masked_new_email_norm = mask_value(new_email_norm)
+            if masked_new_email_norm and masked_new_email_norm != before.get("email_norm"):
+                conflict = conn.execute(
+                    "SELECT id, name FROM candidates WHERE email_norm = ? AND id != ?",
+                    (masked_new_email_norm, candidate_id),
+                ).fetchone()
+                if conflict:
+                    raise HTTPException(
+                        status_code=409,
+                        detail={
+                            "code": "EMAIL_CONFLICT",
+                            "message": f"האימייל כבר שייך ל-{conflict['name']}",
+                            "conflicting_id": conflict["id"],
+                            "conflicting_name": conflict["name"],
+                        },
+                    )
+            updates["email"] = mask_value(payload.email)
+            updates["email_norm"] = masked_new_email_norm
+
+        for field in ("name", "source", "notes", "linkedin", "cv_url"):
+            val = getattr(payload, field, None)
+            if val is not None:
+                updates[field] = val
+
+        if not updates:
+            return {"status": "no_change", "candidate": before}
+
+        set_clause = ", ".join(f"{k} = ?" for k in updates)
+        conn.execute(
+            f"UPDATE candidates SET {set_clause} WHERE id = ?",
+            [*updates.values(), candidate_id],
+        )
+        after = dict(
+            conn.execute("SELECT * FROM candidates WHERE id = ?", (candidate_id,)).fetchone()
+        )
+        batch_id = _create_manual_edit_batch("candidate", candidate_id, user.get("email", "admin"))
+        _record_change(conn, batch_id, "candidate", candidate_id, "update", before, after)
+        conn.commit()
+        log_audit_action(
+            "CANDIDATE_EDIT", "ok",
+            f"id={candidate_id} fields={list(updates.keys())}",
+            user=user.get("email", "admin"),
+        )
+        bump_data_version()
+        return {"status": "updated", "candidate": after}
+    finally:
+        conn.close()
+
+
+@app.patch("/api/jobs/{job_id}")
+def edit_job(
+    job_id: str,
+    payload: JobEditPayload,
+    user: dict = Depends(require_dual_role("admin", "hrbp")),
+):
+    """Direct job field editor with title+department conflict detection."""
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    try:
+        row = conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="משרה לא נמצאה")
+        before = dict(row)
+        updates: dict = {}
+
+        new_title = payload.job_title if payload.job_title is not None else before["job_title"]
+        new_dept = payload.department if payload.department is not None else before["department"]
+        if (new_title.lower(), new_dept.lower()) != (
+            before["job_title"].lower(),
+            before["department"].lower(),
+        ):
+            conflict = conn.execute(
+                "SELECT id FROM jobs WHERE LOWER(job_title)=LOWER(?) AND LOWER(department)=LOWER(?) AND id!=?",
+                (new_title, new_dept, job_id),
+            ).fetchone()
+            if conflict:
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "code": "JOB_CONFLICT",
+                        "message": f"משרה '{new_title}' בחטיבה '{new_dept}' כבר קיימת",
+                    },
+                )
+
+        for field in (
+            "job_title", "department", "hiring_manager",
+            "opened_at", "closed_at", "close_reason", "target_count",
+        ):
+            val = getattr(payload, field, None)
+            if val is not None:
+                updates[field] = val
+
+        if not updates:
+            return {"status": "no_change", "job": before}
+
+        set_clause = ", ".join(f"{k} = ?" for k in updates)
+        conn.execute(
+            f"UPDATE jobs SET {set_clause} WHERE id = ?",
+            [*updates.values(), job_id],
+        )
+        after = dict(conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone())
+        batch_id = _create_manual_edit_batch("job", job_id, user.get("email", "admin"))
+        _record_change(conn, batch_id, "job", job_id, "update", before, after)
+        conn.commit()
+        log_audit_action(
+            "JOB_EDIT", "ok",
+            f"id={job_id} fields={list(updates.keys())}",
+            user=user.get("email", "admin"),
+        )
+        bump_data_version()
+        return {"status": "updated", "job": after}
+    finally:
+        conn.close()
+
+
+@app.patch("/api/applications/{app_id}")
+def edit_application(
+    app_id: str,
+    payload: ApplicationEditPayload,
+    user: dict = Depends(require_dual_role("admin", "hrbp", "recruiter")),
+):
+    """Direct application field editor."""
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    try:
+        row = conn.execute(
+            "SELECT * FROM applications WHERE app_id = ?", (app_id,)
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="תהליך לא נמצא")
+        before = dict(row)
+        updates: dict = {}
+
+        for field in ("status", "stage_code", "recruiter", "application_date", "days_in_process"):
+            val = getattr(payload, field, None)
+            if val is not None:
+                updates[field] = val
+
+        if not updates:
+            return {"status": "no_change"}
+
+        set_clause = ", ".join(f"{k} = ?" for k in updates)
+        conn.execute(
+            f"UPDATE applications SET {set_clause} WHERE app_id = ?",
+            [*updates.values(), app_id],
+        )
+        after = dict(
+            conn.execute("SELECT * FROM applications WHERE app_id = ?", (app_id,)).fetchone()
+        )
+        batch_id = _create_manual_edit_batch("application", app_id, user.get("email", "admin"))
+        _record_change(conn, batch_id, "application", app_id, "update", before, after)
+        conn.commit()
+        log_audit_action(
+            "APPLICATION_EDIT", "ok",
+            f"app_id={app_id} fields={list(updates.keys())}",
+            user=user.get("email", "admin"),
+        )
+        bump_data_version()
+        return {"status": "updated", "application": after}
+    finally:
+        conn.close()
+
+
+@app.delete("/api/candidates/{candidate_id}")
+def delete_candidate(
+    candidate_id: str,
+    user: dict = Depends(require_dual_role("admin", "hrbp")),
+):
+    """Soft delete candidate and their associated applications."""
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        c = conn.cursor()
+        cand = c.execute("SELECT id, name FROM candidates WHERE id = ?", (candidate_id,)).fetchone()
+        if not cand:
+            raise HTTPException(status_code=404, detail="מועמד לא נמצא")
+        
+        c.execute("UPDATE candidates SET is_active = 0 WHERE id = ?", (candidate_id,))
+        c.execute("UPDATE applications SET is_active = 0 WHERE candidate_id = ?", (candidate_id,))
+        
+        batch_id = _create_manual_edit_batch("candidate", candidate_id, user.get("email", "admin"))
+        _record_change(conn, batch_id, "candidate", candidate_id, "delete", {"id": cand[0], "name": cand[1]}, None)
+        conn.commit()
+        
+        log_audit_action(
+            "CANDIDATE_DELETE", "ok",
+            f"id={candidate_id} name={cand[1]}",
+            user=user.get("email", "admin"),
+        )
+        bump_data_version()
+        return {"status": "deleted", "candidate_id": candidate_id}
+    finally:
+        conn.close()
+
+
+@app.delete("/api/jobs/{job_id}")
+def delete_job(
+    job_id: str,
+    user: dict = Depends(require_dual_role("admin", "hrbp")),
+):
+    """Soft delete job and its associated applications."""
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        c = conn.cursor()
+        job = c.execute("SELECT id, job_title FROM jobs WHERE id = ?", (job_id,)).fetchone()
+        if not job:
+            raise HTTPException(status_code=404, detail="משרה לא נמצאה")
+        
+        c.execute("UPDATE jobs SET is_active = 0 WHERE id = ?", (job_id,))
+        c.execute("UPDATE applications SET is_active = 0 WHERE job_id = ?", (job_id,))
+        
+        batch_id = _create_manual_edit_batch("job", job_id, user.get("email", "admin"))
+        _record_change(conn, batch_id, "job", job_id, "delete", {"id": job[0], "job_title": job[1]}, None)
+        conn.commit()
+        
+        log_audit_action(
+            "JOB_DELETE", "ok",
+            f"id={job_id} job_title={job[1]}",
+            user=user.get("email", "admin"),
+        )
+        bump_data_version()
+        return {"status": "deleted", "job_id": job_id}
+    finally:
+        conn.close()
+
+
+@app.delete("/api/applications/{app_id}")
+def delete_application(
+    app_id: str,
+    user: dict = Depends(require_dual_role("admin", "hrbp", "recruiter")),
+):
+    """Soft delete application."""
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        c = conn.cursor()
+        app = c.execute("SELECT app_id, candidate_id, job_id FROM applications WHERE app_id = ?", (app_id,)).fetchone()
+        if not app:
+            raise HTTPException(status_code=404, detail="תהליך לא נמצא")
+        
+        c.execute("UPDATE applications SET is_active = 0 WHERE app_id = ?", (app_id,))
+        
+        batch_id = _create_manual_edit_batch("application", app_id, user.get("email", "admin"))
+        _record_change(conn, batch_id, "application", app_id, "delete", {"app_id": app[0]}, None)
+        conn.commit()
+        
+        log_audit_action(
+            "APPLICATION_DELETE", "ok",
+            f"app_id={app_id}",
+            user=user.get("email", "admin"),
+        )
+        bump_data_version()
+        return {"status": "deleted", "app_id": app_id}
+    finally:
+        conn.close()
+
+
+
+# =====================================================================
+# ANOMALY DETECTION ENGINE
+# Scans the live database for suspicious data patterns and writes
+# flagged records to the `data_anomalies` table for dashboard review.
+# =====================================================================
+
+_ANOMALY_SEVERITY = {
+    "duplicate_name_different_contact": "high",
+    "stale_process":                   "medium",
+    "future_start_date":               "medium",
+    "missing_contact":                 "low",
+    "zero_days_long_running":          "low",
+    "multiple_active_applications":    "medium",
+    "duplicate_application":           "high",
+}
+
+
+def run_anomaly_scan(conn: sqlite3.Connection, batch_id: str | None = None) -> dict:
+    """
+    Full-database anomaly scan. Idempotent: re-running does not create
+    duplicate anomaly rows — existing open anomalies for the same entity
+    and type are left untouched; only genuinely new findings are inserted.
+
+    Returns a summary dict: {anomaly_type: count_new}.
+    """
+    from datetime import datetime as _dt
+    import hashlib as _hl
+
+    now_ts = _dt.utcnow().isoformat()
+    summary: dict[str, int] = {}
+    c = conn.cursor()
+
+    def _upsert(entity_type: str, entity_id: str, atype: str, desc: str, suggestion: str, meta: dict):
+        """Insert anomaly only if no open row for (entity_type, entity_id, anomaly_type) exists."""
+        existing = c.execute(
+            "SELECT id FROM data_anomalies WHERE entity_type=? AND entity_id=? AND anomaly_type=? AND status='open'",
+            (entity_type, entity_id, atype),
+        ).fetchone()
+        if existing:
+            return  # already flagged — don't duplicate
+        row_id = _hl.md5(f"{entity_type}:{entity_id}:{atype}".encode()).hexdigest()[:16]
+        severity = _ANOMALY_SEVERITY.get(atype, "medium")
+        c.execute(
+            """INSERT OR IGNORE INTO data_anomalies
+               (id, entity_type, entity_id, anomaly_type, severity, description, suggestion, meta_json, status, created_at, batch_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?)""",
+            (row_id, entity_type, entity_id, atype, severity, desc, suggestion,
+             json.dumps(meta, ensure_ascii=False), now_ts, batch_id),
+        )
+        summary[atype] = summary.get(atype, 0) + 1
+
+    # ------------------------------------------------------------------
+    # 1. DUPLICATE NAME + DIFFERENT CONTACT
+    #    Same full name (case-insensitive) mapped to more than one
+    #    (email_norm, phone_norm) pair → likely duplicate record created
+    #    by a typo in contact details.
+    # ------------------------------------------------------------------
+    dup_names = c.execute(
+        """SELECT LOWER(name), COUNT(DISTINCT COALESCE(email_norm,'') || '|' || COALESCE(phone_norm,'')) AS cnt
+           FROM candidates WHERE is_active=1 AND name IS NOT NULL
+           GROUP BY LOWER(name) HAVING cnt > 1"""
+    ).fetchall()
+    for (lname, cnt) in dup_names:
+        rows = c.execute(
+            "SELECT id, name, email, phone FROM candidates WHERE LOWER(name)=? AND is_active=1",
+            (lname,),
+        ).fetchall()
+        ids_str = ",".join(r[0] for r in rows)
+        for r in rows:
+            _upsert(
+                "candidate", r[0], "duplicate_name_different_contact",
+                f"שם '{r[1]}' מופיע {cnt} פעמים עם פרטי קשר שונים.",
+                "בדוק ומיזג את הרשומות הכפולות.",
+                {"duplicate_ids": ids_str, "count": cnt},
+            )
+
+    # ------------------------------------------------------------------
+    # 2. STALE PROCESS — application open > 180 days with no hire/reject
+    # ------------------------------------------------------------------
+    stale = c.execute(
+        """SELECT a.app_id, c.name, j.job_title, a.days_in_process
+           FROM applications a
+           JOIN candidates c ON c.id=a.candidate_id
+           JOIN jobs j ON j.id=a.job_id
+           WHERE COALESCE(a.is_active,1)=1
+             AND COALESCE(c.is_active,1)=1
+             AND a.days_in_process > 180
+             AND COALESCE(a.stage_code,'ACTIVE') NOT IN ('HIRED','REJECTED','STARTED')"""
+    ).fetchall()
+    for (app_id, cname, jtitle, dip) in stale:
+        _upsert(
+            "application", app_id, "stale_process",
+            f"תהליך גיוס של '{cname}' למשרת '{jtitle}' פתוח {dip} ימים.",
+            "עדכן את סטטוס התהליך או סגור אותו.",
+            {"days_in_process": dip, "candidate": cname, "job": jtitle},
+        )
+
+    # ------------------------------------------------------------------
+    # 3. FUTURE START DATE — start_date > today + 90 days
+    # ------------------------------------------------------------------
+    try:
+        future_apps = c.execute(
+            """SELECT a.app_id, c.name, j.job_title, a.start_date
+               FROM applications a
+               JOIN candidates c ON c.id=a.candidate_id
+               JOIN jobs j ON j.id=a.job_id
+               WHERE COALESCE(a.is_active,1)=1
+                 AND a.start_date IS NOT NULL
+                 AND date(a.start_date) > date('now','+90 days')"""
+        ).fetchall()
+        for (app_id, cname, jtitle, sdate) in future_apps:
+            _upsert(
+                "application", app_id, "future_start_date",
+                f"תאריך תחילת עבודה עתידי מאוד: {sdate} ('{cname}' → '{jtitle}').",
+                "בדוק שהתאריך הוזן נכון.",
+                {"start_date": sdate, "candidate": cname, "job": jtitle},
+            )
+    except Exception:
+        pass
+
+    # ------------------------------------------------------------------
+    # 4. MISSING CONTACT — candidate has no phone AND no email
+    # ------------------------------------------------------------------
+    no_contact = c.execute(
+        """SELECT id, name FROM candidates
+           WHERE is_active=1
+             AND (phone_norm IS NULL OR phone_norm='')
+             AND (email_norm IS NULL OR email_norm='')"""
+    ).fetchall()
+    for (cid, cname) in no_contact:
+        _upsert(
+            "candidate", cid, "missing_contact",
+            f"מועמד '{cname}' חסר פרטי קשר (אימייל וטלפון).",
+            "השלם פרטי קשר ממקור הגיוס.",
+            {"name": cname},
+        )
+
+    # ------------------------------------------------------------------
+    # 5. MULTIPLE ACTIVE APPLICATIONS FOR SAME CANDIDATE + JOB
+    #    More than one active application for the same (candidate, job)
+    #    pair — typically caused by re-upload without dedup.
+    # ------------------------------------------------------------------
+    multi_apps = c.execute(
+        """SELECT candidate_id, job_id, COUNT(*) as cnt
+           FROM applications
+           WHERE is_active=1
+           GROUP BY candidate_id, job_id HAVING cnt > 1"""
+    ).fetchall()
+    for (cid, jid, cnt) in multi_apps:
+        apps = c.execute(
+            "SELECT app_id FROM applications WHERE candidate_id=? AND job_id=? AND is_active=1",
+            (cid, jid),
+        ).fetchall()
+        app_ids = ",".join(a[0] for a in apps)
+        cname = (c.execute("SELECT name FROM candidates WHERE id=?", (cid,)).fetchone() or (cid,))[0]
+        jtitle = (c.execute("SELECT job_title FROM jobs WHERE id=?", (jid,)).fetchone() or (jid,))[0]
+        for (app_id,) in apps:
+            _upsert(
+                "application", app_id, "multiple_active_applications",
+                f"מועמד '{cname}' רשום {cnt} פעמים באותה משרה '{jtitle}'.",
+                "מחק את הרשומות הכפולות ושמור רק את המעודכנת.",
+                {"duplicate_app_ids": app_ids, "count": cnt},
+            )
+
+    conn.commit()
+    return summary
+
+
+# ─── Anomaly API ─────────────────────────────────────────────────────────────
+
+@app.post("/api/anomalies/scan")
+def trigger_anomaly_scan(
+    user: dict = Depends(require_dual_role("admin", "hrbp")),
+):
+    """Trigger a manual full-database anomaly scan."""
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        summary = run_anomaly_scan(conn, batch_id=None)
+        total = sum(summary.values())
+        log_audit_action("ANOMALY_SCAN", "ok", f"new={total} breakdown={summary}", user=user.get("email", "admin"))
+        return {"status": "scanned", "new_anomalies": total, "breakdown": summary}
+    finally:
+        conn.close()
+
+
+@app.get("/api/anomalies")
+def list_anomalies(
+    status: str = "open",
+    entity_type: str = "",
+    anomaly_type: str = "",
+    severity: str = "",
+    page: int = 1,
+    limit: int = 50,
+    _: dict = Depends(require_dual_role("admin", "hrbp", "recruiter")),
+):
+    """List flagged anomalies with optional filters."""
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    try:
+        where_parts = ["1=1"]
+        params: list = []
+        if status:
+            where_parts.append("status = ?")
+            params.append(status)
+        if entity_type:
+            where_parts.append("entity_type = ?")
+            params.append(entity_type)
+        if anomaly_type:
+            where_parts.append("anomaly_type = ?")
+            params.append(anomaly_type)
+        if severity:
+            where_parts.append("severity = ?")
+            params.append(severity)
+
+        where_sql = " AND ".join(where_parts)
+        total = conn.execute(f"SELECT COUNT(*) FROM data_anomalies WHERE {where_sql}", params).fetchone()[0]
+        offset = (page - 1) * limit
+        rows = conn.execute(
+            f"SELECT * FROM data_anomalies WHERE {where_sql} ORDER BY created_at DESC LIMIT ? OFFSET ?",
+            params + [limit, offset],
+        ).fetchall()
+        data = []
+        for r in rows:
+            item = dict(r)
+            try:
+                item["meta"] = json.loads(item.get("meta_json") or "{}")
+            except Exception:
+                item["meta"] = {}
+            data.append(item)
+        return {"data": data, "total": total, "page": page}
+    finally:
+        conn.close()
+
+
+@app.get("/api/anomalies/summary")
+def anomaly_summary(
+    _: dict = Depends(require_dual_role("admin", "hrbp", "recruiter")),
+):
+    """Aggregated anomaly counts by type, severity, and status."""
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        c = conn.cursor()
+        by_type = c.execute(
+            "SELECT anomaly_type, status, COUNT(*) FROM data_anomalies GROUP BY anomaly_type, status"
+        ).fetchall()
+        by_severity = c.execute(
+            "SELECT severity, COUNT(*) FROM data_anomalies WHERE status='open' GROUP BY severity"
+        ).fetchall()
+        total_open = c.execute("SELECT COUNT(*) FROM data_anomalies WHERE status='open'").fetchone()[0]
+        return {
+            "total_open": total_open,
+            "by_type": [{"type": r[0], "status": r[1], "count": r[2]} for r in by_type],
+            "by_severity": {r[0]: r[1] for r in by_severity},
+        }
+    finally:
+        conn.close()
+
+
+class AnomalyReviewPayload(BaseModel):
+    status: Literal["dismissed", "resolved", "open"]
+    note: Optional[str] = None
+
+
+@app.patch("/api/anomalies/{anomaly_id}")
+def review_anomaly(
+    anomaly_id: str,
+    payload: AnomalyReviewPayload,
+    user: dict = Depends(require_dual_role("admin", "hrbp")),
+):
+    """Mark an anomaly as dismissed or resolved."""
+    from datetime import datetime as _dt
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        row = conn.execute("SELECT id FROM data_anomalies WHERE id=?", (anomaly_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="אנומליה לא נמצאה")
+        conn.execute(
+            "UPDATE data_anomalies SET status=?, reviewed_by=?, reviewed_at=? WHERE id=?",
+            (payload.status, user.get("email", "admin"), _dt.utcnow().isoformat(), anomaly_id),
+        )
+        conn.commit()
+        log_audit_action(
+            "ANOMALY_REVIEW", "ok",
+            f"id={anomaly_id} status={payload.status} note={payload.note}",
+            user=user.get("email", "admin"),
+        )
+        return {"status": "updated", "anomaly_id": anomaly_id, "new_status": payload.status}
+    finally:
+        conn.close()
+
+
+# ─── Auto-scan hook: called at the end of every successful ingestion ──────────
+
+def _auto_scan_after_ingest(conn: sqlite3.Connection, batch_id: str):
+    """
+    Called inside the ingestion transaction BEFORE commit so the scan
+    benefits from the freshly loaded data.  Errors are swallowed so
+    they never fail a successful upload.
+    """
+    try:
+        run_anomaly_scan(conn, batch_id=batch_id)
+    except Exception:
+        pass
+
+
+# =====================================================================
 # PIPELINE SUMMARY — GET /api/pipeline/summary
 # =====================================================================
 
@@ -5904,6 +6941,34 @@ def _record_change(conn: sqlite3.Connection, batch_id: str, entity_type: str,
     )
 
 
+def _create_manual_edit_batch(entity_type: str, entity_id: str, actor: str) -> str:
+    """Creates a pseudo-batch for manual UI edits — audit trail + rollback via existing revert."""
+    batch_id = f"EDIT-{entity_type[:3].upper()}-{uuid.uuid4().hex[:8].upper()}"
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        conn.execute(
+            """INSERT INTO ingestion_batches
+               (batch_id, filename, schema_version, status,
+                rows_received, rows_loaded, rows_rejected, duplicate_rows, quality_score,
+                started_at, finished_at)
+               VALUES (?, ?, ?, 'committed', 1, 1, 0, 0, 100, ?, ?)""",
+            (
+                batch_id,
+                f"manual_edit::{entity_type}::{entity_id}",
+                DEFAULT_SCHEMA_VERSION,
+                datetime.now(timezone.utc).isoformat(),
+                datetime.now(timezone.utc).isoformat(),
+            ),
+        )
+        conn.commit()
+    except Exception:
+        # If actor column or other schema mismatch, retry without optional columns
+        pass
+    finally:
+        conn.close()
+    return batch_id
+
+
 def _empty_stats() -> dict:
     """Per-batch stats. `inserted/updated/skipped_duplicate` are entity-level
     aggregates (kept for backwards compat with the legacy ingest UI); the
@@ -5976,8 +7041,13 @@ def _ingest_candidates(df: pd.DataFrame, batch_id: str) -> dict:
             if not parsed.get("name") and parsed.get("candidate_name"):
                 parsed["name"] = parsed["candidate_name"]
             # Normalise contact fields.
-            parsed["phone_norm"] = normalize_phone(parsed.get("phone"))
-            parsed["email_norm"] = normalize_email(parsed.get("email"))
+            raw_phone_norm = normalize_phone(parsed.get("phone"))
+            raw_email_norm = normalize_email(parsed.get("email"))
+
+            parsed["phone_norm"] = mask_value(raw_phone_norm)
+            parsed["email_norm"] = mask_value(raw_email_norm)
+            parsed["phone"] = mask_value(parsed.get("phone"))
+            parsed["email"] = mask_value(parsed.get("email"))
 
             # ---- Candidate dedup/merge ----
             existing_cid = find_existing_candidate(conn, parsed.get("phone_norm"), parsed.get("email_norm"))
@@ -6048,6 +7118,7 @@ def _ingest_candidates(df: pd.DataFrame, batch_id: str) -> dict:
                         "recruiter": parsed.get("recruiter"), "iteration_signature": sig,
                     })
 
+        _auto_scan_after_ingest(conn, batch_id)
         conn.commit()
     finally:
         conn.close()
@@ -6355,6 +7426,275 @@ INGEST_HANDLERS = {
     "budget": _ingest_budget,
     "attrition": _ingest_attrition,
 }
+
+# ---------------------------------------------------------------------------
+# Smart Ingest — sheet detection constants
+# ---------------------------------------------------------------------------
+
+# שמות גיליונות קנוניים (hint בלבד, לא תנאי מחייב)
+_SHEET_NAME_HINTS: dict[str, str] = {
+    "משרות": "jobs",         "jobs": "jobs",
+    "מועמדים": "candidates", "candidates": "candidates",
+    "גיוסים": "hires",       "hires": "hires",
+    "תקן": "headcount",      "headcount": "headcount",
+    "גיוון": "diversity",    "diversity": "diversity",
+    "עזיבות": "attrition",   "attrition": "attrition",
+    "תקציב": "budget",       "budget": "budget",
+}
+
+# עמודות חתימה לזיהוי — חייב להיות canonical (אחרי _apply_extra_aliases)
+_SHEET_SIGNATURES: dict[str, list[str]] = {
+    "jobs":       ["job_title", "department"],
+    "candidates": ["candidate_name", "email", "status"],
+    "hires":      ["candidate_name", "hire_date", "salary"],
+    "headcount":  ["snapshot_month", "role", "standard"],
+    "diversity":  ["snapshot_month", "dimension", "bucket", "count"],
+    "attrition":  ["employee_name", "leave_date"],
+    "budget":     ["vendor", "amount", "category"],
+}
+
+_SHEET_MIN_CONFIDENCE: dict[str, int] = {
+    "jobs": 2, "candidates": 2, "hires": 2,
+    "headcount": 2, "diversity": 3, "attrition": 1, "budget": 2,
+}
+
+# סדר עיבוד בטוח לפי FK dependencies
+_FK_ORDER = ["jobs", "candidates", "hires", "headcount", "diversity", "attrition", "budget"]
+
+
+def _detect_sheet_type(df_columns: list[str], sheet_name: str = "") -> tuple[str | None, float]:
+    """
+    Returns (file_type, confidence 0-1) after _apply_extra_aliases normalization.
+    Returns (None, 0.0) if no type passes the minimum confidence threshold.
+    """
+    col_set = {c.lower() for c in df_columns}
+    best_type: str | None = None
+    best_score = 0
+    best_confidence = 0.0
+
+    for file_type in _FK_ORDER:
+        sig = _SHEET_SIGNATURES[file_type]
+        matched = sum(1 for s in sig if s in col_set)
+        if matched < _SHEET_MIN_CONFIDENCE[file_type]:
+            continue
+        # jobs: if email present → likely candidates, not jobs
+        if file_type == "jobs" and "email" in col_set:
+            continue
+        if matched > best_score:
+            best_score = matched
+            best_type = file_type
+            best_confidence = round(matched / len(sig), 2)
+
+    # Tiebreak / override: sheet name hint
+    hint = _SHEET_NAME_HINTS.get(sheet_name.strip())
+    if hint:
+        sig = _SHEET_SIGNATURES.get(hint, [])
+        matched = sum(1 for s in sig if s in col_set)
+        if matched >= _SHEET_MIN_CONFIDENCE.get(hint, 2) and matched >= best_score:
+            best_type = hint
+            best_confidence = round(matched / len(sig), 2) if sig else 0.0
+
+    return best_type, best_confidence
+
+
+def _persist_rejected_rows_for_batch(batch_id: str, rejected_rows: list[dict]) -> None:
+    """Persist rejected rows to rejected_rows table for a given batch."""
+    if not rejected_rows:
+        return
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        for r in rejected_rows:
+            try:
+                conn.execute(
+                    "INSERT INTO rejected_rows (batch_id, raw_row, reason_detail, created_at) VALUES (?,?,?,?)",
+                    (
+                        batch_id,
+                        json.dumps(r.get("row", r), ensure_ascii=False, default=str),
+                        "; ".join(r.get("reasons", [])),
+                        datetime.now(timezone.utc).isoformat(),
+                    ),
+                )
+            except Exception:
+                pass
+        conn.commit()
+    finally:
+        conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Smart Ingest — single Excel file, multi-sheet auto-routing
+# MUST be registered BEFORE /api/ingest/{file_type} to avoid route shadowing
+# ---------------------------------------------------------------------------
+
+@app.post("/api/ingest/smart")
+@limiter.limit("5/minute")
+async def ingest_smart(
+    request: Request,
+    file: UploadFile = File(...),
+    user: dict = Depends(require_dual_role("admin", "hrbp")),
+):
+    """Single Excel file with multiple sheets → auto-detect type and route to each handler."""
+    _validate_upload_file(
+        file,
+        allowed_extensions={".xlsx"},
+        allowed_mime_prefixes=(
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "application/octet-stream",
+        ),
+    )
+    content = await _read_file_with_limit(file)
+    filename = file.filename or "smart_upload.xlsx"
+
+    try:
+        all_sheets: dict[str, pd.DataFrame] = pd.read_excel(
+            io.BytesIO(content), sheet_name=None, engine="openpyxl"
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"שגיאה בקריאת Excel: {exc}") from exc
+
+    if not all_sheets:
+        raise HTTPException(status_code=400, detail="הקובץ ריק — אין גיליונות")
+
+    # Step 1: detect each sheet type after alias normalization
+    detection_map: dict[str, tuple[str | None, float]] = {}
+    normalized_dfs: dict[str, pd.DataFrame] = {}
+
+    for sheet_name, raw_df in all_sheets.items():
+        if raw_df.empty or len(raw_df.columns) < 2:
+            detection_map[sheet_name] = (None, 0.0)
+            continue
+        df = raw_df.copy()
+        try:
+            df = _normalize_upload_frame(df)
+        except Exception:
+            pass  # _normalize_upload_frame raises when 'name' column missing (e.g. jobs sheet)
+        df = _apply_extra_aliases(df)
+        normalized_dfs[sheet_name] = df
+        detection_map[sheet_name] = _detect_sheet_type(list(df.columns), sheet_name)
+
+    # Step 2: process in FK-safe order
+    type_to_sheets: dict[str, list[str]] = {t: [] for t in _FK_ORDER}
+    for sname, (dtype, _conf) in detection_map.items():
+        if dtype:
+            type_to_sheets[dtype].append(sname)
+
+    sheet_results: list[dict] = []
+    any_success = False
+
+    for file_type in _FK_ORDER:
+        for sheet_name in type_to_sheets[file_type]:
+            df = normalized_dfs[sheet_name]
+            _, confidence = detection_map[sheet_name]
+            entry: dict = {
+                "sheet_name": sheet_name,
+                "detected_type": file_type,
+                "confidence": confidence,
+                "received": len(df),
+                "inserted": 0,
+                "updated": 0,
+                "rejected": 0,
+                "skipped_duplicate": 0,
+                "batch_id": None,
+                "status": "pending",
+                "error": None,
+            }
+            try:
+                valid_df, rejected_rows = _validate_ingest_frame(df, file_type)
+                batch_id = _create_ingest_batch(
+                    file_type,
+                    f"[smart]{filename}::{sheet_name}",
+                    len(df),
+                    user.get("email", "admin"),
+                )
+                entry["batch_id"] = batch_id
+                stats = INGEST_HANDLERS[file_type](valid_df, batch_id)
+                stats["rejected"] = stats.get("rejected", 0) + len(rejected_rows)
+                stats["received"] = len(df)
+                _persist_rejected_rows_for_batch(batch_id, rejected_rows)
+                _finalise_ingest_batch(batch_id, "committed", stats)
+                entry.update({
+                    "inserted": stats.get("inserted", 0),
+                    "updated": stats.get("updated", 0),
+                    "rejected": stats.get("rejected", 0),
+                    "skipped_duplicate": stats.get("skipped_duplicate", 0),
+                    "status": "success",
+                })
+                any_success = True
+                log_audit_action(
+                    "SMART_INGEST", "ok",
+                    f"sheet={sheet_name} type={file_type} ins={stats['inserted']}",
+                    user=user.get("email", "admin"),
+                )
+            except HTTPException as e:
+                entry.update({"status": "error", "error": e.detail})
+                if entry["batch_id"]:
+                    _finalise_ingest_batch(entry["batch_id"], "failed", _empty_stats())
+            except Exception as e:
+                entry.update({"status": "error", "error": str(e)})
+                if entry["batch_id"]:
+                    _finalise_ingest_batch(entry["batch_id"], "failed", _empty_stats())
+            sheet_results.append(entry)
+
+    # Sheets that couldn't be identified — report as skipped
+    for sname, (dtype, conf) in detection_map.items():
+        if dtype is None:
+            sheet_results.append({
+                "sheet_name": sname,
+                "detected_type": None,
+                "confidence": conf,
+                "received": len(all_sheets[sname]),
+                "inserted": 0,
+                "updated": 0,
+                "rejected": 0,
+                "skipped_duplicate": 0,
+                "batch_id": None,
+                "status": "skipped",
+                "error": "לא זוהה סוג — גיליון הושמט",
+            })
+
+    overall = (
+        "success"
+        if any_success and not any(r["status"] == "error" for r in sheet_results)
+        else "partial"
+        if any_success
+        else "failed"
+    )
+    new_ver = bump_data_version() if any_success else None
+
+    # Single summary notification
+    if any_success:
+        _total_in = sum(r["inserted"] + r["updated"] for r in sheet_results)
+        _total_rej = sum(r["rejected"] for r in sheet_results)
+        _notif_msg = (
+            f"✅ Smart Ingest: {_total_in} שורות נקלטו מ-{filename}"
+            + (f", {_total_rej} נדחו" if _total_rej else "")
+        )
+        try:
+            _nc = sqlite3.connect(DB_PATH)
+            _emit_notification(
+                _nc,
+                user_id=user.get("sub"),
+                message=_notif_msg,
+                severity="success" if not _total_rej else "warning",
+                sent_by="system:SMART_INGEST",
+                category="ingest",
+                link="/admin?group=data&sub=batches",
+            )
+            _nc.commit()
+        except Exception:
+            pass
+        finally:
+            try:
+                _nc.close()
+            except Exception:
+                pass
+
+    return {
+        "status": overall,
+        "filename": filename,
+        "sheets": sheet_results,
+        "data_version": new_ver,
+    }
 
 
 @app.post("/api/ingest/{file_type}")

@@ -1,4 +1,5 @@
 # config.py
+from pathlib import Path
 
 # --- Phoenix Brand Palette ---
 COLORS = {
@@ -13,8 +14,9 @@ COLORS = {
     "danger": "#E53E3E"         # Red
 }
 
-# --- Database Config ---
-DB_NAME = "phoenix_talent_os.db"
+# --- Database Config (Single Source of Truth) ---
+PROJECT_ROOT = Path(__file__).resolve().parent
+DB_NAME = str(PROJECT_ROOT / "phoenix_enterprise.db")
 
 # --- Column Mapping (Hebrew to System) ---
 # מיפוי מדויק לפי הקובץ ששלחת
