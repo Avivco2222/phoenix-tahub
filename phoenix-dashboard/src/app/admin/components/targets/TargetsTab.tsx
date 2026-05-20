@@ -5,6 +5,7 @@ import { useAdminConfig } from "./useAdminConfig";
 import FormulaEditor     from "./FormulaEditor";
 import RuleBuilder       from "./RuleBuilder";
 import VisibilityToggles from "./VisibilityToggles";
+import { formatTimeHe } from "@/lib/dates";
 
 export default function TargetsTab() {
   const { isOffline, isLoading, lastSaved } = useAdminConfig();
@@ -40,7 +41,7 @@ export default function TargetsTab() {
         </div>
         <div className="flex items-center gap-1.5 text-[10px] font-bold text-slate-400">
           <Shield size={11} />
-          {lastSaved ? `נשמר לאחרונה: ${lastSaved}` : "טרם נשמר בסשן זה"}
+          {lastSaved ? `נשמר לאחרונה: ${formatTimeHe(lastSaved)}` : "טרם נשמר בסשן זה"}
         </div>
       </div>
 

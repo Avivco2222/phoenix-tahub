@@ -1,40 +1,24 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { ShieldAlert, Lock, Unlock, Power, Clock, EyeOff, Activity, AlertTriangle, CheckCircle2 } from "lucide-react";
+import { ShieldAlert, Lock, Unlock, Power, Clock, EyeOff, Activity, AlertTriangle, CheckCircle2, Search } from "lucide-react";
+import { getAdminHeaders, getApiBaseUrl } from "@/lib/api";
+import { saveAccessToken } from "@/lib/auth";
 
 interface AuditLog {
   id: string;
+  date: string;
   time: string;
   action: string;
   status: string;
   details: string;
   user: string;
+  ip_address: string;
+  is_destructive: boolean;
 }
 
-const MOCK_SECURITY_DATA = {
-  ai_enabled: true,
-  logs: [
-    {
-      id: "LOG-DEMO-01",
-      time: "2026-03-17 09:00:00",
-      action: "SESSION_LOCKED",
-      status: "auth",
-      details: "inactivity timeout 20min | client_ts=demo",
-      user: "frontend",
-    },
-    {
-      id: "LOG-DEMO-02",
-      time: "2026-03-17 09:05:00",
-      action: "SESSION_RESTORED",
-      status: "auth",
-      details: "session resumed by user | client_ts=demo",
-      user: "frontend",
-    },
-  ] as AuditLog[],
-};
-
 export default function SecurityAndPrivacyPage() {
+  const SESSION_TIMEOUT_MINUTES = 20;
   const [isUnlocked, setIsUnlocked] = useState(false);
   const [passwordInput, setPasswordInput] = useState("");
   const [errorMsg, setErrorMsg] = useState("");
@@ -42,20 +26,30 @@ export default function SecurityAndPrivacyPage() {
   const [aiEnabled, setAiEnabled] = useState(true);
   const [logs, setLogs] = useState<AuditLog[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [fetchError, setFetchError] = useState("");
+  const [sessionStartedAt, setSessionStartedAt] = useState<number | null>(null);
+  const [sessionNow, setSessionNow] = useState(Date.now());
+  const [auditSearch, setAuditSearch] = useState("");
 
   const fetchSecurityData = useCallback(async () => {
     try {
-      const statusRes = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/security/status`);
+      const apiUrl = getApiBaseUrl();
+      const headers = getAdminHeaders();
+      const statusRes = await fetch(`${apiUrl}/api/security/status`, { headers });
+      if (!statusRes.ok) throw new Error("status fetch failed");
       const statusData = await statusRes.json();
       setAiEnabled(statusData.ai_enabled);
 
-      const logsRes = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/security/audit-logs`);
+      const logsRes = await fetch(`${apiUrl}/api/security/audit-logs`, { headers });
+      if (!logsRes.ok) throw new Error("logs fetch failed");
       const logsData = await logsRes.json();
       setLogs(logsData);
+      setFetchError("");
     } catch (error) {
-      console.warn("[Security] Backend offline — showing mock data", error);
-      setAiEnabled(MOCK_SECURITY_DATA.ai_enabled);
-      setLogs(MOCK_SECURITY_DATA.logs);
+      console.error("[Security] Backend unavailable", error);
+      setFetchError("שגיאה בטעינת נתוני אבטחה חיים מהשרת.");
+      setAiEnabled(false);
+      setLogs([]);
     }
   }, []);
 
@@ -65,14 +59,36 @@ export default function SecurityAndPrivacyPage() {
     }
   }, [isUnlocked, fetchSecurityData]);
 
+  useEffect(() => {
+    if (!isUnlocked) return;
+    const timer = setInterval(() => setSessionNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [isUnlocked]);
+
   const handleUnlock = (e: React.FormEvent) => {
     e.preventDefault();
-    if (passwordInput === "222222") {
-      setIsUnlocked(true);
-      setErrorMsg("");
-    } else {
-      setErrorMsg("סיסמה שגויה. נסיון הגישה מתועד.");
-    }
+    void (async () => {
+      try {
+        // Unified-password flow: backend resolves the user's email from the
+        // session cookie and verifies against users.password_hash (same as login).
+        const res = await fetch(`${getApiBaseUrl()}/api/auth/unlock`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({ password: passwordInput }),
+        });
+        if (!res.ok) throw new Error("unauthorized");
+        const payload = await res.json();
+        if (payload?.access_token) {
+          saveAccessToken(payload.access_token);
+        }
+        setIsUnlocked(true);
+        setSessionStartedAt(Date.now());
+        setErrorMsg("");
+      } catch {
+        setErrorMsg("סיסמה שגויה. נסיון הגישה מתועד.");
+      }
+    })();
   };
 
   const toggleAi = async () => {
@@ -81,9 +97,9 @@ export default function SecurityAndPrivacyPage() {
     const newState = !aiEnabled;
 
     try {
-      await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/security/toggle-ai`, {
+      await fetch(`${getApiBaseUrl()}/api/security/toggle-ai`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getAdminHeaders(),
         body: JSON.stringify({ enable: newState })
       });
 
@@ -133,6 +149,22 @@ export default function SecurityAndPrivacyPage() {
     );
   }
 
+  const elapsedMs = sessionStartedAt ? Math.max(0, sessionNow - sessionStartedAt) : 0;
+  const totalMs = SESSION_TIMEOUT_MINUTES * 60 * 1000;
+  const remainingMs = Math.max(0, totalMs - elapsedMs);
+  const remainingMinutes = Math.ceil(remainingMs / 60000);
+  const timeoutProgress = Math.max(0, Math.min(100, (remainingMs / totalMs) * 100));
+  const filteredLogs = logs.filter((log) => {
+    const query = auditSearch.trim().toLowerCase();
+    if (!query) return true;
+    return (
+      log.action.toLowerCase().includes(query) ||
+      log.user.toLowerCase().includes(query) ||
+      log.ip_address.toLowerCase().includes(query) ||
+      log.details.toLowerCase().includes(query)
+    );
+  });
+
   return (
     <div className="max-w-[1600px] mx-auto space-y-8 animate-in fade-in duration-500 px-2 md:px-6 pb-20">
 
@@ -147,6 +179,11 @@ export default function SecurityAndPrivacyPage() {
           <CheckCircle2 size={18} /> חיבור Backend מאובטח פעיל
         </div>
       </div>
+      {fetchError && (
+        <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-2 text-sm font-bold text-red-700">
+          {fetchError}
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
 
@@ -199,14 +236,14 @@ export default function SecurityAndPrivacyPage() {
             <h3 className="font-black text-xl text-[#002649]">ניתוק אוטומטי (Session)</h3>
           </div>
           <div className="flex items-end gap-2 mb-4">
-            <span className="text-4xl font-black text-[#002649]">20</span>
+            <span className="text-4xl font-black text-[#002649]">{remainingMinutes}</span>
             <span className="text-slate-500 font-bold mb-1">דקות</span>
           </div>
           <p className="text-sm text-slate-600 font-medium mb-4">
             המערכת נועלת משתמשים באופן אוטומטי לפי תקן ISO-27001.
           </p>
           <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden">
-            <div className="h-full bg-[#EF6B00] w-full"></div>
+            <div className="h-full bg-[#EF6B00]" style={{ width: `${timeoutProgress}%` }}></div>
           </div>
         </div>
       </div>
@@ -216,30 +253,43 @@ export default function SecurityAndPrivacyPage() {
           <h3 className="font-black text-xl text-[#002649] flex items-center gap-2">
             <Activity size={20} className="text-blue-500" /> יומן פעולות שרת (Live Audit Log)
           </h3>
+          <div className="relative w-72">
+            <Search size={16} className="absolute right-3 top-2.5 text-slate-400" />
+            <input
+              type="text"
+              value={auditSearch}
+              onChange={(e) => setAuditSearch(e.target.value)}
+              placeholder="חפש פעולה, משתמש, IP..."
+              className="w-full pr-9 pl-3 py-2 rounded-lg border border-slate-200 bg-white text-sm outline-none focus:border-[#EF6B00]"
+            />
+          </div>
         </div>
         <div className="overflow-x-auto max-h-[400px] overflow-y-auto">
           <table className="w-full text-right text-sm">
             <thead className="bg-white text-slate-400 font-bold text-xs uppercase border-b border-slate-100 sticky top-0">
               <tr>
                 <th className="px-6 py-4">מזהה</th>
-                <th className="px-6 py-4">זמן (Live)</th>
+                <th className="px-6 py-4">תאריך</th>
+                <th className="px-6 py-4">זמן</th>
                 <th className="px-6 py-4">פעולה</th>
                 <th className="px-6 py-4">סטטוס</th>
+                <th className="px-6 py-4">IP</th>
                 <th className="px-6 py-4">פרטים נוספים</th>
                 <th className="px-6 py-4">משתמש</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-50">
-              {logs.length === 0 ? (
+              {filteredLogs.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="px-6 py-12 text-center text-slate-400 font-medium">
+                  <td colSpan={8} className="px-6 py-12 text-center text-slate-400 font-medium">
                     אין רשומות עדיין. נסה לכבות ולהדליק את מנוע ה-AI כדי לייצר את הרשומה הראשונה במסד הנתונים.
                   </td>
                 </tr>
               ) : (
-                logs.map((log) => (
-                  <tr key={log.id} className="hover:bg-slate-50 transition-colors group">
+                filteredLogs.map((log) => (
+                  <tr key={log.id} className={`hover:bg-slate-50 transition-colors group ${log.is_destructive ? "bg-red-50/40" : ""}`}>
                     <td className="px-6 py-4 font-mono text-xs text-slate-400">{log.id}</td>
+                    <td className="px-6 py-4 font-bold text-slate-700">{log.date}</td>
                     <td className="px-6 py-4 font-bold text-slate-700">{log.time}</td>
                     <td className="px-6 py-4 font-bold text-[#002649]">{log.action}</td>
                     <td className="px-6 py-4">
@@ -247,6 +297,7 @@ export default function SecurityAndPrivacyPage() {
                         {log.status}
                       </span>
                     </td>
+                    <td className="px-6 py-4 text-xs font-mono text-slate-600">{log.ip_address}</td>
                     <td className="px-6 py-4 text-slate-500 text-xs">{log.details}</td>
                     <td className="px-6 py-4 text-slate-600 font-medium">{log.user}</td>
                   </tr>

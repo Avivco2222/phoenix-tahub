@@ -1,5 +1,5 @@
 "use client";
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { Plus, Trash2, Save, AlertCircle, CheckCircle2 } from "lucide-react";
 import { useAdminConfig, evalFormula, KpiFormula } from "./useAdminConfig";
 import { useToast } from "@/components/Toast";
@@ -8,33 +8,52 @@ const VARIABLES = ["hires", "offers", "interviews", "avg_days_open", "applicatio
 const OPERATORS: Array<KpiFormula["op"]> = ["/", "*", "+", "-"];
 const OP_LABELS: Record<string, string> = { "/": "÷", "*": "×", "+": "+", "-": "−" };
 
-const MOCK_METRICS_VALIDATION: Record<string, number> = {
-  hires: 12, offers: 35, interviews: 89, avg_days_open: 23, applications: 210,
-};
-
-function isValid(f: KpiFormula): boolean {
+function isValid(f: KpiFormula, metrics: Record<string, number>): boolean {
   if (!f.label.trim()) return false;
   if (!f.varA) return false;
   if (f.op === "/" && f.varB === null) return false;
-  if (f.op === "/" && f.varB !== null && (MOCK_METRICS_VALIDATION[f.varB] ?? 0) === 0) return false;
+  if (f.op === "/" && f.varB !== null && (metrics[f.varB] ?? 0) === 0) return false;
   return true;
 }
 
-function preview(f: KpiFormula): string {
-  if (!isValid(f)) return "—";
-  const result = evalFormula(f);
+function preview(f: KpiFormula, metrics: Record<string, number>): string {
+  if (!isValid(f, metrics)) return "—";
+  const result = evalFormula(f, metrics);
   if (result === 0 && f.op === "/") return "⚠ חלוקה באפס";
   return `= ${result.toFixed(1)}${f.scale === 100 ? "%" : ""}`;
 }
 
 export default function FormulaEditor() {
-  const { config, save, isOffline } = useAdminConfig();
+  const { config, save, isOffline, loadError } = useAdminConfig();
   const { showToast } = useToast();
   const [formulas, setFormulas] = useState<KpiFormula[]>(config.formulas);
+  const [metrics, setMetrics] = useState<Record<string, number>>({});
   useEffect(() => { setFormulas(config.formulas); }, [config.formulas]);
   const [isSaving, setIsSaving] = useState(false);
+  useEffect(() => {
+    void (async () => {
+      try {
+        const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/stats`);
+        if (!res.ok) return;
+        const stats = await res.json() as Record<string, number>;
+        setMetrics({
+          hires: Number(stats.hires ?? 0),
+          offers: Number(stats.offers ?? 0),
+          interviews: Number(stats.interviews ?? 0),
+          avg_days_open: Number(stats.avg_days_open ?? 0),
+          applications: Number(stats.applications ?? 0),
+        });
+      } catch {
+        setMetrics({});
+      }
+    })();
+  }, []);
 
-  const allValid = formulas.every(isValid);
+  const allValid = useMemo(() => formulas.every((f) => isValid(f, metrics)), [formulas, metrics]);
+  const isDirty = useMemo(
+    () => JSON.stringify(formulas) !== JSON.stringify(config.formulas),
+    [formulas, config.formulas]
+  );
 
   const update = (idx: number, patch: Partial<KpiFormula>) =>
     setFormulas(prev => prev.map((f, i) => i === idx ? { ...f, ...patch } : f));
@@ -45,8 +64,11 @@ export default function FormulaEditor() {
       { id: `kpi_${Date.now()}`, label: "", varA: "hires", op: "/", varB: "offers", scale: 100 },
     ]);
 
-  const removeRow = (idx: number) =>
+  const removeRow = (idx: number) => {
+    if (!globalThis.confirm("למחוק את הנוסחה?")) return;
     setFormulas(prev => prev.filter((_, i) => i !== idx));
+    showToast("הנוסחה נמחקה. השינוי יישמר רק לאחר שמירה.", "success");
+  };
 
   const handleSave = async () => {
     if (!allValid || isSaving) return;
@@ -74,17 +96,23 @@ export default function FormulaEditor() {
           </button>
           <button
             onClick={handleSave}
-            disabled={!allValid || isSaving}
+            disabled={!allValid || isSaving || !isDirty}
             className="flex items-center gap-1.5 px-4 py-2 bg-[#002649] text-white rounded-xl font-bold text-sm hover:bg-[#EF6B00] transition-all disabled:opacity-40"
           >
             <Save size={14} /> {isSaving ? "שומר..." : "שמור"}
           </button>
         </div>
       </div>
+      {isDirty && <div className="text-[11px] font-black text-amber-600">יש שינויים שלא נשמרו</div>}
 
       {isOffline && (
         <div className="flex items-center gap-2 p-3 bg-orange-50 border border-orange-200 rounded-xl text-xs font-bold text-orange-700">
           <AlertCircle size={14} /> מצב אופליין — שינויים לא יישמרו עד שהשרת יחזור
+        </div>
+      )}
+      {loadError && (
+        <div className="flex items-center gap-2 p-3 bg-red-50 border border-red-200 rounded-xl text-xs font-bold text-red-700">
+          <AlertCircle size={14} /> {loadError}
         </div>
       )}
 
@@ -99,8 +127,8 @@ export default function FormulaEditor() {
 
       <div className="space-y-2">
         {formulas.map((f, idx) => {
-          const valid      = isValid(f);
-          const previewStr = preview(f);
+          const valid      = isValid(f, metrics);
+          const previewStr = preview(f, metrics);
           return (
             <div
               key={f.id}

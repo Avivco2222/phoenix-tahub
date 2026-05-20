@@ -1,15 +1,27 @@
 "use client";
 
 import React, { useState, useRef, useEffect } from "react";
+import Link from "next/link";
 import {
   Users, Building2, Receipt, Target, Clock, FileText, Loader2,
   CheckCircle2, Plus, HeartHandshake, Power, Briefcase, Calculator, Sparkles,
   UserMinus, X, Zap, Scale, Save, BarChart3, Layers, ShieldCheck, AlertOctagon, RefreshCw, Trash2, Edit3,
-  Filter
+  Filter, Download, History, Network, AlertTriangle, Undo2
 } from "lucide-react";
 import { XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line } from "recharts";
 import { AdminConfigProvider, useAdminConfig, evalFormula } from "./components/targets/useAdminConfig";
 import TargetsTab from "./components/targets/TargetsTab";
+import { getAdminAuthHeader, getAdminHeaders, getApiBaseUrl } from "@/lib/api";
+import { useToast } from "@/components/Toast";
+import { DemoBadge } from "@/components/DemoBadge";
+import { useDataVersionRefresh } from "@/context/DataVersionContext";
+import { BatchesTab } from "./components/BatchesTab";
+import { QualityTab } from "./components/QualityTab";
+import { ConsumerMapTab } from "./components/ConsumerMapTab";
+import AdminShell from "./components/AdminShell";
+import AppsManagementTab from "./components/AppsManagementTab";
+import NotificationsTab from "./components/NotificationsTab";
+import SmartIngestPanel from "./components/SmartIngestPanel";
 
 export interface FileStatus {
   name: string;
@@ -102,13 +114,16 @@ interface RecruiterRowProps {
 }
 
 interface DropzoneBoxProps {
+  fileType: string;
   title: string;
   icon: React.ReactNode;
   color: string;
   status: { status: string; name: string; rows: number | string; errorMsg?: string };
   inputRef: React.RefObject<HTMLInputElement | null>;
   onUpload: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  onDownloadTemplate: (fileType: string) => Promise<void>;
   uploading: boolean;
+  downloadingTemplate: boolean;
 }
 
 interface TabNavProps {
@@ -125,6 +140,31 @@ interface FileMeta {
   color: string;
 }
 
+interface PreflightReport {
+  filename: string;
+  schema_version: string;
+  payload_hash: string;
+  rows_received: number;
+  duplicate_rows: number;
+  duplicate_rate: number;
+  mandatory_issue_rows: number;
+  error_rate: number;
+  can_ingest: boolean;
+  max_error_rate: number;
+}
+
+interface BatchStatusRow {
+  batch_id: string;
+  filename: string;
+  schema_version: string;
+  status: string;
+  rows_received: number;
+  rows_loaded: number;
+  rows_rejected: number;
+  duplicate_rows: number;
+  quality_score: number;
+}
+
 interface EtlRule {
   id?: string;
   col_name: string;
@@ -133,8 +173,34 @@ interface EtlRule {
   active: boolean;
 }
 
+const normalizeErrorMessage = (detail: unknown, fallback = "שגיאת קריאת קובץ"): string => {
+  if (typeof detail === "string" && detail.trim()) return detail;
+  if (Array.isArray(detail)) {
+    const first = detail[0];
+    if (first && typeof first === "object" && "msg" in first && typeof (first as { msg?: unknown }).msg === "string") {
+      return (first as { msg: string }).msg;
+    }
+    const asJson = JSON.stringify(detail);
+    return asJson && asJson !== "[]" ? asJson : fallback;
+  }
+  if (detail && typeof detail === "object") {
+    if ("msg" in detail && typeof (detail as { msg?: unknown }).msg === "string") {
+      return (detail as { msg: string }).msg;
+    }
+    if ("detail" in detail && typeof (detail as { detail?: unknown }).detail === "string") {
+      return (detail as { detail: string }).detail;
+    }
+    const asJson = JSON.stringify(detail);
+    return asJson && asJson !== "{}" ? asJson : fallback;
+  }
+  return fallback;
+};
+
 function AdminCommandCenter() {
   const { config: adminConfig } = useAdminConfig();
+  const { showToast } = useToast();
+  // Push freshness signal to /candidates, /jobs, dashboard etc. after a batch lands.
+  const refreshDataVersion = useDataVersionRefresh();
   const [activeTab, setActiveTab] = useState("data");
   
   // --- Live Data States ---
@@ -142,17 +208,42 @@ function AdminCommandCenter() {
   const [systemHealth, setSystemHealth] = useState<SystemHealthData | null>(null);
   const [etlRules, setEtlRules] = useState<EtlRule[]>([]);
   const [analyticsData, setAnalyticsData] = useState<AnalyticsData | null>(null);
+  const [batchBoard, setBatchBoard] = useState<BatchStatusRow[]>([]);
+  const [showDiffMode, setShowDiffMode] = useState(false);
+  const [lastPreflight, setLastPreflight] = useState<PreflightReport | null>(null);
+  const [smartMode, setSmartMode] = useState(true);
   
   // --- Rules Form State ---
   const [showRuleForm, setShowRuleForm] = useState(false);
   const [editingRuleId, setEditingRuleId] = useState<string | null>(null);
   const [ruleForm, setRuleForm] = useState<EtlRule>({ col_name: "", condition: "", action: "", active: true });
+  const [confirmDialog, setConfirmDialog] = useState<{
+    message: string;
+    onConfirm: () => void;
+    onCancel: () => void;
+  } | null>(null);
 
   useEffect(() => {
     fetchSystemHealth();
     fetchEtlRules();
     fetchAnalytics();
+    fetchBatchBoard();
   }, []);
+
+  const confirmAction = (message: string) =>
+    new Promise<boolean>((resolve) => {
+      setConfirmDialog({
+        message,
+        onConfirm: () => {
+          setConfirmDialog(null);
+          resolve(true);
+        },
+        onCancel: () => {
+          setConfirmDialog(null);
+          resolve(false);
+        },
+      });
+    });
 
   // ==========================================
   // API FETCHERS (The Real Pipeline)
@@ -166,16 +257,23 @@ function AdminCommandCenter() {
 
   const fetchEtlRules = async () => {
     try {
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/admin/rules`);
+      const res = await fetch(`${getApiBaseUrl()}/api/admin/rules`, { headers: getAdminHeaders() });
       if (res.ok) setEtlRules(await res.json());
     } catch (e) { console.error("Error fetching rules", e); }
   };
 
   const fetchAnalytics = async () => {
     try {
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/admin/inbox-analytics`);
+      const res = await fetch(`${getApiBaseUrl()}/api/admin/inbox-analytics`, { headers: getAdminHeaders() });
       if (res.ok) setAnalyticsData(await res.json());
     } catch (e) { console.error("Error fetching analytics", e); }
+  };
+
+  const fetchBatchBoard = async () => {
+    try {
+      const res = await fetch(`${getApiBaseUrl()}/admin/ingestion/batches?limit=20`, { headers: getAdminHeaders() });
+      if (res.ok) setBatchBoard(await res.json());
+    } catch (e) { console.error("Error fetching batches", e); }
   };
 
   // ==========================================
@@ -183,58 +281,179 @@ function AdminCommandCenter() {
   // ==========================================
   const handleLiveUpload = async (type: string, file: File) => {
     setIsUploading(type);
-    const formData = new FormData();
-    formData.append("file", file);
+    const apiBase = process.env.NEXT_PUBLIC_API_URL ?? "";
 
     try {
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/upload`, { method: "POST", body: formData });
-      const data = await res.json();
+      // === Stage 1: typed preflight via the new unified pipeline ===
+      const preflightForm = new FormData();
+      preflightForm.append("file", file);
+      const preflightRes = await fetch(`${apiBase}/api/ingest/preflight/${encodeURIComponent(type)}`, {
+        method: "POST",
+        credentials: "include",
+        body: preflightForm,
+      });
+      const preflightData = (await preflightRes.json()) as {
+        rows_total?: number;
+        rows_valid?: number;
+        rows_rejected?: number;
+        required_columns?: string[];
+        sample_rejections?: { reasons: string[]; row_keys: string[] }[];
+        detail?: string;
+      };
+      if (!preflightRes.ok) {
+        setFilesStatus(prev => ({ ...prev, [type]: { name: file.name, date: "-", rows: "נכשל", status: "error", errorMsg: preflightData.detail || "Preflight נכשל" } }));
+        return;
+      }
+      const valid = preflightData.rows_valid || 0;
+      const rejected = preflightData.rows_rejected || 0;
+      const total = preflightData.rows_total || 0;
+      if (valid === 0) {
+        const sampleReasons = (preflightData.sample_rejections || []).slice(0, 3).map(r => r.reasons.join(", ")).join("; ");
+        setFilesStatus(prev => ({ ...prev, [type]: { name: file.name, date: "-", rows: `נפסל (${rejected}/${total})`, status: "error", errorMsg: sampleReasons || "אף שורה לא עברה אימות" } }));
+        return;
+      }
+      const approved = await confirmAction(
+        `Preflight עבר.\nשורות כולל: ${total}\nתקפות לטעינה: ${valid}\nנדחו: ${rejected}\n\nלהמשיך להעלאה בפועל?`
+      );
+      if (!approved) {
+        setFilesStatus(prev => ({ ...prev, [type]: { name: file.name, date: "-", rows: "בוטל", status: "pending" } }));
+        return;
+      }
 
-      if (res.ok) {
-        setFilesStatus(prev => ({ ...prev, [type]: { name: file.name, date: new Date().toLocaleTimeString('he-IL'), rows: data.rows_processed, status: "success" } }));
-        fetchSystemHealth(); 
+      // === Stage 2: real ingest ===
+      const formData = new FormData();
+      formData.append("file", file);
+      const res = await fetch(`${apiBase}/api/ingest/${encodeURIComponent(type)}`, {
+        method: "POST",
+        credentials: "include",
+        body: formData,
+      });
+      const data = (await res.json()) as {
+        status?: string;
+        batch_id?: string;
+        stats?: { received: number; inserted: number; updated: number; skipped_duplicate: number; rejected: number;
+                  candidates_inserted?: number; applications_inserted?: number; applications_skipped?: number;
+                  jobs_inserted?: number; };
+        detail?: string;
+      };
+
+      if (res.ok && data.stats) {
+        const s = data.stats;
+        // Build a user-readable summary for the row status.
+        const parts: string[] = [];
+        if (s.candidates_inserted) parts.push(`${s.candidates_inserted} מועמדים חדשים`);
+        if (s.candidates_inserted === 0 && s.applications_inserted) parts.push(`${s.applications_inserted} איטרציות חדשות`);
+        if (s.inserted && !parts.length) parts.push(`${s.inserted} חדשות`);
+        if (s.updated) parts.push(`${s.updated} עודכנו`);
+        if (s.skipped_duplicate) parts.push(`${s.skipped_duplicate} כפילויות`);
+        if (s.rejected) parts.push(`${s.rejected} נדחו`);
+        const summary = parts.join(" · ") || `${s.received} עובדו`;
+
+        setFilesStatus(prev => ({ ...prev, [type]: { name: file.name, date: new Date().toLocaleTimeString('he-IL'), rows: summary, status: "success" } }));
+        fetchSystemHealth();
+        fetchBatchBoard();
+        // DataVersionContext normally polls every 30s. Trigger it immediately
+        // so /candidates, /jobs, dashboard etc. show the fresh rows before the
+        // admin even switches tabs.
+        await refreshDataVersion();
+        showToast(`✓ ${summary}`, "success");
       } else {
-        setFilesStatus(prev => ({ ...prev, [type]: { name: file.name, date: new Date().toLocaleTimeString('he-IL'), rows: "נכשל", status: "error", errorMsg: data.detail || "שגיאת קריאת קובץ" } }));
+        setFilesStatus(prev => ({ ...prev, [type]: { name: file.name, date: new Date().toLocaleTimeString('he-IL'), rows: "נכשל", status: "error", errorMsg: data.detail || "Upload failed" } }));
       }
     } catch (error: unknown) {
-      setFilesStatus(prev => ({ ...prev, [type]: { name: file.name, date: "-", rows: "נכשל", status: "error", errorMsg: "השרת לא מגיב." } }));
+      setFilesStatus(prev => ({ ...prev, [type]: { name: file.name, date: "-", rows: "נכשל", status: "error", errorMsg: error instanceof Error ? error.message : "השרת לא מגיב." } }));
     } finally {
       setIsUploading(null);
     }
   };
 
   const handleRevertUpload = async (logId: string) => {
-    if(!window.confirm("האם למחוק את הרשומות של העלאה זו?")) return;
-    await fetch(`${process.env.NEXT_PUBLIC_API_URL}/admin/revert/${logId}`, { method: 'POST' });
-    fetchSystemHealth();
+    const approved = await confirmAction("האם למחוק את הרשומות של העלאה זו?");
+    if (!approved) return;
+    try {
+      const res = await fetch(`${getApiBaseUrl()}/admin/revert/${logId}`, { method: 'POST', headers: getAdminHeaders() });
+      if (!res.ok) throw new Error("Rollback failed");
+      fetchSystemHealth();
+      fetchBatchBoard();
+      showToast("בוצע Rollback בהצלחה", "success");
+    } catch {
+      showToast("שגיאה בביטול העלאה (Rollback)", "error");
+    }
   };
 
   const handleSaveRule = async () => {
     if (!ruleForm.col_name || !ruleForm.action) return;
     try {
       const payload = editingRuleId ? { ...ruleForm, id: editingRuleId } : ruleForm;
-      await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/admin/rules`, {
+      const res = await fetch(`${getApiBaseUrl()}/api/admin/rules`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getAdminHeaders(),
         body: JSON.stringify(payload)
       });
+      if (!res.ok) throw new Error("save rule failed");
       fetchEtlRules();
       setShowRuleForm(false);
       setEditingRuleId(null);
       setRuleForm({ col_name: "", condition: "", action: "", active: true });
-    } catch (e) { console.error(e); }
+      showToast("הכלל נשמר בהצלחה", "success");
+    } catch (e) { 
+      console.error(e);
+      showToast("שמירת כלל נכשלה", "error");
+    }
   };
 
   const handleDeleteRule = async (id: string) => {
-    if(!window.confirm("למחוק כלל זה?")) return;
-    await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/admin/rules/${id}`, { method: 'DELETE' });
-    fetchEtlRules();
+    const approved = await confirmAction("למחוק כלל זה?");
+    if (!approved) return;
+    try {
+      const res = await fetch(`${getApiBaseUrl()}/api/admin/rules/${id}`, { method: 'DELETE', headers: getAdminHeaders() });
+      if (!res.ok) throw new Error("delete rule failed");
+      fetchEtlRules();
+      showToast("הכלל נמחק בהצלחה", "success");
+    } catch {
+      showToast("מחיקת כלל נכשלה", "error");
+    }
   };
 
   const openEditRule = (rule: EtlRule) => {
     setRuleForm({ col_name: rule.col_name, condition: rule.condition, action: rule.action, active: rule.active });
     setEditingRuleId(rule.id!);
     setShowRuleForm(true);
+  };
+  const [downloadingTemplate, setDownloadingTemplate] = useState<string | null>(null);
+
+  const handleDownloadTemplate = async (fileType: string) => {
+    setDownloadingTemplate(fileType);
+    try {
+      const res = await fetch(`${getApiBaseUrl()}/admin/ingestion/template/${fileType}`, {
+        headers: getAdminAuthHeader(),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(normalizeErrorMessage((body as { detail?: unknown }).detail, "הורדת תבנית נכשלה"));
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `${fileType}-master-template.xlsx`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      setFilesStatus(prev => ({
+        ...prev,
+        [fileType]: {
+          ...prev[fileType],
+          status: "error",
+          rows: "תבנית",
+          errorMsg: normalizeErrorMessage(error instanceof Error ? error.message : error, "הורדת תבנית נכשלה"),
+        }
+      }));
+    } finally {
+      setDownloadingTemplate(null);
+    }
   };
 
   // --- File Upload Definitions ---
@@ -271,41 +490,133 @@ function AdminCommandCenter() {
         )}
       </div>
 
-      {/* NAVIGATION */}
-      <div className="flex flex-wrap gap-2 p-1 bg-slate-100 rounded-2xl w-fit border border-slate-200">
-        <TabNav id="data" active={activeTab} setter={setActiveTab} icon={<FileText size={18}/>} label="ניהול דאטה (Live Dropzones)" />
-        <TabNav id="rules" active={activeTab} setter={setActiveTab} icon={<Filter size={18}/>} label="אזור הסגר ומדיניות טיוב" />
-        <TabNav id="analytics" active={activeTab} setter={setActiveTab} icon={<BarChart3 size={18}/>} label="מעקב ביצועים (AI Inbox)" />
-        <TabNav id="targets" active={activeTab} setter={setActiveTab} icon={<Target size={18}/>} label="יעדים ואוטומציות" />
-      </div>
+      {/* NAVIGATION — 3-group / sub-tab shell.
+          Replaces 7 flat tabs with 3 groups. AdminShell owns the URL state
+          (?group=&sub=) and fires onChange; we map the canonical sub-tab ids
+          back to the legacy activeTab keys so the content blocks below stay
+          untouched. */}
+      <AdminShell
+        badges={{
+          batches: batchBoard.filter(b => b.status === "pending").length,
+        }}
+        onChange={({ sub }) => {
+          const subToTab: Record<string, string> = {
+            ingest: "data", batches: "batches", quality: "quality",
+            targets: "targets", rules: "rules", permissions: "permissions",
+            apps: "apps", notifications: "notifications",
+            inbox: "analytics", "consumer-map": "consumer-map",
+          };
+          const mapped = subToTab[sub] ?? "data";
+          if (mapped !== activeTab) setActiveTab(mapped);
+        }}
+      />
+
+      {/* APPS MANAGEMENT sub-tab — admin controls visibility + tags for the
+          /ai-hub apps registry. */}
+      {activeTab === "apps" && <AppsManagementTab />}
+
+      {/* NOTIFICATIONS sub-tab — send manual notifications + view history. */}
+      {activeTab === "notifications" && <NotificationsTab />}
+
+      {/* PERMISSIONS sub-tab — link out to dedicated page (kept separate
+          because it has its own RBAC checks + heavy state). */}
+      {activeTab === "permissions" && (
+        <div className="bg-white rounded-2xl border border-slate-200 p-8 text-center space-y-4">
+          <div className="mx-auto w-16 h-16 rounded-2xl bg-[#002649] text-white flex items-center justify-center">
+            <Users size={28} />
+          </div>
+          <h3 className="text-xl font-black text-[#002649]">ניהול הרשאות ומשתמשים</h3>
+          <p className="text-sm text-slate-500 max-w-md mx-auto">
+            דף הרשאות מנוהל בנפרד בשל בדיקות RBAC מורחבות ועריכה משולבת של משתמשים, מודולים וכללים דינמיים.
+          </p>
+          <Link
+            href="/admin/permissions"
+            className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-[#002649] text-white font-black shadow-md hover:bg-[#EF6B00] transition-colors"
+          >
+            <Users size={16} />
+            פתח דף הרשאות
+          </Link>
+        </div>
+      )}
 
       {/* TAB 1: DATA DROPZONES */}
       {activeTab === "data" && (
         <div className="space-y-8 animate-in slide-in-from-right-4">
-          {(systemHealth?.missing_data?.length ?? 0) > 0 && systemHealth && (
-            <div className="bg-red-50 border border-red-200 rounded-2xl p-5 flex items-start gap-4">
-              <AlertOctagon className="text-red-500 shrink-0" size={24} />
-              <div>
-                <h3 className="font-black text-red-800">התראות טיוב נתונים פעילות</h3>
-                <ul className="mt-2 space-y-1">
-                  {systemHealth.missing_data.map((alert: MissingDataAlert, idx: number) => (
-                    <li key={idx} className="text-sm font-bold text-red-700">⚠️ מצאנו {alert.count} רשומות חסרות: {alert.field}</li>
-                  ))}
-                </ul>
+
+          {/* Smart Ingest / Advanced mode toggle */}
+          <div className="bg-white rounded-2xl border border-slate-200 p-4 flex items-center justify-between">
+            <div>
+              <div className="text-sm font-black text-[#002649]">
+                {smartMode ? "Smart Ingest — Excel מאוחד" : "מצב מתקדם — 7 קבצים נפרדים"}
+              </div>
+              <div className="text-xs text-slate-500">
+                {smartMode
+                  ? "קובץ Excel אחד עם גיליונות מרובים — המערכת מנתבת אוטומטית לכל handler"
+                  : "העלאה נפרדת לכל סוג נתון — מצב מתקדם עם Diff Mode"}
               </div>
             </div>
-          )}
-
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-            {Object.keys(filesStatus).map((key) => {
-              const meta = FILE_META[key];
-              return (
-                <DropzoneBox key={key} title={meta.title} icon={meta.icon} color={meta.color} status={filesStatus[key]} inputRef={fileRefs[key]} uploading={isUploading === key}
-                  onUpload={(e: React.ChangeEvent<HTMLInputElement>) => { const f = e.target.files?.[0]; if (f) handleLiveUpload(key, f); }}
-                />
-              );
-            })}
+            <button
+              onClick={() => setSmartMode((p) => !p)}
+              className="px-4 py-2 rounded-lg text-xs font-bold bg-[#002649] text-white hover:bg-[#EF6B00] transition-colors"
+            >
+              {smartMode ? "מצב מתקדם (7 קבצים)" : "Smart Ingest (Excel מאוחד)"}
+            </button>
           </div>
+
+          {smartMode ? (
+            <SmartIngestPanel
+              onSuccess={async () => {
+                await refreshDataVersion();
+                fetchBatchBoard();
+                fetchSystemHealth();
+              }}
+            />
+          ) : (
+            <>
+              {/* Advanced mode: Diff Mode toggle */}
+              <div className="bg-white rounded-2xl border border-slate-200 p-4 flex items-center justify-between">
+                <div>
+                  <div className="text-sm font-black text-[#002649]">Diff Mode בייבוא קבצים</div>
+                  <div className="text-xs text-slate-500">השוואה מקדימה בין קובץ חדש למצב הנתונים לפני קליטה.</div>
+                </div>
+                <button onClick={() => setShowDiffMode((prev) => !prev)} className="px-4 py-2 rounded-lg text-xs font-bold bg-[#002649] text-white hover:bg-[#EF6B00]">
+                  {showDiffMode ? "הסתר Diff" : "הצג Diff"}
+                </button>
+              </div>
+              {showDiffMode && lastPreflight && (
+                <div className="bg-purple-50 border border-purple-200 rounded-2xl p-4 grid grid-cols-1 md:grid-cols-4 gap-3">
+                  <DiffStat label="Rows בקובץ" value={`${lastPreflight.rows_received}`} />
+                  <DiffStat label="חדשים לקליטה" value={`${Math.max(0, lastPreflight.rows_received - lastPreflight.duplicate_rows - lastPreflight.mandatory_issue_rows)}`} />
+                  <DiffStat label="כפולים (Update)" value={`${lastPreflight.duplicate_rows}`} />
+                  <DiffStat label="שורות שייפסלו" value={`${lastPreflight.mandatory_issue_rows}`} />
+                </div>
+              )}
+              {(systemHealth?.missing_data?.length ?? 0) > 0 && systemHealth && (
+                <div className="bg-red-50 border border-red-200 rounded-2xl p-5 flex items-start gap-4">
+                  <AlertOctagon className="text-red-500 shrink-0" size={24} />
+                  <div>
+                    <h3 className="font-black text-red-800">התראות טיוב נתונים פעילות</h3>
+                    <ul className="mt-2 space-y-1">
+                      {systemHealth.missing_data.map((alert: MissingDataAlert, idx: number) => (
+                        <li key={idx} className="text-sm font-bold text-red-700">⚠️ מצאנו {alert.count} רשומות חסרות: {alert.field}</li>
+                      ))}
+                    </ul>
+                  </div>
+                </div>
+              )}
+
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+                {Object.keys(filesStatus).map((key) => {
+                  const meta = FILE_META[key];
+                  return (
+                    <DropzoneBox key={key} fileType={key} title={meta.title} icon={meta.icon} color={meta.color} status={filesStatus[key]} inputRef={fileRefs[key]} uploading={isUploading === key} onDownloadTemplate={handleDownloadTemplate} downloadingTemplate={downloadingTemplate === key}
+                      onUpload={(e: React.ChangeEvent<HTMLInputElement>) => { const f = e.target.files?.[0]; if (f) handleLiveUpload(key, f); }}
+                    />
+                  );
+                })}
+              </div>
+            </>
+          )}
 
           {(systemHealth?.logs?.length ?? 0) > 0 && systemHealth && (
              <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden mt-8">
@@ -332,6 +643,49 @@ function AdminCommandCenter() {
                  </tbody>
                </table>
              </div>
+          )}
+
+          {batchBoard.length > 0 && (
+            <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden mt-8">
+              <div className="p-5 border-b border-slate-100 bg-slate-50 flex justify-between items-center">
+                <h3 className="font-black text-lg text-[#002649] flex items-center gap-2">
+                  <Sparkles size={18} className="text-[#EF6B00]" /> Batch Status Board
+                </h3>
+                <button onClick={fetchBatchBoard} className="text-slate-400 hover:text-blue-600"><RefreshCw size={16}/></button>
+              </div>
+              <table className="w-full text-right text-sm">
+                <thead className="bg-white text-slate-400 font-bold text-xs uppercase border-b border-slate-100">
+                  <tr>
+                    <th className="px-6 py-3">Batch</th>
+                    <th className="px-6 py-3">קובץ</th>
+                    <th className="px-6 py-3">סטטוס</th>
+                    <th className="px-6 py-3">Received</th>
+                    <th className="px-6 py-3">Loaded</th>
+                    <th className="px-6 py-3">Rejected</th>
+                    <th className="px-6 py-3">Dup</th>
+                    <th className="px-6 py-3">Quality</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-50">
+                  {batchBoard.map((b) => (
+                    <tr key={b.batch_id} className="hover:bg-slate-50">
+                      <td className="px-6 py-3 font-mono text-xs text-slate-500">{b.batch_id}</td>
+                      <td className="px-6 py-3 font-bold text-[#002649]">{b.filename}</td>
+                      <td className="px-6 py-3">
+                        <span className={`px-2 py-1 rounded-md text-[10px] font-black uppercase tracking-wider ${b.status === 'committed' ? 'bg-green-100 text-green-700' : b.status === 'reverted' ? 'bg-orange-100 text-orange-700' : 'bg-red-100 text-red-700'}`}>
+                          {b.status}
+                        </span>
+                      </td>
+                      <td className="px-6 py-3">{b.rows_received}</td>
+                      <td className="px-6 py-3">{b.rows_loaded}</td>
+                      <td className="px-6 py-3">{b.rows_rejected}</td>
+                      <td className="px-6 py-3">{b.duplicate_rows}</td>
+                      <td className="px-6 py-3 font-black text-[#002649]">{b.quality_score}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )}
         </div>
       )}
@@ -402,6 +756,11 @@ function AdminCommandCenter() {
       {/* TAB 3: AI INBOX ANALYTICS */}
       {activeTab === "analytics" && analyticsData && (
         <div className="space-y-8 animate-in slide-in-from-right-4">
+          {/* Demo flag — backend currently returns is_demo:true (see /api/admin/inbox-analytics).
+              The DemoBadge makes that explicit to admins so they don't act on synthetic numbers. */}
+          {(analyticsData as { is_demo?: boolean }).is_demo && (
+            <DemoBadge tooltip="הנתונים בתצוגה זו הם הדגמה — אנליטיקה מצטברת תופעל ב-v1.1." />
+          )}
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
             <StatMiniCard label="משימות AI שנוצרו" value={analyticsData.stats.total_tasks} sub="החודש" color="text-[#002649]" />
             {(() => {
@@ -409,7 +768,13 @@ function AdminCommandCenter() {
               return (
                 <StatMiniCard
                   label={convFormula?.label ?? "Conversion Rate %"}
-                  value={convFormula ? `${evalFormula(convFormula).toFixed(1)}%` : "—"}
+                  value={convFormula ? `${evalFormula(convFormula, {
+                    hires: Number(systemHealth?.candidate_count ?? 0),
+                    offers: Number(analyticsData?.stats?.total_tasks ?? 0),
+                    interviews: Number(analyticsData?.stats?.total_tasks ?? 0),
+                    avg_days_open: Number(analyticsData?.stats?.median_response_hours ?? 0),
+                    applications: Number(systemHealth?.total_records ?? 0),
+                  }).toFixed(1)}%` : "—"}
                   sub="מחושב לפי נוסחת ה-Admin"
                   color="text-green-600"
                 />
@@ -429,6 +794,7 @@ function AdminCommandCenter() {
                   <LineChart data={analyticsData.hourly_trend}>
                     <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
                     <XAxis dataKey="hour" axisLine={false} tickLine={false} tick={{fontSize: 12, fontWeight: 'bold'}} />
+                    <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: "#94a3b8" }} />
                     <Tooltip contentStyle={{borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)'}} />
                     <Line type="monotone" dataKey="tasks" stroke="#EF6B00" strokeWidth={4} dot={{r: 6, fill: '#EF6B00'}} />
                   </LineChart>
@@ -462,6 +828,30 @@ function AdminCommandCenter() {
 
       {/* TAB 4: TARGETS & AUTOMATIONS */}
       {activeTab === "targets" && <TargetsTab />}
+
+      {/* TAB 5: BATCHES HISTORY — Sprint 4 */}
+      {activeTab === "batches" && <BatchesTab onRefresh={async () => { await refreshDataVersion(); fetchBatchBoard(); }} />}
+
+      {/* TAB 6: QUALITY CONTROL — Sprint 4 */}
+      {activeTab === "quality" && <QualityTab />}
+
+      {/* TAB 7: CONSUMER MAP — Sprint 4 */}
+      {activeTab === "consumer-map" && <ConsumerMapTab />}
+
+      {confirmDialog && (
+        <div className="fixed inset-0 z-[200] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-md rounded-2xl bg-white border border-slate-200 shadow-2xl overflow-hidden">
+            <div className="p-5 border-b border-slate-100">
+              <h3 className="text-lg font-black text-[#002649]">אישור פעולה</h3>
+              <p className="text-sm text-slate-600 mt-2 whitespace-pre-line">{confirmDialog.message}</p>
+            </div>
+            <div className="p-4 bg-slate-50 flex justify-end gap-3">
+              <button onClick={confirmDialog.onCancel} className="px-4 py-2 rounded-lg font-bold text-slate-600 hover:bg-slate-200">ביטול</button>
+              <button onClick={confirmDialog.onConfirm} className="px-5 py-2 rounded-lg font-bold text-white bg-[#002649] hover:bg-[#EF6B00]">אישור</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -471,8 +861,17 @@ function StatMiniCard({ label, value, sub, color }: StatMiniCardProps) { return 
 function TypeBar({ label, pct, color, count }: TypeBarProps) { return ( <div className="space-y-1.5"><div className="flex justify-between text-[11px] font-bold"><span>{label}</span><span className="opacity-60">{count} ({pct}%)</span></div><div className="h-1.5 bg-white/10 rounded-full overflow-hidden"><div className={`h-full ${color}`} style={{ width: `${pct}%` }} /></div></div> ); }
 function RecruiterRow({ name, dominant, time, rate, insight, color }: RecruiterRowProps) { const dotColor = color === "green" ? "bg-green-500" : color === "red" ? "bg-red-500" : "bg-orange-500"; return ( <tr className="hover:bg-slate-50 transition-colors group"><td className="p-4 font-black text-[#002649] flex items-center gap-3"><div className={`w-2 h-2 rounded-full ${dotColor}`} /> {name}</td><td className="p-4 font-bold text-slate-600 text-xs">{dominant}</td><td className="p-4 font-black text-[#002649]">{time}</td><td className="p-4"><span className={`px-2 py-1 rounded-lg font-bold text-[10px] ${color === 'red' ? 'bg-red-50 text-red-600' : 'bg-green-50 text-green-700'}`}>{rate}</span></td><td className="p-4 text-xs font-medium text-slate-500 italic max-w-xs">{insight}</td></tr> ); }
 const DROPZONE_COLOR_MAP: Record<string, string> = { blue: "border-blue-200 bg-blue-50/50 hover:border-blue-500", orange: "border-orange-200 bg-orange-50/50 hover:border-orange-500", green: "border-green-200 bg-green-50/50 hover:border-green-500", pink: "border-pink-200 bg-pink-50/50 hover:border-pink-500", purple: "border-purple-200 bg-purple-50/50 hover:border-purple-500", emerald: "border-emerald-200 bg-emerald-50/50 hover:border-emerald-500", red: "border-red-200 bg-red-50/50 hover:border-red-500" };
-function DropzoneBox({ title, icon, color, status, inputRef, onUpload, uploading }: DropzoneBoxProps) { const isError = status.status === "error"; return ( <button type="button" className={`border-2 border-dashed rounded-3xl p-6 transition-all cursor-pointer flex flex-col items-center text-center relative group w-full text-inherit ${isError ? 'border-red-500 bg-red-50' : DROPZONE_COLOR_MAP[color]}`} onClick={() => inputRef.current?.click()} > <input type="file" ref={inputRef} className="hidden" onChange={onUpload} accept=".csv, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/vnd.ms-excel" /> <div className={`w-14 h-14 rounded-full flex items-center justify-center shadow-sm mb-4 transition-transform ${isError ? 'bg-red-500 text-white' : 'bg-white text-[#002649] group-hover:scale-110'}`}> {uploading ? <Loader2 size={24} className="animate-spin text-slate-400"/> : isError ? <X size={24} /> : icon} </div> <h3 className="font-black text-[#002649] text-sm mb-1">{title}</h3> <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-4">גרור/לחץ להעלאה</div> {isError ? ( <div className="w-full bg-red-100/80 p-3 rounded-2xl text-[10px] font-bold text-red-800 text-right border border-red-200"> שגיאה: {status.errorMsg} </div> ) : ( <div className="w-full bg-white p-3 rounded-2xl text-[10px] space-y-1.5 text-right text-slate-600 shadow-sm border border-slate-100"> <div className="flex justify-between items-center border-b border-slate-100 pb-1.5"><span className="font-bold opacity-50">קובץ:</span><span className="font-black text-[#002649] truncate max-w-[100px]">{status.name}</span></div> <div className="flex justify-between items-center"><span className="font-bold opacity-50">רשומות תקינות:</span><span className="font-black text-green-600">{status.rows}</span></div> </div> )} </button> ); }
+function DropzoneBox({ fileType, title, icon, color, status, inputRef, onUpload, onDownloadTemplate, uploading, downloadingTemplate }: DropzoneBoxProps) { const isError = status.status === "error"; return ( <div className={`border-2 border-dashed rounded-3xl p-6 transition-all flex flex-col items-center text-center relative group w-full ${isError ? 'border-red-500 bg-red-50' : DROPZONE_COLOR_MAP[color]}`}> <button type="button" className="w-full text-inherit" onClick={() => inputRef.current?.click()} > <input type="file" ref={inputRef} className="hidden" onChange={onUpload} accept=".csv, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/vnd.ms-excel" /> <div className={`w-14 h-14 rounded-full flex items-center justify-center shadow-sm mb-4 transition-transform mx-auto ${isError ? 'bg-red-500 text-white' : 'bg-white text-[#002649] group-hover:scale-110'}`}> {uploading ? <Loader2 size={24} className="animate-spin text-slate-400"/> : isError ? <X size={24} /> : icon} </div> <h3 className="font-black text-[#002649] text-sm mb-1">{title}</h3> <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-4">גרור/לחץ להעלאה</div> {isError ? ( <div className="w-full bg-red-100/80 p-3 rounded-2xl text-[10px] font-bold text-red-800 text-right border border-red-200"> שגיאה: {String(status.errorMsg ?? "שגיאת קריאת קובץ")} </div> ) : ( <div className="w-full bg-white p-3 rounded-2xl text-[10px] space-y-1.5 text-right text-slate-600 shadow-sm border border-slate-100"> <div className="flex justify-between items-center border-b border-slate-100 pb-1.5"><span className="font-bold opacity-50">קובץ:</span><span className="font-black text-[#002649] truncate max-w-[100px]">{status.name}</span></div> <div className="flex justify-between items-center"><span className="font-bold opacity-50">רשומות תקינות:</span><span className="font-black text-green-600">{status.rows}</span></div> </div> )} </button> <button type="button" className="mt-3 w-full bg-white/90 hover:bg-white border border-slate-200 rounded-xl py-2 px-3 text-xs font-black text-[#002649] flex items-center justify-center gap-2 transition-colors" onClick={(e) => { e.stopPropagation(); void onDownloadTemplate(fileType); }} disabled={downloadingTemplate}> {downloadingTemplate ? <Loader2 size={14} className="animate-spin text-slate-500" /> : <Download size={14} />} {downloadingTemplate ? "מוריד תבנית..." : "הורד תבנית מאסטר (.xlsx)"} </button> </div> ); }
 function TabNav({ id, active, setter, icon, label }: TabNavProps) { const isActive = active === id; return ( <button onClick={() => setter(id)} className={`flex items-center gap-2 px-6 py-2.5 rounded-xl font-black text-sm transition-all ${isActive ? 'bg-[#002649] text-white shadow-md' : 'text-slate-500 hover:text-[#002649] hover:bg-slate-200/50'}`}> {icon} {label} </button> ); }
+
+function DiffStat({ label, value }: Readonly<{ label: string; value: string }>) {
+  return (
+    <div className="rounded-xl bg-white border border-purple-100 px-3 py-2">
+      <div className="text-[11px] font-bold text-slate-500">{label}</div>
+      <div className="text-sm font-black text-[#002649] mt-1">{value}</div>
+    </div>
+  );
+}
 
 export default function AdminPage() {
   return (

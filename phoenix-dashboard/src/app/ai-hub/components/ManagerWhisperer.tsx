@@ -107,20 +107,28 @@ export default function BrieflyManagerBrief() {
   };
 
   return (
-    <div className="max-w-[1200px] mx-auto space-y-4 animate-in fade-in duration-500 pb-20 px-4" dir="rtl">
-      
-      {/* Header Compact */}
-      <div className="bg-white p-4 rounded-3xl border border-slate-200 shadow-sm flex justify-between items-center">
-        <div className="flex items-center gap-3">
-          <div className="p-2 bg-[#002649] text-white rounded-xl shadow-md"><Zap size={18} fill="#EF6B00" className="text-[#EF6B00]" /></div>
-          <h1 className="text-xl font-black text-[#002649]">Briefly: מרכז תדרוך למנהל</h1>
+    <div className="bg-slate-50/30 rounded-b-3xl pb-10" dir="rtl">
+      <div className="max-w-[1200px] mx-auto space-y-4 animate-in fade-in duration-500 px-6 pt-6">
+
+        {/* Header — uniform plate (gradient bg + 1.75 stroke + duotone zap)
+            matching the rest of the system. The compact step indicator stays
+            on the left so users keep their place in the wizard. */}
+        <div className="flex justify-between items-center pb-4 border-b border-slate-200">
+          <div className="flex items-center gap-4">
+            <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-[#002649]/5 to-[#EF6B00]/10 text-[#EF6B00] flex items-center justify-center shrink-0 border border-[#002649]/10 animate-greeting-enter shadow-sm">
+              <Zap size={22} strokeWidth={1.75} fill="#EF6B00" fillOpacity={0.18} />
+            </div>
+            <div>
+              <h1 className="text-2xl font-black text-[#002649] tracking-tight">Briefly</h1>
+              <p className="text-xs text-slate-500 font-medium mt-0.5">מרכז תדרוך לראש צוות גיוס</p>
+            </div>
+          </div>
+          <div className="flex gap-1.5 bg-slate-100 p-1 rounded-full">
+            {['input', 'draft', 'preview'].map((s, i) => (
+              <div key={s} className={`h-1 w-10 rounded-full transition-all ${step === s ? 'bg-[#EF6B00]' : i < (step === 'draft' ? 1 : 2) ? 'bg-[#002649]' : 'bg-slate-200'}`} />
+            ))}
+          </div>
         </div>
-        <div className="flex gap-1.5 bg-slate-50 p-1 rounded-full">
-          {['input', 'draft', 'preview'].map((s, i) => (
-            <div key={s} className={`h-1 w-10 rounded-full transition-all ${step === s ? 'bg-[#EF6B00]' : i < (step === 'draft' ? 1 : 2) ? 'bg-[#002649]' : 'bg-slate-200'}`} />
-          ))}
-        </div>
-      </div>
 
       {step === "input" && (
         <div className="grid grid-cols-12 gap-4 animate-in slide-in-from-bottom-2">
@@ -136,6 +144,7 @@ export default function BrieflyManagerBrief() {
               <div className="border-2 border-dashed border-slate-200 rounded-2xl p-6 flex flex-col items-center justify-center bg-slate-50 hover:bg-orange-50/20 transition-all relative cursor-pointer">
                 <UploadCloud size={28} className="text-slate-300 mb-1" /><span className="text-[10px] font-black text-slate-500">{cvFile ? cvFile.name : "גררי קורות חיים"}</span>
                 <input type="file" className="absolute inset-0 opacity-0 cursor-pointer" onChange={e=>e.target.files?.[0] && setCvFile(e.target.files[0])} />
+                <span className="mt-2 text-[10px] font-black bg-slate-100 text-slate-500 px-2 py-0.5 rounded">שדה הדגמה בלבד</span>
               </div>
             </div>
           </div>
@@ -148,7 +157,7 @@ export default function BrieflyManagerBrief() {
                 </div>
               ))}
             </div>
-            <button onClick={generateDraft} disabled={!selectedCandidate || !cvFile} className="mt-4 w-full py-4 bg-[#002649] text-white rounded-2xl font-black text-lg flex items-center justify-center gap-2 hover:bg-[#EF6B00] transition-all shadow-lg disabled:opacity-40"><RefreshCw size={20} /> לטיוטה החכמה</button>
+            <button onClick={generateDraft} disabled={!selectedCandidate} className="mt-4 w-full py-4 bg-[#002649] text-white rounded-2xl font-black text-lg flex items-center justify-center gap-2 hover:bg-[#EF6B00] transition-all shadow-lg disabled:opacity-40"><RefreshCw size={20} /> לטיוטה החכמה</button>
           </div>
         </div>
       )}
@@ -380,6 +389,7 @@ export default function BrieflyManagerBrief() {
            </div>
         </div>
       )}
+      </div>
     </div>
   );
 }

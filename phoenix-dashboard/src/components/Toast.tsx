@@ -38,17 +38,32 @@ export function useToast() {
 
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<ToastItem[]>([]);
-  const timerRefs = useRef<ReturnType<typeof setTimeout>[]>([]);
+  const timerRefs = useRef<Record<number, ReturnType<typeof setTimeout>>>({});
 
   useEffect(() => {
-    return () => { timerRefs.current.forEach(clearTimeout); };
+    return () => {
+      Object.values(timerRefs.current).forEach(clearTimeout);
+      timerRefs.current = {};
+    };
   }, []);
 
   const showToast = useCallback((message: string, type: ToastType = "info") => {
     const id = ++_nextToastId;
     setToasts(prev => [...prev, { id, message, type }]);
-    const timerId = setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 3500);
-    timerRefs.current.push(timerId);
+    const timerId = setTimeout(() => {
+      setToasts(prev => prev.filter(t => t.id !== id));
+      delete timerRefs.current[id];
+    }, 3500);
+    timerRefs.current[id] = timerId;
+  }, []);
+
+  const closeToast = useCallback((toastId: number) => {
+    setToasts(prev => prev.filter(x => x.id !== toastId));
+    const timerId = timerRefs.current[toastId];
+    if (timerId) {
+      clearTimeout(timerId);
+      delete timerRefs.current[toastId];
+    }
   }, []);
 
   return (
@@ -68,7 +83,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
             {iconMap[t.type]}
             <span>{t.message}</span>
             <button
-              onClick={() => setToasts(prev => prev.filter(x => x.id !== t.id))}
+              onClick={() => closeToast(t.id)}
               className="ms-auto opacity-40 hover:opacity-100"
               aria-label="סגור הודעה"
             >

@@ -22,7 +22,14 @@ export default function RuleBuilder() {
   const [rules,    setRules]    = useState<AutomationRule[]>(config.rules);
   useEffect(() => { setRules(config.rules); }, [config.rules]);
   const [isSaving, setIsSaving] = useState(false);
+  const [isDirty, setIsDirty] = useState(false);
   const firedRef = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    const baseline = JSON.stringify(config.rules);
+    const current = JSON.stringify(rules);
+    setIsDirty(baseline !== current);
+  }, [config.rules, rules]);
 
   useEffect(() => {
     rules.forEach(rule => {
@@ -54,6 +61,12 @@ export default function RuleBuilder() {
       action: "toast", actionLabel: "כלל חדש", enabled: true,
     }]);
 
+  const removeRule = (idx: number) => {
+    if (!globalThis.confirm("למחוק את הכלל?")) return;
+    setRules((prev) => prev.filter((_, i) => i !== idx));
+    showToast("הכלל נמחק. השינוי יישמר רק לאחר לחיצה על שמור.", "success");
+  };
+
   const handleSave = async () => {
     setIsSaving(true);
     try {
@@ -81,13 +94,14 @@ export default function RuleBuilder() {
           </button>
           <button
             onClick={handleSave}
-            disabled={isSaving}
+            disabled={isSaving || !isDirty}
             className="flex items-center gap-1.5 px-4 py-2 bg-[#002649] text-white rounded-xl font-bold text-sm hover:bg-[#EF6B00] transition-all disabled:opacity-40"
           >
             <Save size={14} /> {isSaving ? "שומר..." : "שמור"}
           </button>
         </div>
       </div>
+      {isDirty && <div className="text-[11px] font-black text-amber-600">יש שינויים שלא נשמרו</div>}
 
       <div className="space-y-3">
         {rules.map((rule, idx) => (
@@ -163,7 +177,7 @@ export default function RuleBuilder() {
                 <div className={`w-3.5 h-3.5 bg-white rounded-full absolute top-[3px] shadow-sm transition-all ${rule.enabled ? "right-[3px]" : "left-[3px]"}`} />
               </button>
               <button
-                onClick={() => setRules(prev => prev.filter((_, i) => i !== idx))}
+                onClick={() => removeRule(idx)}
                 className="text-slate-300 hover:text-red-500 transition-colors shrink-0"
               >
                 <Trash2 size={14} />

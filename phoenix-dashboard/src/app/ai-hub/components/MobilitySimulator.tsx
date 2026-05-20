@@ -19,7 +19,7 @@ export default function MobilitySimulator() {
   const [isComparative, setIsComparative] = useState(false);
   
   const [personal, setPersonal] = useState({
-    name: "אביב כהן", id: "034567891", role: "מפתח Backend", 
+    name: "אביב כהן", id: "", role: "מפתח Backend", 
     dept: "חטיבת טכנולוגיות (R&D)", manager: "ישראל ישראלי", startDate: "01/05/2026"
   });
 

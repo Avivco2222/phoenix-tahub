@@ -9,6 +9,8 @@ import {
 } from "lucide-react";
 import { PieChart as RechartsPie, Pie, Cell, ResponsiveContainer, Tooltip as RechartsTooltip } from "recharts";
 import { useToast } from "@/components/Toast";
+import { getAdminAuthHeader, getAdminHeaders, getApiBaseUrl } from "@/lib/api";
+import { PageHeader } from "@/components/PageHeader";
 
 interface Category {
   id: number;
@@ -58,11 +60,7 @@ interface TabBtnProps {
   alert?: number;
 }
 
-const DEFAULT_CATEGORIES = [
-  { id: 1, name: "חברות השמה", target: 150000, previousYearSpend: 135000, code: "HR-01", notes: "עמלות טכנולוגי", subcategories: ["השמת בכיר"] },
-  { id: 2, name: "שיווק ופרסום", target: 80000, previousYearSpend: 95000, code: "HR-02", notes: "קמפיינים", subcategories: ["קמפיין ממומן"] },
-  { id: 3, name: "כללי למיפוי", target: 0, previousYearSpend: 0, code: "NA", notes: "תיבת ממתינים", subcategories: ["אחר"] }
-];
+const DEFAULT_CATEGORIES: Category[] = [];
 
 const PIE_COLORS = ['#002649', '#EF6B00', '#3b82f6', '#8b5cf6', '#10b981', '#f43f5e', '#14b8a6'];
 
@@ -72,11 +70,24 @@ function getStatusColor(status: string): string {
   return 'bg-blue-100 text-blue-700';
 }
 
+function normalizeMonthToIso(value: string): string {
+  const trimmed = (value || "").trim();
+  if (!trimmed) return "";
+  if (/^\d{4}-\d{2}$/.test(trimmed)) return trimmed;
+  const hebrewMonths = ["ינואר", "פברואר", "מרץ", "אפריל", "מאי", "יוני", "יולי", "אוגוסט", "ספטמבר", "אוקטובר", "נובמבר", "דצמבר"];
+  const match = /^([^\d]+)\s+(\d{4})$/.exec(trimmed);
+  if (!match) return "";
+  const monthIdx = hebrewMonths.findIndex((m) => m === match[1].trim());
+  if (monthIdx < 0) return "";
+  return `${match[2]}-${String(monthIdx + 1).padStart(2, "0")}`;
+}
+
 export default function UnifiedBudgetPage() {
   const { showToast } = useToast();
   const [activeTab, setActiveTab] = useState("analytics");
   const [isLoading, setIsLoading] = useState(true);
   const [isOfflineMode, setIsOfflineMode] = useState(false);
+  const [liveDataError, setLiveDataError] = useState<string | null>(null);
   
   const [categories, setCategories] = useState<Category[]>([]);
   const [vendors, setVendors] = useState<Vendor[]>([]);
@@ -91,6 +102,12 @@ export default function UnifiedBudgetPage() {
   const [editingVendor, setEditingVendor] = useState<Partial<Vendor> | null>(null); 
   const [isUploading, setIsUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [confirmDialog, setConfirmDialog] = useState<{
+    message: string;
+    onConfirm: () => void;
+    onCancel: () => void;
+  } | null>(null);
+  const [subcategoryDraft, setSubcategoryDraft] = useState<Record<number, string>>({});
   
   // Toggles & Search
   const [ledgerSearch, setLedgerSearch] = useState("");
@@ -103,13 +120,15 @@ export default function UnifiedBudgetPage() {
     setIsLoading(true);
     try {
       setIsOfflineMode(false);
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/finops/data`);
+      setLiveDataError(null);
+      const res = await fetch(`${getApiBaseUrl()}/api/finops/data`, { headers: getAdminHeaders() });
+      if (!res.ok) throw new Error("finops fetch failed");
       const data = await res.json();
       
       if (data.categories && data.categories.length > 0) {
         setCategories(data.categories.map((c: Category & { previous_year_spend?: number }) => ({...c, previousYearSpend: c.previous_year_spend ?? 0})));
       } else {
-        setCategories(DEFAULT_CATEGORIES);
+        setCategories([]);
       }
       
       if (data.vendors) setVendors(data.vendors);
@@ -120,19 +139,12 @@ export default function UnifiedBudgetPage() {
         })));
       }
     } catch (e) {
-      console.warn("[FinOps] Backend offline — loading mock data", e);
+      console.warn("[FinOps] Backend offline", e);
       setIsOfflineMode(true);
-      setCategories(DEFAULT_CATEGORIES);
-      setVendors([
-        { id: "v1", name: "LinkedIn Talent Solutions", defaultCategory: "שיווק ופרסום", totalPaid: 42000, activeInvoices: 2 },
-        { id: "v2", name: "AllJobs Premium", defaultCategory: "שיווק ופרסום", totalPaid: 18500, activeInvoices: 1 },
-        { id: "v3", name: "טכנולוגי בע\"מ", defaultCategory: "חברות השמה", totalPaid: 65000, activeInvoices: 3 },
-      ]);
-      setInvoices([
-        { id: "INV-001", vendor: "LinkedIn Talent Solutions", date: "2026-01-15", dueDate: "2026-02-15", budgetMonth: "ינואר 2026", amount: 21000, category: "שיווק ופרסום", subcategory: "קמפיין ממומן", status: "שולם", note: "Q1 Campaign", fileUrl: undefined, due_date: "2026-02-15", budget_month: "ינואר 2026", file_url: undefined },
-        { id: "INV-002", vendor: "טכנולוגי בע\"מ", date: "2026-02-01", dueDate: "2026-03-01", budgetMonth: "פברואר 2026", amount: 35000, category: "חברות השמה", subcategory: "השמת בכיר", status: "ממתין לאישור הנהח״ש", note: "Senior R&D hire", fileUrl: undefined, due_date: "2026-03-01", budget_month: "פברואר 2026", file_url: undefined },
-        { id: "INV-003", vendor: "AllJobs Premium", date: "2026-02-20", dueDate: "2026-03-20", budgetMonth: "פברואר 2026", amount: 18500, category: "שיווק ופרסום", subcategory: "קמפיין ממומן", status: "ממתין למיפוי", note: "", fileUrl: undefined, due_date: "2026-03-20", budget_month: "פברואר 2026", file_url: undefined },
-      ]);
+      setLiveDataError("נתוני תקציב חיים אינם זמינים כרגע.");
+      setCategories([]);
+      setVendors([]);
+      setInvoices([]);
     } finally {
       setIsLoading(false);
     }
@@ -144,37 +156,63 @@ export default function UnifiedBudgetPage() {
 
   // --- פעולות שמירה ל-DB (CRUD) ---
   const handleSaveInvoice = async (invoice: Invoice) => {
-    if (invoice.category !== "כללי למיפוי" && invoice.status === "ממתין למיפוי") {
-      invoice.status = "ממתין לאישור הנהח״ש";
-    }
-    await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/finops/save_invoice`, {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(invoice)
+    const normalizedInvoice: Invoice = {
+      ...invoice,
+      budgetMonth: normalizeMonthToIso(invoice.budgetMonth ?? invoice.budget_month ?? ""),
+      status: invoice.category !== "כללי למיפוי" && invoice.status === "ממתין למיפוי"
+        ? "ממתין לאישור הנהח״ש"
+        : invoice.status,
+    };
+    const res = await fetch(`${getApiBaseUrl()}/api/finops/save_invoice`, {
+      method: "POST", headers: getAdminHeaders(),
+      body: JSON.stringify(normalizedInvoice)
     });
+    if (!res.ok) {
+      showToast("שמירת חשבונית נכשלה", "error");
+      return;
+    }
     setEditingInvoice(null);
+    showToast("החשבונית נשמרה בהצלחה", "success");
     fetchFinopsData(); 
   };
 
   const handleDeleteInvoice = async (id: string) => {
-    if (globalThis.confirm("מחיקת החשבונית היא לצמיתות (תירשם ביומן מערכת). לאשר?")) {
-      await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/finops/invoice/${id}`, { method: "DELETE" });
-      fetchFinopsData();
-    }
+    setConfirmDialog({
+      message: "מחיקת החשבונית היא לצמיתות (תירשם ביומן מערכת). לאשר?",
+      onConfirm: () => {
+        setConfirmDialog(null);
+        void (async () => {
+          const res = await fetch(`${getApiBaseUrl()}/api/finops/invoice/${id}`, { method: "DELETE", headers: getAdminHeaders() });
+          if (!res.ok) {
+            showToast("מחיקת חשבונית נכשלה", "error");
+            return;
+          }
+          showToast("החשבונית נמחקה", "success");
+          fetchFinopsData();
+        })();
+      },
+      onCancel: () => setConfirmDialog(null),
+    });
   };
 
   const handleSaveVendor = async (vendor: Partial<Vendor>) => {
     const newVendor = vendor.id ? vendor : { ...vendor, id: `v-${Date.now()}` };
-    await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/finops/save_vendor`, {
-      method: "POST", headers: { "Content-Type": "application/json" },
+    const res = await fetch(`${getApiBaseUrl()}/api/finops/save_vendor`, {
+      method: "POST", headers: getAdminHeaders(),
       body: JSON.stringify(newVendor)
     });
+    if (!res.ok) {
+      showToast("שמירת ספק נכשלה", "error");
+      return;
+    }
     setEditingVendor(null);
+    showToast("הספק נשמר בהצלחה", "success");
     fetchFinopsData();
   };
 
   const handleSaveCategoriesDB = async () => {
-    await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/finops/save_categories`, {
-      method: "POST", headers: { "Content-Type": "application/json" },
+    await fetch(`${getApiBaseUrl()}/api/finops/save_categories`, {
+      method: "POST", headers: getAdminHeaders(),
       body: JSON.stringify(categories)
     });
     setIsCategoryManagerOpen(false);
@@ -193,8 +231,9 @@ export default function UnifiedBudgetPage() {
       const formData = new FormData();
       formData.append("file", file);
 
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/finops/upload_invoice`, {
+      const res = await fetch(`${getApiBaseUrl()}/api/finops/upload_invoice`, {
         method: "POST",
+        headers: getAdminAuthHeader(),
         body: formData,
       });
 
@@ -248,17 +287,30 @@ export default function UnifiedBudgetPage() {
   const monthsElapsed = 2; 
   const monthlyRunRate = totalSpend / monthsElapsed;
   const remainingBudget = budgetTarget - totalSpend;
-  const monthsLeft = monthlyRunRate > 0 ? remainingBudget / monthlyRunRate : 0;
+  const monthsLeft = monthlyRunRate > 0 ? remainingBudget / monthlyRunRate : null;
   const today = new Date();
-  const estimatedEndMonth = new Date(today.getFullYear(), today.getMonth() + Math.floor(monthsLeft), 1).toLocaleDateString('he-IL', { month: 'long', year: 'numeric' });
+  const estimatedEndMonth = monthsLeft !== null
+    ? new Date(today.getFullYear(), today.getMonth() + Math.floor(monthsLeft), 1).toLocaleDateString('he-IL', { month: 'long', year: 'numeric' })
+    : null;
 
   // --- פונקציות קטגוריות מקומיות ---
   const updateCategory = (id: number, field: string, value: string | number) => setCategories(categories.map(c => c.id === id ? { ...c, [field]: value } : c));
   const addCategory = () => setCategories([...categories, { id: Date.now(), name: "קטגוריה חדשה", target: 0, previousYearSpend: 0, code: "NEW", notes: "", subcategories: ["כללי"] }]);
-  const deleteCategory = (id: number) => globalThis.confirm("למחוק?") && setCategories(categories.filter(c => c.id !== id));
+  const deleteCategory = (id: number) => {
+    setConfirmDialog({
+      message: "למחוק את הקטגוריה?",
+      onConfirm: () => {
+        setConfirmDialog(null);
+        setCategories(categories.filter(c => c.id !== id));
+      },
+      onCancel: () => setConfirmDialog(null),
+    });
+  };
   const addSubcategory = (catId: number) => {
-    const subName = prompt("הכנס שם תת-קטגוריה:");
-    if (subName) setCategories(categories.map(c => c.id === catId ? { ...c, subcategories: [...c.subcategories, subName] } : c));
+    const subName = (subcategoryDraft[catId] || "").trim();
+    if (!subName) return;
+    setCategories(categories.map(c => c.id === catId ? { ...c, subcategories: [...c.subcategories, subName] } : c));
+    setSubcategoryDraft((prev) => ({ ...prev, [catId]: "" }));
   };
   const removeSubcategory = (catId: number, subToRemove: string) => setCategories(categories.map(c => c.id === catId ? { ...c, subcategories: c.subcategories.filter((s: string) => s !== subToRemove) } : c));
 
@@ -270,24 +322,26 @@ export default function UnifiedBudgetPage() {
   return (
     <div className="max-w-7xl mx-auto space-y-6 animate-in fade-in duration-500 pb-20">
       
-      {/* Header */}
-      <div className="flex justify-between items-end">
-        <div>
-          <h1 className="text-3xl font-black text-[#002649] flex items-center gap-3">
-            ניהול תקציב (FinOps) <BadgeDollarSign className="text-[#EF6B00]" size={32} />
-          </h1>
-          <p className="text-slate-500 mt-2">
-            {isOfflineMode
-              ? <span className="inline-flex items-center gap-1.5 text-amber-600 font-semibold">⚠️ מצב לא מקוון — מוצגים נתוני הדגמה. הפעל את השרת לנתונים אמיתיים.</span>
-              : "אנליטיקה, תפעול חשבוניות וניהול ספקים (מסונכרן לשרת Live 🟢)"}
-          </p>
-        </div>
+      {/* Header (uniform PageHeader, sidebar-matching BadgeDollarSign icon) */}
+      <PageHeader
+        icon={<BadgeDollarSign size={28} strokeWidth={1.75} />}
+        title="ניהול תקציב (FinOps)"
+        subtitle={isOfflineMode
+          ? "⚠️ מצב לא מקוון — לא מוצגים נתוני דמה. חבר API לנתונים אמיתיים."
+          : "אנליטיקה, תפעול חשבוניות וניהול ספקים (מסונכרן לשרת Live)"}
+      />
+      <div className="flex justify-end">
         <div className="flex gap-2 bg-slate-100 p-1 rounded-xl overflow-x-auto">
           <TabBtn id="analytics" current={activeTab} onClick={setActiveTab} icon={<PieChart size={16}/>} label="דשבורד ואנליטיקה" />
           <TabBtn id="operations" current={activeTab} onClick={setActiveTab} icon={<Receipt size={16}/>} label="יומן ותפעול" alert={pendingInvoices.length} />
           <TabBtn id="vendors" current={activeTab} onClick={setActiveTab} icon={<Building2 size={16}/>} label="ספקים (CRM)" />
         </div>
       </div>
+      {liveDataError && (
+        <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-2 text-sm font-bold text-red-700">
+          {liveDataError}
+        </div>
+      )}
 
       {/* ========================================= */}
       {/* TAB 1: ANALYTICS & DRILL-DOWN */}
@@ -326,8 +380,14 @@ export default function UnifiedBudgetPage() {
               <div className="flex items-center gap-2 text-orange-800 mb-3 font-bold relative z-10"><TrendingUp size={18} /> קצב שריפת תקציב (Run Rate)</div>
               <div className="text-sm text-slate-700 leading-relaxed font-medium relative z-10">
                 ההוצאה החודשית הממוצעת עומדת על <strong>₪{monthlyRunRate.toLocaleString()}</strong>.<br/>
-                בקצב ההוצאות הנוכחי, התקציב שלך צפוי להסתיים ב-
-                <span className="font-black text-red-600 mr-1">{estimatedEndMonth}</span>.
+                {estimatedEndMonth ? (
+                  <>
+                    בקצב ההוצאות הנוכחי, התקציב שלך צפוי להסתיים ב-
+                    <span className="font-black text-red-600 mr-1">{estimatedEndMonth}</span>.
+                  </>
+                ) : (
+                  <span className="font-black text-slate-500">תחזית סיום תוצג לאחר הוצאות בפועל.</span>
+                )}
               </div>
               <button onClick={() => setIsCategoryManagerOpen(true)} className="mt-4 text-xs font-bold text-[#EF6B00] bg-orange-100 px-4 py-2 rounded-lg hover:bg-orange-200 w-fit relative z-10">
                 ניהול מילון ויעדי קטגוריות
@@ -674,9 +734,18 @@ export default function UnifiedBudgetPage() {
                         </span>
                       ))}
                       {cat.name !== "כללי למיפוי" && (
-                        <button onClick={() => addSubcategory(cat.id)} className="bg-blue-50 text-blue-600 text-xs font-bold px-3 py-1.5 rounded-full flex items-center gap-1 hover:bg-blue-100">
-                          <Plus size={14} /> הוסף
-                        </button>
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="text"
+                            value={subcategoryDraft[cat.id] || ""}
+                            onChange={(e) => setSubcategoryDraft((prev) => ({ ...prev, [cat.id]: e.target.value }))}
+                            className="text-xs px-2 py-1.5 border border-blue-200 rounded-lg outline-none"
+                            placeholder="שם תת-קטגוריה"
+                          />
+                          <button onClick={() => addSubcategory(cat.id)} className="bg-blue-50 text-blue-600 text-xs font-bold px-3 py-1.5 rounded-full flex items-center gap-1 hover:bg-blue-100">
+                            <Plus size={14} /> הוסף
+                          </button>
+                        </div>
                       )}
                     </div>
                   </div>
@@ -715,7 +784,7 @@ export default function UnifiedBudgetPage() {
                 <label className="block text-xs font-bold text-[#EF6B00] mb-1 flex items-center gap-1">
                   <CalendarDays size={14}/> חודש שיוך תקציבי (Accrual)
                 </label>
-                <input type="month" value={editingInvoice.budgetMonth || ""} onChange={e => setEditingInvoice({...editingInvoice, budgetMonth: e.target.value})} className="w-full p-2 border border-[#EF6B00] bg-orange-50/30 rounded-lg font-bold text-[#002649] outline-none" />
+                <input type="month" value={normalizeMonthToIso(editingInvoice.budgetMonth || "")} onChange={e => setEditingInvoice({...editingInvoice, budgetMonth: e.target.value})} className="w-full p-2 border border-[#EF6B00] bg-orange-50/30 rounded-lg font-bold text-[#002649] outline-none" />
               </div>
 
               <div className="col-span-2 md:col-span-1 mt-2">
@@ -762,11 +831,25 @@ export default function UnifiedBudgetPage() {
              </div>
              <div className="w-full flex-1 bg-slate-100 flex items-center justify-center overflow-auto p-4">
                 {viewingImage ? (
-                  <iframe src={`${process.env.NEXT_PUBLIC_API_URL}/${viewingImage}`} className="w-full h-[70vh] border-0 rounded-lg shadow-sm" title="Invoice Document"/>
+                  <iframe src={`${getApiBaseUrl()}/${viewingImage}`} sandbox="allow-same-origin" className="w-full h-[70vh] border-0 rounded-lg shadow-sm" title="Invoice Document"/>
                 ) : (
                   <div className="text-slate-400 font-bold">לא צורף מסמך מקור (חשבונית הוקלדה ידנית)</div>
                 )}
              </div>
+          </div>
+        </div>
+      )}
+      {confirmDialog && (
+        <div className="fixed inset-0 z-[220] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-md rounded-2xl bg-white border border-slate-200 shadow-2xl overflow-hidden">
+            <div className="p-5 border-b border-slate-100">
+              <h3 className="text-lg font-black text-[#002649]">אישור פעולה</h3>
+              <p className="text-sm text-slate-600 mt-2">{confirmDialog.message}</p>
+            </div>
+            <div className="p-4 bg-slate-50 flex justify-end gap-3">
+              <button onClick={confirmDialog.onCancel} className="px-4 py-2 rounded-lg font-bold text-slate-600 hover:bg-slate-200">ביטול</button>
+              <button onClick={confirmDialog.onConfirm} className="px-5 py-2 rounded-lg font-bold text-white bg-[#002649] hover:bg-[#EF6B00]">אישור</button>
+            </div>
           </div>
         </div>
       )}

@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from "react";
 import { useToast } from "@/components/Toast";
+import { getAdminHeaders, getApiBaseUrl } from "@/lib/api";
 import { 
   UserPlus, ShieldCheck,
   PlusCircle, CheckCircle2, CheckSquare, Settings,
@@ -10,11 +11,27 @@ import {
 
 interface OnboardingTask { id: number; text: string; done: boolean }
 
-export default function SmartOnboarding() {
+interface SmartOnboardingProps {
+  /** Called after the wizard reaches the success screen and the user dismisses
+   * it. When provided, the success-screen CTA closes the wizard instead of
+   * resetting it; when omitted, the wizard resets to step 1 (legacy behaviour
+   * inside /ai-hub). */
+  onClose?: () => void;
+  /** Fired once after a successful submit so the host page can refresh its
+   * onboarding list without waiting for a manual reload. */
+  onSubmitted?: () => void;
+}
+
+export default function SmartOnboarding({ onClose, onSubmitted }: SmartOnboardingProps = {}) {
   const { showToast } = useToast();
   const [step, setStep] = useState(1);
   const [isSaving, setIsSaving] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [confirmDialog, setConfirmDialog] = useState<{
+    message: string;
+    onConfirm: () => void;
+    onCancel: () => void;
+  } | null>(null);
 
   const [formData, setFormData] = useState({
     firstName: "", lastName: "", idNum: "", startDate: "",
@@ -65,7 +82,15 @@ export default function SmartOnboarding() {
     }
     if (step === 3) {
       if (tasks.some(t => !t.done)) {
-        if (!globalThis.confirm("לא סימנת את כל משימות החובה בצ׳קליסט. האם להמשיך בכל זאת?")) return;
+        setConfirmDialog({
+          message: "לא סימנת את כל משימות החובה בצ׳קליסט. האם להמשיך בכל זאת?",
+          onConfirm: () => {
+            setConfirmDialog(null);
+            setStep((prev) => prev + 1);
+          },
+          onCancel: () => setConfirmDialog(null),
+        });
+        return;
       }
     }
     setStep(step + 1);
@@ -75,20 +100,19 @@ export default function SmartOnboarding() {
     if (!cvFile) { showToast("חובה להעלות קורות חיים לפני סיום התהליך", "error"); return; }
     setIsSaving(true);
     try {
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/onboarding`, {
+      const res = await fetch(`${getApiBaseUrl()}/api/onboarding`, {
         method: 'POST', 
-        headers: { 'Content-Type': 'application/json' }, 
+        headers: getAdminHeaders(), 
         body: JSON.stringify({ ...formData, checklist: tasks, files: { cv: cvFile.name, others: otherFiles.map(f=>f.name) } })
       });
       const data = await res.json();
-      if(data.status === "success") { 
-        setStep(5);
+      if (!res.ok || data.status !== "success") {
+        throw new Error((data as { detail?: string })?.detail || "שמירת הקליטה נכשלה");
       }
-    } catch {
-      // Backend offline — simulate success for demo
-      console.warn("[Onboarding] Backend offline — using mock success");
-      showToast("המערכת במצב הדגמה — הנתונים נשמרו לוקלית", "info");
       setStep(5);
+      onSubmitted?.();
+    } catch {
+      showToast("שגיאה בשיגור הקליטה. הנתונים לא נשמרו בשרת — נסה שוב.", "error");
     } finally {
       setIsSaving(false);
     }
@@ -296,7 +320,13 @@ export default function SmartOnboarding() {
             <h2 className="text-5xl font-black text-[#002649] mb-4">הקליטה שוגרה בהצלחה!</h2>
             <p className="text-slate-500 mb-12 max-w-2xl text-xl leading-relaxed">תיק העובד עבור {formData.firstName} {formData.lastName} הועבר למערכות התפעול. משימות הצ׳קליסט נרשמו ביומן, והתראות נשלחו למחלקות.</p>
             <div className="flex gap-4">
-              <button onClick={() => {setStep(1); setCvFile(null); setOtherFiles([]);}} className="bg-[#EF6B00] text-white px-10 py-5 rounded-2xl font-black text-xl shadow-xl hover:bg-[#d65a00] transition-colors">התחל קליטת עובד חדש</button>
+              {onClose ? (
+                // Modal mode (called from /candidates) — finish closes the popup.
+                <button onClick={onClose} className="bg-[#EF6B00] text-white px-10 py-5 rounded-2xl font-black text-xl shadow-xl hover:bg-[#d65a00] transition-colors">סיום</button>
+              ) : (
+                // Standalone mode (/ai-hub) — start a new wizard run in place.
+                <button onClick={() => {setStep(1); setCvFile(null); setOtherFiles([]);}} className="bg-[#EF6B00] text-white px-10 py-5 rounded-2xl font-black text-xl shadow-xl hover:bg-[#d65a00] transition-colors">התחל קליטת עובד חדש</button>
+              )}
             </div>
           </div>
         )}
@@ -305,17 +335,31 @@ export default function SmartOnboarding() {
       {step < 5 && (
         <div className="border-t border-slate-200 bg-slate-50 p-8 rounded-b-3xl flex justify-between items-center w-full mt-auto">
           <button onClick={() => setStep(step - 1)} disabled={step === 1 || isSaving} className="px-8 py-4 rounded-xl font-bold text-slate-500 hover:bg-slate-200 transition-colors disabled:opacity-30 flex items-center gap-2 text-lg">
-            <ChevronRight size={20}/> חזרה
+            <ChevronLeft size={20}/> חזרה
           </button>
           {step < 4 ? (
             <button onClick={nextStep} className="bg-[#002649] text-white px-14 py-4 rounded-xl font-black text-lg shadow-xl hover:bg-blue-800 transition-colors flex items-center gap-3">
-              לשלב הבא <ChevronLeft size={20}/>
+              לשלב הבא <ChevronRight size={20}/>
             </button>
           ) : (
             <button onClick={handleLaunch} disabled={isSaving || !cvFile} className="bg-[#EF6B00] text-white px-14 py-4 rounded-xl font-black text-lg shadow-xl hover:bg-[#d65a00] transition-colors flex items-center gap-3 disabled:opacity-50 disabled:cursor-not-allowed">
               {isSaving ? <span className="animate-pulse">משגר קליטה למערכות...</span> : 'אישור ושיגור קליטה'} <Mail size={20}/>
             </button>
           )}
+        </div>
+      )}
+      {confirmDialog && (
+        <div className="fixed inset-0 z-[150] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-md rounded-2xl bg-white border border-slate-200 shadow-2xl overflow-hidden">
+            <div className="p-5 border-b border-slate-100">
+              <h3 className="text-lg font-black text-[#002649]">אישור פעולה</h3>
+              <p className="text-sm text-slate-600 mt-2">{confirmDialog.message}</p>
+            </div>
+            <div className="p-4 bg-slate-50 flex justify-end gap-3">
+              <button onClick={confirmDialog.onCancel} className="px-4 py-2 rounded-lg font-bold text-slate-600 hover:bg-slate-200">ביטול</button>
+              <button onClick={confirmDialog.onConfirm} className="px-5 py-2 rounded-lg font-bold text-white bg-[#002649] hover:bg-[#EF6B00]">המשך</button>
+            </div>
+          </div>
         </div>
       )}
     </div>

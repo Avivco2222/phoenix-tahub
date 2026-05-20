@@ -1,12 +1,14 @@
 "use client";
 
-import React, { useState, useMemo } from "react";
+import React, { useEffect, useState, useMemo } from "react";
 import { 
   Building2, Briefcase, TrendingDown, 
   CheckCircle2, Search, Download, 
   RotateCcw, Info, Sparkles, X, Layers, Target, Scale,
   History, LayoutList
 } from "lucide-react";
+import { formatDateHe } from "@/lib/dates";
+import { PageHeader } from "@/components/PageHeader";
 import { 
   AreaChart, Area, XAxis, YAxis, CartesianGrid, 
   Tooltip as RechartsTooltip, ResponsiveContainer, 
@@ -50,76 +52,44 @@ interface StatCardProps {
   icon: React.ReactNode;
 }
 
-// --- MOCK DATA ---
-const YEARLY_TREND_DATA = [
-  { month: 'ינ', opens: 12, hires: 10, prevYearHires: 8 },
-  { month: 'פב', opens: 15, hires: 12, prevYearHires: 14 },
-  { month: 'מר', opens: 18, hires: null, prevYearHires: 16 },
-  { month: 'אפ', opens: 14, hires: null, prevYearHires: 11 },
-  { month: 'מאי', opens: 22, hires: null, prevYearHires: 19 },
-  { month: 'יונ', opens: 25, hires: null, prevYearHires: 22 },
-  { month: 'יול', opens: 19, hires: null, prevYearHires: 20 },
-  { month: 'אוג', opens: 28, hires: null, prevYearHires: 24 },
-  { month: 'ספ', opens: 15, hires: null, prevYearHires: 13 },
-  { month: 'אוק', opens: 32, hires: null, prevYearHires: 28 },
-  { month: 'נוב', opens: 30, hires: null, prevYearHires: 26 },
-  { month: 'דצ', opens: 38, hires: null, prevYearHires: 30 },
-];
+// --- LEGACY MOCK PLACEHOLDERS ---
+// These were inlined fixture arrays for an earlier UI iteration. The new
+// implementation populates `rawHeadcountData` from /api/headcount at runtime;
+// the placeholders below remain only because charts (yearly trend, sector pie)
+// haven't yet been wired to real sources — they render empty when empty.
+const YEARLY_TREND_DATA: Array<{ month: string; opens: number; hires: number | null; prevYearHires: number }> = [];
+const SECTOR_DISTRIBUTION: Array<{ name: string; value: number; color: string }> = [];
+const MONTHLY_GROWTH: Array<{ month: string; growth: number }> = [];
+const MOCK_TEAMS_ROLES: Record<string, TeamData> = {};
 
-const RAW_HEADCOUNT_DATA = [
-  { unit: "אגף ייעוץ משפטי", dept: "מטה", standard: 13, current: 11, open: 1, attrition: 6, hires: 6, sector: "Professional" },
-  { unit: "מוקדי שירות", dept: "Service", standard: 27, current: 25, open: 5, attrition: 38, hires: 37, sector: "Mass" },
-  { unit: "חטיבת טכנולוגיה (R&D)", dept: "IT", standard: 352, current: 351, open: 9, attrition: 36, hires: 34, sector: "Tech" },
-  { unit: "מערך תביעות רכוש", dept: "תביעות", standard: 446, current: 429, open: 23, attrition: 78, hires: 137, sector: "Professional" },
-  { unit: "מוקדי מכירות", dept: "Service", standard: 50, current: 55, open: 2, attrition: 45, hires: 50, sector: "Mass" }, 
-  { unit: "כספים", dept: "מטה", standard: 189, current: 186, open: 3, attrition: 34, hires: 47, sector: "Professional" },
-];
-
-const SECTOR_DISTRIBUTION = [
-  { name: 'מסה / קו', value: 55, color: '#002649' },
-  { name: 'מקצועי / מטה', value: 30, color: '#EF6B00' },
-  { name: 'טכנולוגי / בכיר', value: 15, color: '#3b82f6' },
-];
-
-const MONTHLY_GROWTH = [
-  { month: 'ינ', growth: 2 },
-  { month: 'פב', growth: -3 },
-  { month: 'מר', growth: 5 },
-  { month: 'אפ', growth: 6 },
-];
-
-const MOCK_TEAMS_ROLES: Record<string, TeamData> = {
-  "כספים": {
-    teams: [
-      { name: "צוות כלכלני מטה", role: "כלכלן בכיר", standard: 5, current: 3, gap: -2 },
-      { name: "ניהול חשבונות", role: "רכז/ת הנהלת חשבונות", standard: 12, current: 14, gap: 2 },
-    ],
-    trend: [
-      { month: 'דצ', opens: 2, hires: 1 },
-      { month: 'ינ', opens: 4, hires: 3 },
-      { month: 'פב', opens: 1, hires: 2 },
-    ]
-  },
-  "מוקדי מכירות": {
-    teams: [
-      { name: "צוות מכירות דרום", role: "נציג/ת מכירות", standard: 20, current: 24, gap: 4 },
-      { name: "צוות מכירות צפון", role: "נציג/ת מכירות", standard: 30, current: 31, gap: 1 },
-    ],
-    trend: [
-      { month: 'דצ', opens: 10, hires: 8 },
-      { month: 'ינ', opens: 12, hires: 10 },
-      { month: 'פב', opens: 15, hires: 12 },
-    ]
-  }
-};
+interface HeadcountApiRow {
+  snapshot_month: string;
+  department: string;
+  role: string;
+  standard: number;
+  current: number;
+  attrition_ytd: number;
+  hire_plan: number;
+  gap: number;
+}
 
 export default function HeadcountDashboard() {
+  const apiBase = process.env.NEXT_PUBLIC_API_URL ?? "";
+  const strictLiveData = true;
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedUnit, setSelectedUnit] = useState<OrgUnit | null>(null);
   const [showPrevYear, setShowPrevYear] = useState(true);
+  const [liveOpenJobs, setLiveOpenJobs] = useState<number | null>(null);
+  const [liveHires, setLiveHires] = useState<number | null>(null);
+  const [liveDataError, setLiveDataError] = useState<string | null>(null);
+  const [rawHeadcountData, setRawHeadcountData] = useState<OrgUnit[]>([]);
+  const [latestMonth, setLatestMonth] = useState<string | null>(null);
 
   // חישובים ואלגוריתמים
-  const calculateVolatility = (attrition: number, standard: number) => Math.round((attrition / standard) * 100);
+  const calculateVolatility = (attrition: number, standard: number) => {
+    if (!standard || standard <= 0) return 0;
+    return Math.round((attrition / standard) * 100);
+  };
 
   const getForecastStatus = (current: number, open: number, standard: number) => {
     const forecast = current + open;
@@ -129,43 +99,126 @@ export default function HeadcountDashboard() {
     return { label: "תקין", color: "text-slate-500 bg-slate-50 border-slate-200" };
   };
 
-  const filteredData = RAW_HEADCOUNT_DATA.filter(row => row.unit.includes(searchTerm));
+  const normalizedSearch = searchTerm.trim().toLowerCase();
+  const filteredData = rawHeadcountData.filter((row) => {
+    if (!normalizedSearch) return true;
+    return (
+      row.unit.toLowerCase().includes(normalizedSearch) ||
+      row.dept.toLowerCase().includes(normalizedSearch)
+    );
+  });
+
+  const escapeCsvValue = (value: string | number) => {
+    const text = String(value ?? "");
+    return `"${text.replaceAll("\"", "\"\"")}"`;
+  };
+
+  const handleDownload = () => {
+    const headers = "יחידה,מחלקה,תקן,מצבה,פער,משרות פתוחות,עזיבות,קליטות\n";
+    const rows = filteredData.map((row) => [
+      escapeCsvValue(row.unit),
+      escapeCsvValue(row.dept),
+      escapeCsvValue(row.standard),
+      escapeCsvValue(row.current),
+      escapeCsvValue(row.current - row.standard),
+      escapeCsvValue(row.open),
+      escapeCsvValue(row.attrition),
+      escapeCsvValue(row.hires),
+    ].join(",")).join("\n");
+    const blob = new Blob(["\ufeff" + headers + rows], { type: "text/csv;charset=utf-8;" });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = "Phoenix_Headcount_Report.csv";
+    link.click();
+  };
 
   const totals = useMemo(() => ({
-    opens: RAW_HEADCOUNT_DATA.reduce((acc, curr) => acc + curr.open, 0),
-    hires: RAW_HEADCOUNT_DATA.reduce((acc, curr) => acc + curr.hires, 0),
-    attrition: RAW_HEADCOUNT_DATA.reduce((acc, curr) => acc + curr.attrition, 0),
-    avgVolatility: RAW_HEADCOUNT_DATA.length ? Math.round(RAW_HEADCOUNT_DATA.reduce((acc, curr) => acc + calculateVolatility(curr.attrition, curr.standard), 0) / RAW_HEADCOUNT_DATA.length) : 0
-  }), []);
+    opens: rawHeadcountData.reduce((acc, curr) => acc + curr.open, 0),
+    hires: rawHeadcountData.reduce((acc, curr) => acc + curr.hires, 0),
+    attrition: rawHeadcountData.reduce((acc, curr) => acc + curr.attrition, 0),
+    avgVolatility: rawHeadcountData.length ? Math.round(rawHeadcountData.reduce((acc, curr) => acc + calculateVolatility(curr.attrition, curr.standard), 0) / rawHeadcountData.length) : 0
+  }), [rawHeadcountData]);
+
+  useEffect(() => {
+    const loadLive = async () => {
+      try {
+        setLiveDataError(null);
+        const [statsRes, jobsRes, hcRes] = await Promise.all([
+          fetch(`${apiBase}/stats`, { cache: "no-store" }),
+          fetch(`${apiBase}/jobs`, { cache: "no-store" }),
+          fetch(`${apiBase}/api/headcount`, { cache: "no-store", credentials: "include" }),
+        ]);
+        if (statsRes.ok) {
+          const stats = await statsRes.json();
+          setLiveHires(Number(stats?.hired_this_month ?? 0));
+        }
+        if (jobsRes.ok) {
+          const jobs = await jobsRes.json();
+          setLiveOpenJobs(Array.isArray(jobs) ? jobs.length : 0);
+        }
+        if (hcRes.ok) {
+          const payload = await hcRes.json();
+          const months: string[] = payload?.months ?? [];
+          const latest = months[0] ?? null;
+          setLatestMonth(latest);
+          // Filter to the most recent snapshot month so the dashboard shows a
+          // coherent point-in-time picture instead of mixing multiple snapshots.
+          const rows: HeadcountApiRow[] = Array.isArray(payload?.data) ? payload.data : [];
+          const filtered = latest ? rows.filter(r => r.snapshot_month === latest) : rows;
+          const mapped: OrgUnit[] = filtered.map(r => ({
+            unit: r.role || "—",
+            dept: r.department || "—",
+            sector: r.department || "—",
+            standard: r.standard || 0,
+            current: r.current || 0,
+            open: r.hire_plan || 0,
+            attrition: r.attrition_ytd || 0,
+            hires: 0, // future: cross-join /api/hires for the same month
+          }));
+          setRawHeadcountData(mapped);
+        }
+      } catch {
+        setLiveDataError("Live headcount API unavailable");
+        if (strictLiveData) {
+          setLiveOpenJobs(0);
+          setLiveHires(0);
+        }
+      }
+    };
+    loadLive();
+  }, [apiBase, strictLiveData]);
 
   return (
     <div className="w-full min-h-screen bg-slate-50/50 pb-20 text-right overflow-x-hidden" dir="rtl">
       
-      {/* --- HEADER --- */}
-      <div className="sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b border-slate-200 px-8 py-4 shadow-sm">
-        <div className="max-w-[1600px] mx-auto flex justify-between items-center">
-          <div className="flex items-center gap-3">
-             <div className="p-2 bg-[#002649] text-white rounded-xl shadow-md"><LayoutList size={22} /></div>
-             <div>
-                <h1 className="text-xl font-black text-[#002649]">דוח שליטה ארגוני (Headcount)</h1>
-                <p className="text-slate-400 font-bold text-[10px] uppercase tracking-wider">מבט על תקינה, צפי חריגה ותנודות כוח אדם</p>
-             </div>
-          </div>
-          <div className="flex items-center gap-4">
-            <div className="relative group">
-              <Search className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" size={14} />
-              <input 
-                type="text" placeholder="חפש יחידה..." 
-                className="pr-9 pl-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold outline-none w-56 transition-all focus:bg-white focus:ring-2 ring-[#EF6B00]/10"
-                value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)}
-              />
-            </div>
-            <button className="p-2 bg-[#002649] text-white rounded-lg hover:bg-[#EF6B00] transition-all"><Download size={16} /></button>
-          </div>
-        </div>
+      {/* --- HEADER (uniform PageHeader) --- */}
+      <div className="max-w-[1600px] mx-auto px-8 pt-6">
+        <PageHeader
+          icon={<Building2 size={28} strokeWidth={1.75} />}
+          title="דוח שליטה ארגוני"
+          subtitle={`מבט על תקינה, צפי חריגה ותנודות כוח אדם · נכון ל-${formatDateHe(new Date())}`}
+          actions={
+            <>
+              <div className="relative group">
+                <Search className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" size={14} />
+                <input
+                  type="text" placeholder="חפש יחידה..."
+                  className="pr-9 pl-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold outline-none w-56 transition-all focus:bg-white focus:ring-2 ring-[#EF6B00]/10"
+                  value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)}
+                />
+              </div>
+              <button onClick={handleDownload} className="p-2 bg-[#002649] text-white rounded-lg hover:bg-[#EF6B00] transition-all"><Download size={16} /></button>
+            </>
+          }
+        />
       </div>
 
       <div className="max-w-[1600px] mx-auto px-8 py-6 space-y-8">
+        {strictLiveData && liveDataError && (
+          <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-2 text-xs font-bold text-red-700">
+            מצב Live קשיח פעיל: נתוני headcount חיים לא זמינים כרגע.
+          </div>
+        )}
         
         {/* --- LAYER 1: KPI CARDS --- */}
         <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
@@ -175,12 +228,12 @@ export default function HeadcountDashboard() {
               <Sparkles size={14} className="text-[#EF6B00]" />
               <span className="text-[10px] font-black uppercase text-blue-200">AI Sentinel Insight</span>
             </div>
-            <p className="text-[11px] font-bold leading-snug relative z-10 text-blue-50">זיהוי חריגה: ב-"מוקדי מכירות" קיימת חריגה של 5 תקנים. מומלץ לעצור זימונים.</p>
+            <p className="text-[11px] font-bold leading-snug relative z-10 text-blue-50">זיהוי חריגה: ב-&quot;מוקדי מכירות&quot; קיימת חריגה של 5 תקנים. מומלץ לעצור זימונים.</p>
           </div>
           <StatCard label="דלת מסתובבת" value={`${totals.avgVolatility}%`} icon={<RotateCcw className="text-orange-500"/>} />
           <StatCard label="עזיבות" value={totals.attrition} icon={<TrendingDown className="text-red-500"/>} />
-          <StatCard label="קליטות בפועל" value={totals.hires} icon={<CheckCircle2 className="text-green-500"/>} />
-          <StatCard label="משרות שנפתחו" value={totals.opens} icon={<Briefcase className="text-blue-500"/>} />
+          <StatCard label="קליטות בפועל" value={liveHires ?? totals.hires} icon={<CheckCircle2 className="text-green-500"/>} />
+          <StatCard label="משרות שנפתחו" value={liveOpenJobs ?? totals.opens} icon={<Briefcase className="text-blue-500"/>} />
         </div>
 
         {/* --- LAYER 2: HEADCOUNT MATRIX --- */}
@@ -221,6 +274,13 @@ export default function HeadcountDashboard() {
                     </tr>
                   );
                 })}
+                {filteredData.length === 0 && (
+                  <tr>
+                    <td colSpan={7} className="px-6 py-10 text-center text-sm font-bold text-slate-400">
+                      לא נמצאו תוצאות עבור החיפוש הנוכחי.
+                    </td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>
@@ -322,7 +382,7 @@ export default function HeadcountDashboard() {
                   <h4 className="text-xs font-black text-[#002649] mb-4">מגמת גיוס יחידתית - 3 חודשים אחרונים</h4>
                   <div className="h-[120px]">
                     <ResponsiveContainer width="100%" height="100%">
-                        <LineChart data={MOCK_TEAMS_ROLES[selectedUnit.unit]?.trend || MOCK_TEAMS_ROLES["כספים"].trend}>
+                        <LineChart data={MOCK_TEAMS_ROLES[selectedUnit.unit]?.trend || []}>
                             <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
                             <XAxis dataKey="month" axisLine={false} tickLine={false} tick={{fontSize: 9}} />
                             <YAxis axisLine={false} tickLine={false} tick={{fontSize: 9}} />
@@ -333,34 +393,41 @@ export default function HeadcountDashboard() {
                     </ResponsiveContainer>
                   </div>
               </div>
-              <div className="border border-slate-200 rounded-xl overflow-hidden">
-                <table className="w-full text-right text-xs">
-                  <thead className="bg-slate-50 border-b border-slate-100">
-                    <tr className="text-[10px] font-black text-slate-400 uppercase">
-                      <th className="px-6 py-3">צוות (רמה 4)</th>
-                      <th className="px-6 py-3">עיסוק</th>
-                      <th className="px-6 py-3 text-center">תקינה</th>
-                      <th className="px-6 py-3 text-center">מצבה</th>
-                      <th className="px-6 py-3 text-center">פער</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-50">
-                    {(MOCK_TEAMS_ROLES[selectedUnit.unit]?.teams || MOCK_TEAMS_ROLES["כספים"].teams).map((item: TeamRole, i: number) => (
-                      <tr key={i} className="hover:bg-slate-50/50">
-                        <td className="px-6 py-3 font-bold text-slate-700">{item.name}</td>
-                        <td className="px-6 py-3 font-black text-[#002649]">{item.role}</td>
-                        <td className="px-6 py-3 text-center">{item.standard}</td>
-                        <td className="px-6 py-3 text-center">{item.current}</td>
-                        <td className="px-6 py-3 text-center">
-                          <span className={`px-2 py-0.5 rounded font-black text-[10px] ${item.gap < 0 ? 'bg-red-50 text-red-600' : item.gap > 0 ? 'bg-purple-50 text-purple-600' : 'bg-green-50 text-green-600'}`}>
-                            {item.gap}
-                          </span>
-                        </td>
+              {(MOCK_TEAMS_ROLES[selectedUnit.unit]?.teams || []).length === 0 ? (
+                <div className="border border-slate-200 rounded-xl p-8 text-center bg-slate-50/60">
+                  <div className="font-black text-[#002649]">אין עדיין נתוני צוותים ליחידה זו</div>
+                  <div className="text-xs text-slate-500 mt-2">לא מוצגים נתוני fallback מחטיבה אחרת כדי למנוע החלטות שגויות.</div>
+                </div>
+              ) : (
+                <div className="border border-slate-200 rounded-xl overflow-hidden">
+                  <table className="w-full text-right text-xs">
+                    <thead className="bg-slate-50 border-b border-slate-100">
+                      <tr className="text-[10px] font-black text-slate-400 uppercase">
+                        <th className="px-6 py-3">צוות (רמה 4)</th>
+                        <th className="px-6 py-3">עיסוק</th>
+                        <th className="px-6 py-3 text-center">תקינה</th>
+                        <th className="px-6 py-3 text-center">מצבה</th>
+                        <th className="px-6 py-3 text-center">פער</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+                    </thead>
+                    <tbody className="divide-y divide-slate-50">
+                      {(MOCK_TEAMS_ROLES[selectedUnit.unit]?.teams || []).map((item: TeamRole, i: number) => (
+                        <tr key={i} className="hover:bg-slate-50/50">
+                          <td className="px-6 py-3 font-bold text-slate-700">{item.name}</td>
+                          <td className="px-6 py-3 font-black text-[#002649]">{item.role}</td>
+                          <td className="px-6 py-3 text-center">{item.standard}</td>
+                          <td className="px-6 py-3 text-center">{item.current}</td>
+                          <td className="px-6 py-3 text-center">
+                            <span className={`px-2 py-0.5 rounded font-black text-[10px] ${item.gap < 0 ? 'bg-red-50 text-red-600' : item.gap > 0 ? 'bg-purple-50 text-purple-600' : 'bg-green-50 text-green-600'}`}>
+                              {item.gap}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
           </div>
         </div>

@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { Lock, ShieldCheck } from "lucide-react";
+import { getApiBaseUrl } from "@/lib/api";
 
 const TIMEOUT_MS = 20 * 60 * 1000;
 
@@ -70,15 +71,30 @@ export default function SessionGuard() {
 
   const handleUnlock = (e: React.FormEvent) => {
     e.preventDefault();
-    if (password === "222222") {
-      setIsLocked(false);
-      setPassword("");
-      setError("");
-      logAuthEvent("SESSION_RESTORED", "session resumed by user");
-    } else {
-      setError("סיסמה שגויה. נסה שוב.");
-      logAuthEvent("UNLOCK_FAILED", "invalid unlock attempt");
-    }
+    void (async () => {
+      try {
+        const apiUrl = getApiBaseUrl();
+        // Unified-password flow: send the cookie so the backend can resolve
+        // the user's email from the session and verify against users.password_hash.
+        // Same credentials as login / /admin/security — no separate PIN.
+        const res = await fetch(`${apiUrl}/api/auth/unlock`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({ password }),
+        });
+        if (!res.ok) {
+          throw new Error("invalid password");
+        }
+        setIsLocked(false);
+        setPassword("");
+        setError("");
+        logAuthEvent("SESSION_RESTORED", "session resumed by user");
+      } catch {
+        setError("סיסמה שגויה. נסה שוב.");
+        logAuthEvent("UNLOCK_FAILED", "invalid unlock attempt");
+      }
+    })();
   };
 
   return (
