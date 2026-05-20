@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<records schema_version="1.0">
+  <row>
+    <name>Jane Doe</name>
+    <email>jane@example.com</email>
+    <job_title>Backend Developer</job_title>
+    <status>חדש</status>
+    <recruiter>מור אהרון</recruiter>
+    <start_date>2026-05-01</start_date>
+    <department>R&amp;D</department>
+    <source>LinkedIn</source>
+  </row>
+</records>

@@ -1,0 +1,21 @@
+[Unit]
+Description=Phoenix Talent OS Backend (FastAPI)
+After=network.target
+
+[Service]
+Type=simple
+User=phoenix
+WorkingDirectory=/opt/phoenix/backend
+EnvironmentFile=/opt/phoenix/backend/.env
+ExecStart=/opt/phoenix/backend/scripts/start.sh
+Restart=on-failure
+RestartSec=5
+# Hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/opt/phoenix/backend /var/backups/phoenix
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

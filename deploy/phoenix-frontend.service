@@ -1,0 +1,20 @@
+[Unit]
+Description=Phoenix Talent OS Frontend (Next.js)
+After=network.target phoenix-backend.service
+
+[Service]
+Type=simple
+User=phoenix
+WorkingDirectory=/opt/phoenix/phoenix-dashboard
+EnvironmentFile=/opt/phoenix/phoenix-dashboard/.env.production
+ExecStart=/usr/bin/npm run start -- --port 3000 --hostname 127.0.0.1
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/opt/phoenix/phoenix-dashboard
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target
