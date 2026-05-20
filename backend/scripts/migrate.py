@@ -1,6 +1,10 @@
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
+
+
+def _utcnow_iso() -> str:
+    return datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
 
 
 DB_PATH = Path(__file__).resolve().parent.parent / "phoenix_enterprise.db"
@@ -36,7 +40,7 @@ def apply_migrations() -> None:
             conn.executescript(sql)
             conn.execute(
                 "INSERT INTO schema_migrations (filename, applied_at) VALUES (?, ?)",
-                (migration.name, datetime.utcnow().isoformat()),
+                (migration.name, _utcnow_iso()),
             )
             conn.commit()
             print(f"Applied migration: {migration.name}")

@@ -92,9 +92,55 @@ MAX_UPLOAD_MB = int(os.getenv("MAX_UPLOAD_MB", "10"))
 MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024
 auth_scheme = HTTPBearer(auto_error=False)
 
-# In-memory token blacklist for server-side logout invalidation.
-# Format: {jti_or_token_sig: expiry_timestamp}. Cleaned up on each check.
+# JWT revocation list is persisted in the `revoked_tokens` table (see init_db).
+# The in-memory dict is kept as a fallback when a DB write fails so logout
+# semantics still hold for the current process.
 _REVOKED_TOKENS: dict[str, int] = {}
+
+
+def _utcnow() -> datetime:
+    # Drop-in replacement for the deprecated datetime.utcnow().
+    # Returns naive UTC so .isoformat() output matches legacy format
+    # (no "+00:00" suffix) and existing string comparisons keep working.
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def _revoke_token_signature(signature: str, exp: int) -> None:
+    """Persist a revoked JWT signature until its original exp."""
+    try:
+        conn = sqlite3.connect(shared_config.DB_NAME)
+        try:
+            conn.execute(
+                "INSERT OR REPLACE INTO revoked_tokens (signature, exp, revoked_at) VALUES (?, ?, ?)",
+                (signature, int(exp), _utcnow().isoformat()),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+    except sqlite3.Error as e:
+        logger.error(f"Failed to persist revoked token, falling back to memory: {e}")
+        _REVOKED_TOKENS[signature] = int(exp)
+
+
+def _is_token_revoked(signature: str, now_ts: int) -> bool:
+    """Check the DB blacklist (with opportunistic cleanup) plus in-memory fallback."""
+    if signature in _REVOKED_TOKENS:
+        return True
+    try:
+        conn = sqlite3.connect(shared_config.DB_NAME)
+        try:
+            conn.execute("DELETE FROM revoked_tokens WHERE exp <= ?", (now_ts,))
+            conn.commit()
+            row = conn.execute(
+                "SELECT 1 FROM revoked_tokens WHERE signature = ? LIMIT 1",
+                (signature,),
+            ).fetchone()
+            return row is not None
+        finally:
+            conn.close()
+    except sqlite3.Error as e:
+        logger.warning(f"Revoked-token lookup failed: {e}")
+        return False
 
 
 class RequestLoggerAdapter(logging.LoggerAdapter):
@@ -158,16 +204,11 @@ def _decode_jwt(token: str) -> dict:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token signature")
     payload = json.loads(_b64url_decode(payload_segment).decode("utf-8"))
     exp = int(payload.get("exp", 0))
-    now_ts = int(datetime.utcnow().timestamp())
+    now_ts = int(_utcnow().timestamp())
     if exp and now_ts >= exp:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token expired")
-    # Check server-side revocation blacklist
-    token_key = signature_segment  # use signature as unique identifier
-    # Purge stale entries to keep memory bounded
-    stale = [k for k, ex in _REVOKED_TOKENS.items() if now_ts > ex]
-    for k in stale:
-        _REVOKED_TOKENS.pop(k, None)
-    if token_key in _REVOKED_TOKENS:
+    # Check server-side revocation blacklist (DB-persisted, survives restarts).
+    if _is_token_revoked(signature_segment, now_ts):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token has been revoked")
     return payload
 
@@ -467,10 +508,10 @@ def _safe_connect() -> sqlite3.Connection:
 async def request_logging_middleware(request: Request, call_next):
     request_id = request.headers.get("x-request-id", uuid.uuid4().hex[:12])
     ip_token = request_ip_ctx.set(_extract_request_ip(request))
-    start_ts = datetime.utcnow()
+    start_ts = _utcnow()
     try:
         response = await call_next(request)
-        elapsed_ms = int((datetime.utcnow() - start_ts).total_seconds() * 1000)
+        elapsed_ms = int((_utcnow() - start_ts).total_seconds() * 1000)
         req_logger.info(
             f'{request.method} {request.url.path} status={response.status_code} elapsed_ms={elapsed_ms}',
             request_id=request_id,
@@ -478,7 +519,7 @@ async def request_logging_middleware(request: Request, call_next):
         response.headers["X-Request-Id"] = request_id
         return response
     except Exception as exc:
-        elapsed_ms = int((datetime.utcnow() - start_ts).total_seconds() * 1000)
+        elapsed_ms = int((_utcnow() - start_ts).total_seconds() * 1000)
         req_logger.error(
             f'{request.method} {request.url.path} error="{exc}" elapsed_ms={elapsed_ms}',
             request_id=request_id,
@@ -798,6 +839,13 @@ def init_db():
     except sqlite3.OperationalError:
         pass
 
+    # --- טבלת JWT revocation (logout) ---
+    c.execute(
+        """CREATE TABLE IF NOT EXISTS revoked_tokens
+           (signature TEXT PRIMARY KEY, exp INTEGER NOT NULL, revoked_at TEXT NOT NULL)"""
+    )
+    c.execute("CREATE INDEX IF NOT EXISTS idx_revoked_tokens_exp ON revoked_tokens(exp)")
+
     # --- טבלת הגדרות מערכת (כגון מצב מנוע ה-AI) ---
     c.execute('''CREATE TABLE IF NOT EXISTS system_settings (key TEXT PRIMARY KEY, value TEXT)''')
     c.execute('''INSERT OR IGNORE INTO system_settings (key, value) VALUES ('ai_enabled', 'true')''')
@@ -830,7 +878,7 @@ def init_db():
         """INSERT OR IGNORE INTO iam_users
            (id, name, email, usf, personal_password, role, status, last_login, permissions_json, updated_at)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        [(u[0], u[1], u[2], u[3], u[4], u[5], u[6], u[7], u[8], datetime.utcnow().isoformat()) for u in default_iam_users],
+        [(u[0], u[1], u[2], u[3], u[4], u[5], u[6], u[7], u[8], _utcnow().isoformat()) for u in default_iam_users],
     )
     try:
         c.execute("ALTER TABLE applications ADD COLUMN stage_code TEXT")
@@ -838,11 +886,11 @@ def init_db():
         pass
     c.execute(
         "INSERT OR IGNORE INTO ingestion_schema_versions(schema_version, is_active, deprecated, sunset_date, created_at) VALUES (?, 1, 0, NULL, ?)",
-        (DEFAULT_SCHEMA_VERSION, datetime.utcnow().isoformat()),
+        (DEFAULT_SCHEMA_VERSION, _utcnow().isoformat()),
     )
     c.execute(
         "INSERT OR IGNORE INTO ingestion_rule_versions(rule_version, is_active, created_at) VALUES ('1.0', 1, ?)",
-        (datetime.utcnow().isoformat(),),
+        (_utcnow().isoformat(),),
     )
     c.execute("CREATE INDEX IF NOT EXISTS idx_batch_status ON ingestion_batches(status)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_rejected_batch ON rejected_rows(batch_id)")
@@ -1882,7 +1930,7 @@ def _record_batch_change(conn: sqlite3.Connection, batch_id: str, entity_type: s
             change_type,
             json.dumps(before_obj, ensure_ascii=False) if before_obj else None,
             json.dumps(after_obj, ensure_ascii=False) if after_obj else None,
-            datetime.utcnow().isoformat(),
+            _utcnow().isoformat(),
         ),
     )
 
@@ -1934,7 +1982,7 @@ async def upload_file(
     )
     log_id = str(uuid.uuid4())[:8]
     batch_id = f"bat-{uuid.uuid4().hex[:10]}"
-    now = datetime.utcnow().isoformat()
+    now = _utcnow().isoformat()
     content = await _read_file_with_limit(file)
     payload_hash = hashlib.sha256(content).hexdigest()
     idempotency_key = (x_idempotency_key or payload_hash[:16]).strip()
@@ -2005,7 +2053,7 @@ async def upload_file(
                 c.execute(
                     """INSERT INTO rejected_rows(batch_id, row_index, reason_code, reason_detail, raw_row, created_at)
                        VALUES (?, ?, ?, ?, ?, ?)""",
-                    (batch_id, int(idx), "missing_required", ",".join(missing), json.dumps(raw_df.iloc[idx].to_dict(), ensure_ascii=False), datetime.utcnow().isoformat()),
+                    (batch_id, int(idx), "missing_required", ",".join(missing), json.dumps(raw_df.iloc[idx].to_dict(), ensure_ascii=False), _utcnow().isoformat()),
                 )
                 continue
             valid_rows.append(row)
@@ -2146,7 +2194,7 @@ async def upload_file(
                SET rows_received = ?, rows_loaded = ?, rows_rejected = ?, duplicate_rows = ?, quality_score = ?, quality_report = ?,
                    status = 'committed', finished_at = ?
                WHERE batch_id = ?""",
-            (rows_received, rows_loaded, rejected_rows, duplicate_rows, quality_score, json.dumps(quality_report, ensure_ascii=False), datetime.utcnow().isoformat(), batch_id),
+            (rows_received, rows_loaded, rejected_rows, duplicate_rows, quality_score, json.dumps(quality_report, ensure_ascii=False), _utcnow().isoformat(), batch_id),
         )
 
         unified_df = get_unified_data(conn)
@@ -2161,7 +2209,7 @@ async def upload_file(
             c.execute(
                 """INSERT OR REPLACE INTO ingestion_batches(batch_id, log_id, filename, payload_hash, idempotency_key, schema_version, actor, request_id, status, started_at, finished_at, error_message)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'failed', ?, ?, ?)""",
-                (batch_id, log_id, file.filename, payload_hash, idempotency_key, schema_version, "manual", "upload", now, datetime.utcnow().isoformat(), str(e)),
+                (batch_id, log_id, file.filename, payload_hash, idempotency_key, schema_version, "manual", "upload", now, _utcnow().isoformat(), str(e)),
             )
             conn.commit()
         except Exception:
@@ -2419,7 +2467,7 @@ def revert_batch(batch_id: str, _: str = Depends(require_admin)):
             for row in inserts:
                 c.execute(f"DELETE FROM {table_name} WHERE {pk} = ?", (row["entity_id"],))
 
-        c.execute("UPDATE ingestion_batches SET status = 'reverted', finished_at = ? WHERE batch_id = ?", (datetime.utcnow().isoformat(), batch_id))
+        c.execute("UPDATE ingestion_batches SET status = 'reverted', finished_at = ? WHERE batch_id = ?", (_utcnow().isoformat(), batch_id))
         related_log = c.execute("SELECT log_id FROM ingestion_batches WHERE batch_id = ?", (batch_id,)).fetchone()
         if related_log and related_log["log_id"]:
             c.execute("UPDATE data_logs SET status = 'Reverted' WHERE log_id = ?", (related_log["log_id"],))
@@ -2455,7 +2503,7 @@ def reset_for_final_test(_: str = Depends(require_admin)):
         "job_health_snapshot",
         "query_cache",
     ]
-    report = {"purged": {}, "reset_at": datetime.utcnow().isoformat()}
+    report = {"purged": {}, "reset_at": _utcnow().isoformat()}
     try:
         c.execute("BEGIN")
         for table in purge_tables:
@@ -4183,7 +4231,7 @@ async def unlock_session(request: Request):
         finally:
             conn.close()
         if row and row[5] and _verify_password(password, row[2]):
-            issued_at = int(datetime.utcnow().timestamp())
+            issued_at = int(_utcnow().timestamp())
             token_payload = {
                 "sub": row[0],
                 "email": row[1],
@@ -4198,7 +4246,7 @@ async def unlock_session(request: Request):
 
     # Path 2: legacy shared PIN (backwards compat only; discouraged).
     if SESSION_UNLOCK_PIN and secrets.compare_digest(password, SESSION_UNLOCK_PIN):
-        issued_at = int(datetime.utcnow().timestamp())
+        issued_at = int(_utcnow().timestamp())
         token_payload = {
             "sub": "admin-session",
             "role": "admin",
@@ -4551,7 +4599,7 @@ async def save_permissions_user(request: Request, _: dict = Depends(require_admi
                 str(payload.get("status", "active")),
                 str(payload.get("lastLogin", "טרם")),
                 json.dumps(payload.get("permissions", {}), ensure_ascii=False),
-                datetime.utcnow().isoformat(),
+                _utcnow().isoformat(),
             ),
         )
         conn.commit()
@@ -4581,7 +4629,7 @@ async def bulk_suspend_users(request: Request, _: dict = Depends(require_admin))
         placeholders = ",".join("?" for _ in user_ids)
         conn.execute(
             f"UPDATE iam_users SET status='suspended', updated_at=? WHERE id IN ({placeholders})",
-            (datetime.utcnow().isoformat(), *user_ids),
+            (_utcnow().isoformat(), *user_ids),
         )
         conn.commit()
         return {"status": "success", "updated": len(user_ids)}
@@ -4612,7 +4660,7 @@ def _verify_password(plain: str, hashed: str) -> bool:
 
 def _make_session_token(payload: dict) -> str:
     """Wraps Cursor's `_encode_jwt` to add iat/exp like the new login flow expects."""
-    issued_at = int(datetime.utcnow().timestamp())
+    issued_at = int(_utcnow().timestamp())
     return _encode_jwt({**payload, "iat": issued_at, "exp": issued_at + JWT_TTL_MINUTES * 60})
 
 
@@ -4691,14 +4739,14 @@ async def auth_logout(
     user: dict = Depends(get_session_user),
     fnx_access_token: Optional[str] = Cookie(default=None),
 ):
-    # Server-side token revocation: add signature to blacklist until expiry
+    # Server-side token revocation: persist signature in revoked_tokens until expiry.
     if fnx_access_token:
         parts = fnx_access_token.split(".")
         if len(parts) == 3:
             sig = parts[2]
             exp = int(user.get("exp", 0))
             if exp:
-                _REVOKED_TOKENS[sig] = exp
+                _revoke_token_signature(sig, exp)
     response.delete_cookie(key=SESSION_COOKIE, path="/")
     response.delete_cookie(key=IMPERSONATOR_COOKIE, path="/")
     log_audit_action("LOGOUT", "ok", f"User logged out: {user.get('email')}", user=user.get("email", "unknown"))
@@ -6389,10 +6437,9 @@ def run_anomaly_scan(conn: sqlite3.Connection, batch_id: str | None = None) -> d
 
     Returns a summary dict: {anomaly_type: count_new}.
     """
-    from datetime import datetime as _dt
     import hashlib as _hl
 
-    now_ts = _dt.utcnow().isoformat()
+    now_ts = _utcnow().isoformat()
     summary: dict[str, int] = {}
     c = conn.cursor()
 
@@ -6634,7 +6681,6 @@ def review_anomaly(
     user: dict = Depends(require_dual_role("admin", "hrbp")),
 ):
     """Mark an anomaly as dismissed or resolved."""
-    from datetime import datetime as _dt
     conn = sqlite3.connect(DB_PATH)
     try:
         row = conn.execute("SELECT id FROM data_anomalies WHERE id=?", (anomaly_id,)).fetchone()
@@ -6642,7 +6688,7 @@ def review_anomaly(
             raise HTTPException(status_code=404, detail="אנומליה לא נמצאה")
         conn.execute(
             "UPDATE data_anomalies SET status=?, reviewed_by=?, reviewed_at=? WHERE id=?",
-            (payload.status, user.get("email", "admin"), _dt.utcnow().isoformat(), anomaly_id),
+            (payload.status, user.get("email", "admin"), _utcnow().isoformat(), anomaly_id),
         )
         conn.commit()
         log_audit_action(
