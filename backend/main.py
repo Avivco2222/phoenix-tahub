@@ -1541,6 +1541,7 @@ def _normalize_upload_frame(df: pd.DataFrame) -> pd.DataFrame:
         "מצב שיוך למשרה": "status", "סטטוס": "status",
         "מגייס": "recruiter", "מגייסת": "recruiter",
         "תחילת גיוס": "start_date", "תאריך פתיחה": "start_date",
+        "תאריך הגשה": "start_date", "תאריך מועמדות": "start_date",
         "רמה 2": "department", "מחלקה": "department", "חטיבה": "department",
         "מקור הגעה": "source", "מקור": "source",
     }
@@ -2615,17 +2616,17 @@ def get_stats(timeframe: str = "all", department: str = "all", recruiter: str = 
     elif timeframe == "year":
         df = df[df['start_date'].dt.year == pd.Timestamp.now().year]
 
-    closed_statuses = ['קליטה', 'גיוס', 'דחייה', 'הסרה', 'ויתור', 'הקפאה']
+    closed_statuses = ['קליטה', 'גיוס', 'התקבל', 'דחייה', 'הסרה', 'ויתור', 'הקפאה', 'נדחה']
     df['is_active'] = ~df['status'].str.contains('|'.join(closed_statuses), case=False, na=False)
 
     recent_df = df[df['start_date'].dt.year >= (pd.Timestamp.now().year - 1)].copy() if timeframe == "all" else df.copy()
 
     total = len(df)
     current_month = pd.Timestamp.now().month
-    hired_df = recent_df[(recent_df['status'].str.contains('קליטה|גיוס', case=False, na=False)) & (recent_df['start_date'].dt.month == current_month)]
+    hired_df = recent_df[(recent_df['status'].str.contains('קליטה|גיוס|התקבל', case=False, na=False)) & (recent_df['start_date'].dt.month == current_month)]
     hired_count = len(hired_df)
 
-    all_hired = recent_df[recent_df['status'].str.contains('קליטה|גיוס', case=False, na=False)]
+    all_hired = recent_df[recent_df['status'].str.contains('קליטה|גיוס|התקבל', case=False, na=False)]
     avg_days = int(all_hired['days_in_process'].mean()) if not all_hired.empty else 0
 
     # חישוב SLA אדפטיבי (לפי סוג משרה - מוקדים מול מטה/טכנולוגי)
@@ -2777,7 +2778,7 @@ def get_jobs(
     if df.empty:
         jobs_summary = []
     else:
-        closed_statuses = ['קליטה', 'גיוס', 'דחייה', 'הסרה', 'ויתור', 'הקפאה']
+        closed_statuses = ['קליטה', 'גיוס', 'התקבל', 'דחייה', 'הסרה', 'ויתור', 'הקפאה', 'נדחה']
         df['is_active'] = ~df['status'].astype(str).str.contains('|'.join(closed_statuses), case=False, na=False)
         df['unified_stage'] = df.apply(
             lambda row: _compute_unified_stage(row.get('stage_code'), row.get('onboarding_status')),
@@ -2922,7 +2923,7 @@ def get_executive_brief(_: dict = Depends(verify_token)):
     if df.empty:
         return {"error": "No data"}
 
-    closed_statuses = ['קליטה', 'גיוס', 'דחייה', 'הסרה', 'ויתור', 'הקפאה']
+    closed_statuses = ['קליטה', 'גיוס', 'התקבל', 'דחייה', 'הסרה', 'ויתור', 'הקפאה', 'נדחה']
     df['is_active'] = ~df['status'].str.contains('|'.join(closed_statuses), case=False, na=False)
     active_df = df[df['is_active']]
 
@@ -2932,7 +2933,7 @@ def get_executive_brief(_: dict = Depends(verify_token)):
 
     current_month = pd.Timestamp.now().month
     current_year = pd.Timestamp.now().year
-    hired_this_month = len(df[(df['status'].str.contains('קליטה|גיוס', case=False, na=False)) &
+    hired_this_month = len(df[(df['status'].str.contains('קליטה|גיוס|התקבל', case=False, na=False)) &
                               (df['start_date'].dt.month == current_month) &
                               (df['start_date'].dt.year == current_year)])
 
@@ -2996,10 +2997,10 @@ def get_intelligence(_: dict = Depends(verify_token)):
 
     # חיפוש טקסטואלי חכם של הסטטוסים
     cv_review = total_candidates  # כולם מתחילים פה
-    phone_screen = len(df[df['status'].str.contains('טלפוני|ראשוני|ראיון HR|מנהל', case=False, na=False)])
-    interviews = len(df[df['status'].str.contains('ראיון HR|משאבי אנוש|ראיון מנהל|מקצועי|מרכז הערכה', case=False, na=False)])
-    offers = len(df[df['status'].str.contains('הצעת שכר|חוזה|ממתין לחתימה', case=False, na=False)])
-    hired = len(df[df['status'].str.contains('קליטה|גיוס', case=False, na=False)])
+    phone_screen = len(df[df['status'].str.contains('טלפוני|ראשוני|ראיון HR|מנהל|סינון', case=False, na=False)])
+    interviews = len(df[df['status'].str.contains('ראיון|משאבי אנוש|מקצועי|מרכז הערכה', case=False, na=False)])
+    offers = len(df[df['status'].str.contains('הצעת שכר|חוזה|ממתין לחתימה|הצעה', case=False, na=False)])
+    hired = len(df[df['status'].str.contains('קליטה|גיוס|התקבל', case=False, na=False)])
 
     # יצירת המבנה שהפרונטאנד מצפה לו
     funnel = [
@@ -3011,7 +3012,7 @@ def get_intelligence(_: dict = Depends(verify_token)):
     ]
 
     # --- 2. רדאר נטישה (Ghosting Predictor) אמיתי ---
-    closed_statuses = ['קליטה', 'גיוס', 'דחייה', 'הסרה', 'ויתור', 'הקפאה']
+    closed_statuses = ['קליטה', 'גיוס', 'התקבל', 'דחייה', 'הסרה', 'ויתור', 'הקפאה', 'נדחה']
     df['is_active'] = ~df['status'].str.contains('|'.join(closed_statuses), case=False, na=False)
     active_df = df[df['is_active']]
 
@@ -4355,7 +4356,7 @@ def get_neglect_alerts(limit: int = 5):
 
         df["start_date"] = pd.to_datetime(df["start_date"], errors="coerce")
         df["days_in_process"] = pd.to_numeric(df["days_in_process"], errors="coerce").fillna(0).astype(int)
-        closed_statuses = ['קליטה', 'גיוס', 'דחייה', 'הסרה', 'ויתור', 'הקפאה']
+        closed_statuses = ['קליטה', 'גיוס', 'התקבל', 'דחייה', 'הסרה', 'ויתור', 'הקפאה', 'נדחה']
         df["is_active"] = ~df["status"].str.contains("|".join(closed_statuses), case=False, na=False)
         active_df = df[df["is_active"]].copy()
         if active_df.empty:

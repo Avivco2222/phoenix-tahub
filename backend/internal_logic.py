@@ -9,11 +9,11 @@ import pandas as pd
 
 
 DEFAULT_STATUS_LEXICON = [
-    ("HIRED", "קליטה|גיוס"),
-    ("OFFER", "הצעת שכר|חוזה|ממתין לחתימה"),
+    ("HIRED", "קליטה|גיוס|התקבל"),
+    ("OFFER", "הצעת שכר|חוזה|ממתין לחתימה|הצעה"),
     ("INTERVIEW", "ראיון|מקצועי|מרכז הערכה|מנהל"),
-    ("SCREEN", "טלפוני|ראשוני|HR"),
-    ("REJECTED", "דחייה|הסרה|ויתור|הקפאה"),
+    ("SCREEN", "טלפוני|ראשוני|HR|סינון"),
+    ("REJECTED", "דחייה|הסרה|ויתור|הקפאה|נדחה"),
     ("ACTIVE", "חדש|בתהליך|ממתין"),
 ]
 
@@ -270,14 +270,14 @@ def build_snapshots(conn: sqlite3.Connection, unified_df: pd.DataFrame) -> None:
 
     df = unified_df.copy()
     df["start_date"] = pd.to_datetime(df["start_date"], errors="coerce")
-    closed = "קליטה|גיוס|דחייה|הסרה|ויתור|הקפאה"
+    closed = "קליטה|גיוס|התקבל|דחייה|הסרה|ויתור|הקפאה|נדחה"
     df["is_active"] = ~df["status"].str.contains(closed, case=False, na=False)
     current_month = pd.Timestamp.now().month
     current_year = pd.Timestamp.now().year
     hired_this_month = int(
         len(
             df[
-                (df["status"].str.contains("קליטה|גיוס", case=False, na=False))
+                (df["status"].str.contains("קליטה|גיוס|התקבל", case=False, na=False))
                 & (df["start_date"].dt.month == current_month)
                 & (df["start_date"].dt.year == current_year)
             ]
@@ -298,10 +298,10 @@ def build_snapshots(conn: sqlite3.Connection, unified_df: pd.DataFrame) -> None:
 
     funnel_map = [
         ("קורות חיים (Sourcing)", len(df)),
-        ("סינון ראשוני / טלפוני", len(df[df["status"].str.contains("טלפוני|ראשוני|HR|מנהל", case=False, na=False)])),
+        ("סינון ראשוני / טלפוני", len(df[df["status"].str.contains("טלפוני|ראשוני|HR|מנהל|סינון", case=False, na=False)])),
         ("ראיונות (HR + מקצועי)", len(df[df["status"].str.contains("ראיון|מקצועי|מרכז הערכה|מנהל", case=False, na=False)])),
-        ("הצעות שכר", len(df[df["status"].str.contains("הצעת שכר|חוזה|ממתין לחתימה", case=False, na=False)])),
-        ("קליטות בפועל", len(df[df["status"].str.contains("קליטה|גיוס", case=False, na=False)])),
+        ("הצעות שכר", len(df[df["status"].str.contains("הצעת שכר|חוזה|ממתין לחתימה|הצעה", case=False, na=False)])),
+        ("קליטות בפועל", len(df[df["status"].str.contains("קליטה|גיוס|התקבל", case=False, na=False)])),
     ]
     for stage_name, count in funnel_map:
         pct = int((count / total_candidates) * 100) if total_candidates else 0
