@@ -2741,93 +2741,7 @@ def _normalize_score(value: float, lower: float, upper: float) -> float:
 # GET/POST /api/admin/config moved to backend/routers/admin.py (B2.8a)
 
 
-@app.get("/api/admin/permissions/users")
-def get_permissions_users(_: dict = Depends(require_admin)):
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    try:
-        rows = conn.execute(
-            """SELECT id, name, email, usf, personal_password, role, status, last_login, permissions_json
-               FROM iam_users ORDER BY name ASC"""
-        ).fetchall()
-        users = []
-        for row in rows:
-            users.append(
-                {
-                    "id": row["id"],
-                    "name": row["name"],
-                    "email": row["email"],
-                    "usf": row["usf"],
-                    "personalPassword": row["personal_password"],
-                    "role": row["role"],
-                    "status": row["status"],
-                    "lastLogin": row["last_login"],
-                    "permissions": json.loads(row["permissions_json"] or "{}"),
-                }
-            )
-        return users
-    finally:
-        conn.close()
-
-
-@app.post("/api/admin/permissions/users")
-async def save_permissions_user(request: Request, _: dict = Depends(require_admin)):
-    payload = await request.json()
-    user_id = str(payload.get("id") or f"u-{uuid.uuid4().hex[:8]}")
-    conn = sqlite3.connect(DB_PATH)
-    try:
-        conn.execute(
-            """INSERT OR REPLACE INTO iam_users
-               (id, name, email, usf, personal_password, role, status, last_login, permissions_json, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                user_id,
-                str(payload.get("name", "")),
-                str(payload.get("email", "")),
-                str(payload.get("usf", "")),
-                str(payload.get("personalPassword", payload.get("usf", ""))),
-                str(payload.get("role", "hiring_manager")),
-                str(payload.get("status", "active")),
-                str(payload.get("lastLogin", "טרם")),
-                json.dumps(payload.get("permissions", {}), ensure_ascii=False),
-                _utcnow().isoformat(),
-            ),
-        )
-        conn.commit()
-        return {
-            "id": user_id,
-            "name": str(payload.get("name", "")),
-            "email": str(payload.get("email", "")),
-            "usf": str(payload.get("usf", "")),
-            "personalPassword": str(payload.get("personalPassword", payload.get("usf", ""))),
-            "role": str(payload.get("role", "hiring_manager")),
-            "status": str(payload.get("status", "active")),
-            "lastLogin": str(payload.get("lastLogin", "טרם")),
-            "permissions": payload.get("permissions", {}),
-        }
-    finally:
-        conn.close()
-
-
-@app.post("/api/admin/permissions/users/bulk-suspend")
-async def bulk_suspend_users(request: Request, _: dict = Depends(require_admin)):
-    payload = await request.json()
-    user_ids = payload.get("user_ids", [])
-    if not isinstance(user_ids, list) or not user_ids:
-        raise HTTPException(status_code=400, detail="user_ids is required")
-    conn = sqlite3.connect(DB_PATH)
-    try:
-        placeholders = ",".join("?" for _ in user_ids)
-        conn.execute(
-            f"UPDATE iam_users SET status='suspended', updated_at=? WHERE id IN ({placeholders})",
-            (_utcnow().isoformat(), *user_ids),
-        )
-        conn.commit()
-        return {"status": "success", "updated": len(user_ids)}
-    finally:
-        conn.close()
-
-
+# Routes at original lines 2744-2830 moved to backend/routers/admin.py (B2.8b)
 # =====================================================================
 # REAL AUTH (per-user login via bcrypt + cookie JWT) — phase-1 merge
 # This block coexists with the Bearer-based admin auth above. Endpoints
@@ -2966,157 +2880,7 @@ async def auth_change_password(payload: dict, user: dict = Depends(get_session_u
 
 # ----- USER MANAGEMENT (admin only) — uses the new `users` table -----
 
-@app.get("/api/admin/users")
-async def admin_list_users(_: dict = Depends(require_session_role(Role.ADMIN))):
-    with db_conn() as conn:
-        c = conn.cursor()
-        c.execute("SELECT id, email, full_name, role, employee_number, is_active, must_change_password, created_at, last_login_at FROM users ORDER BY created_at DESC")
-        rows = c.fetchall()
-    return [
-        {"id": r[0], "email": r[1], "full_name": r[2], "role": r[3],
-         "employee_number": r[4], "is_active": bool(r[5]),
-         "must_change_password": bool(r[6]), "created_at": r[7], "last_login_at": r[8]}
-        for r in rows
-    ]
-
-
-@app.post("/api/admin/users")
-async def admin_create_user(payload: dict, admin: dict = Depends(require_session_role(Role.ADMIN))):
-    email = (payload.get("email") or "").strip().lower()
-    full_name = (payload.get("full_name") or "").strip()
-    role = (payload.get("role") or "recruiter").strip()
-    employee_number = str(payload.get("employee_number") or "").strip()
-
-    if not email or not full_name:
-        raise HTTPException(status_code=400, detail="חסרים אימייל או שם מלא")
-    if role not in ("admin", "hrbp", "recruiter", "hiring_manager"):
-        raise HTTPException(status_code=400, detail="תפקיד לא חוקי")
-    if not employee_number or len(employee_number) < 4:
-        raise HTTPException(status_code=400, detail="מספר עובד (USF) חייב לכלול לפחות 4 תווים")
-
-    user_id = f"USR-{uuid.uuid4().hex[:8].upper()}"
-    with db_conn() as conn:
-        c = conn.cursor()
-        try:
-            c.execute(
-                "INSERT INTO users (id, email, password_hash, full_name, role, employee_number, is_active, must_change_password, created_at) VALUES (?, ?, ?, ?, ?, ?, 1, 0, ?)",
-                (user_id, email, _hash_password(employee_number), full_name, role, employee_number, datetime.now(timezone.utc).isoformat()),
-            )
-            conn.commit()
-        except sqlite3.IntegrityError:
-            raise HTTPException(status_code=409, detail="משתמש עם אימייל זה כבר קיים")
-
-    log_audit_action("USER_CREATED", "ok", f"Created {email} as {role} (USF={employee_number})", user=admin.get("email", "admin"))
-    return {"id": user_id, "email": email, "full_name": full_name, "role": role, "employee_number": employee_number}
-
-
-@app.put("/api/admin/users/{user_id}")
-async def admin_update_user(user_id: str, payload: dict, admin: dict = Depends(require_session_role(Role.ADMIN))):
-    fields, values = [], []
-    if "full_name" in payload:
-        fields.append("full_name = ?"); values.append((payload["full_name"] or "").strip())
-    if "role" in payload:
-        if payload["role"] not in ("admin", "hrbp", "recruiter", "hiring_manager"):
-            raise HTTPException(status_code=400, detail="תפקיד לא חוקי")
-        fields.append("role = ?"); values.append(payload["role"])
-    if "is_active" in payload:
-        fields.append("is_active = ?"); values.append(1 if payload["is_active"] else 0)
-    if not fields:
-        raise HTTPException(status_code=400, detail="אין שדות לעדכון")
-
-    values.append(user_id)
-    with db_conn() as conn:
-        c = conn.cursor()
-        c.execute(f"UPDATE users SET {', '.join(fields)} WHERE id = ?", values)
-        if c.rowcount == 0:
-            raise HTTPException(status_code=404, detail="משתמש לא נמצא")
-        conn.commit()
-    log_audit_action("USER_UPDATED", "ok", f"Updated user {user_id}", user=admin.get("email", "admin"))
-    return {"status": "ok"}
-
-
-@app.post("/api/admin/users/{user_id}/reset-password")
-async def admin_reset_password(user_id: str, admin: dict = Depends(require_session_role(Role.ADMIN))):
-    temp_password = secrets.token_urlsafe(9)
-    with db_conn() as conn:
-        c = conn.cursor()
-        c.execute(
-            "UPDATE users SET password_hash = ?, must_change_password = 1 WHERE id = ?",
-            (_hash_password(temp_password), user_id),
-        )
-        if c.rowcount == 0:
-            raise HTTPException(status_code=404, detail="משתמש לא נמצא")
-        conn.commit()
-    log_audit_action("PASSWORD_RESET", "ok", f"Admin reset password for {user_id}", user=admin.get("email", "admin"))
-    return {"temp_password": temp_password}
-
-
-# ----- IMPERSONATION (admin "view as") -----
-
-@app.post("/api/admin/impersonate/{user_id}")
-async def admin_impersonate(user_id: str, response: Response, admin: dict = Depends(require_session_role(Role.ADMIN))):
-    if admin.get("impersonator"):
-        raise HTTPException(status_code=400, detail="כבר במצב impersonation. סיימי את הסשן הנוכחי קודם.")
-    with db_conn() as conn:
-        c = conn.cursor()
-        c.execute("SELECT id, email, full_name, role, is_active FROM users WHERE id = ?", (user_id,))
-        row = c.fetchone()
-    if not row or not row[4]:
-        raise HTTPException(status_code=404, detail="המשתמש לא נמצא או מושעה")
-
-    target_id, target_email, target_name, target_role, _ = row
-    original_admin_token = _make_session_token({
-        "sub": admin.get("sub"), "email": admin.get("email"),
-        "name": admin.get("name"), "role": admin.get("role"),
-    })
-    impersonation_token = _make_session_token({
-        "sub": target_id, "email": target_email, "name": target_name, "role": target_role,
-        "impersonator": admin.get("sub"), "impersonator_email": admin.get("email"),
-    })
-    _set_session_cookie(response, impersonation_token, key=SESSION_COOKIE)
-    _set_session_cookie(response, original_admin_token, key=IMPERSONATOR_COOKIE)
-
-    log_audit_action("IMPERSONATION_START", "warn",
-                     f"Admin {admin.get('email')} impersonating {target_email}",
-                     user=admin.get("email", "admin"))
-    return {"id": target_id, "email": target_email, "name": target_name, "role": target_role,
-            "impersonator_email": admin.get("email")}
-
-
-@app.post("/api/admin/stop-impersonate")
-async def admin_stop_impersonate(
-    response: Response,
-    fnx_impersonator: Optional[str] = Cookie(default=None),
-    user: dict = Depends(get_session_user),
-):
-    if not user.get("impersonator") or not fnx_impersonator:
-        raise HTTPException(status_code=400, detail="אינך במצב impersonation")
-    try:
-        payload = _decode_jwt(fnx_impersonator)
-    except HTTPException:
-        response.delete_cookie(key=SESSION_COOKIE, path="/")
-        response.delete_cookie(key=IMPERSONATOR_COOKIE, path="/")
-        raise HTTPException(status_code=401, detail="טוקן ה-admin המקורי פג. יש להתחבר שוב.")
-
-    if payload.get("role") != "admin":
-        response.delete_cookie(key=SESSION_COOKIE, path="/")
-        response.delete_cookie(key=IMPERSONATOR_COOKIE, path="/")
-        raise HTTPException(status_code=401, detail="טוקן admin לא חוקי")
-
-    new_token = _make_session_token({
-        "sub": payload.get("sub"), "email": payload.get("email"),
-        "name": payload.get("name"), "role": payload.get("role"),
-    })
-    _set_session_cookie(response, new_token)
-    response.delete_cookie(key=IMPERSONATOR_COOKIE, path="/")
-
-    log_audit_action("IMPERSONATION_END", "ok",
-                     f"Admin {payload.get('email')} stopped impersonating {user.get('email')}",
-                     user=payload.get("email", "admin"))
-    return {"id": payload.get("sub"), "email": payload.get("email"),
-            "name": payload.get("name"), "role": payload.get("role")}
-
-
+# Routes at original lines 2969-3119 moved to backend/routers/admin.py (B2.8b)
 # ==========================================
 # APP REGISTRY OVERRIDES — admin controls visibility + tags for /ai-hub tools
 # ==========================================
@@ -3142,39 +2906,7 @@ async def get_app_config(_: dict = Depends(get_session_user)):
     }
 
 
-@app.put("/api/admin/apps/{app_id}")
-async def set_app_override(app_id: str, payload: dict, admin: dict = Depends(require_session_role(Role.ADMIN))):
-    """Upsert override for a single app. Body: {hidden?: bool, tag?: 'new'|'update'|'coming_soon'|'none'|null}.
-    Passing tag=null clears the override (falls back to hardcoded default in registry)."""
-    hidden = 1 if payload.get("hidden") else 0
-    tag = payload.get("tag")
-    if tag is not None and tag not in VALID_APP_TAGS:
-        raise HTTPException(status_code=400, detail=f"tag must be one of {VALID_APP_TAGS} or null")
-
-    conn = sqlite3.connect(DB_PATH)
-    try:
-        existing = conn.execute("SELECT 1 FROM app_overrides WHERE app_id = ?", (app_id,)).fetchone()
-        now = datetime.now(timezone.utc).isoformat()
-        actor = admin.get("email", "admin")
-        if existing:
-            conn.execute(
-                "UPDATE app_overrides SET hidden=?, tag=?, updated_at=?, updated_by=? WHERE app_id=?",
-                (hidden, tag, now, actor, app_id),
-            )
-        else:
-            conn.execute(
-                "INSERT INTO app_overrides (app_id, hidden, tag, updated_at, updated_by) VALUES (?, ?, ?, ?, ?)",
-                (app_id, hidden, tag, now, actor),
-            )
-        conn.commit()
-    finally:
-        conn.close()
-    log_audit_action("APP_OVERRIDE", "ok", f"app={app_id} hidden={bool(hidden)} tag={tag}", user=actor)
-    return {"status": "ok", "app_id": app_id, "hidden": bool(hidden), "tag": tag}
-
-
-# ----- NOTIFICATIONS — admin sends, users read -----
-
+# Routes at original lines 3145-3177 moved to backend/routers/admin.py (B2.8b)
 def _is_on_cooldown(conn, user_id: str, tag: str, hours: int = 24) -> bool:
     """Return True if this (user, tag) was already emitted within `hours` hours.
     Uses the notification_cooldowns table — not the notifications inbox — so user
@@ -3239,93 +2971,7 @@ def _emit_notification(
     return True
 
 
-@app.post("/api/admin/notifications/send")
-async def admin_send_notification(payload: dict, admin: dict = Depends(require_session_role(Role.ADMIN))):
-    user_ids = payload.get("user_ids") or []
-    target_group = (payload.get("target_group") or "").strip()
-    message = (payload.get("message") or "").strip()
-    severity = (payload.get("severity") or "info").strip()
-    link = (payload.get("link") or "").strip() or None
-    category = (payload.get("category") or "manual").strip()
-    if not message:
-        raise HTTPException(status_code=400, detail="הודעה ריקה")
-    if severity not in ("info", "warning", "danger", "success", "kudos"):
-        severity = "info"
-    if len(message) > 2000:
-        raise HTTPException(status_code=400, detail="ההודעה ארוכה מדי (עד 2000 תווים)")
-
-    sent_at = datetime.now(timezone.utc).isoformat()
-    delivered, skipped = 0, []
-
-    _ROLE_MAP = {
-        "all_recruiters": "recruiter",
-        "all_admins":     "admin",
-        "all_hrbp":       "hrbp",
-    }
-
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    try:
-        # Resolve recipients from target_group or explicit user_ids
-        if target_group == "all_users":
-            rows = c.execute("SELECT id FROM users WHERE is_active = 1").fetchall()
-            user_ids = [r[0] for r in rows]
-        elif target_group in _ROLE_MAP:
-            role = _ROLE_MAP[target_group]
-            rows = c.execute("SELECT id FROM users WHERE role = ? AND is_active = 1", (role,)).fetchall()
-            user_ids = [r[0] for r in rows]
-        elif not isinstance(user_ids, list) or not user_ids:
-            raise HTTPException(status_code=400, detail="חסרים נמענים")
-
-        for uid in user_ids:
-            c.execute("SELECT id FROM users WHERE id = ? AND is_active = 1", (str(uid),))
-            if not c.fetchone():
-                skipped.append(str(uid)); continue
-            note_id = f"NTF-{uuid.uuid4().hex[:10].upper()}"
-            c.execute(
-                "INSERT INTO notifications (id, user_id, message, severity, sent_by, sent_at, category, link) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                (note_id, str(uid), message, severity, admin.get("email", "admin"), sent_at, category, link),
-            )
-            delivered += 1
-        conn.commit()
-    finally:
-        conn.close()
-
-    log_audit_action("NOTIFICATION_SENT", "ok",
-                     f"Sent to {delivered} user(s) (severity={severity}, group={target_group or 'specific'})",
-                     user=admin.get("email", "admin"))
-    return {"delivered": delivered, "skipped": skipped, "sent_at": sent_at}
-
-
-@app.get("/api/admin/notifications/history")
-async def admin_notifications_history(
-    limit: int = 50,
-    category: Optional[str] = None,
-    admin: dict = Depends(require_session_role(Role.ADMIN)),
-):
-    """Return the last `limit` notifications (across all users) for the history table."""
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    try:
-        sql = (
-            "SELECT n.id, n.user_id, u.full_name, u.email, n.message, n.severity, "
-            "n.category, n.sent_by, n.sent_at, n.read_at "
-            "FROM notifications n LEFT JOIN users u ON n.user_id = u.id "
-        )
-        params: list = []
-        if category:
-            sql += "WHERE n.category = ? "
-            params.append(category)
-        sql += "ORDER BY n.sent_at DESC LIMIT ?"
-        params.append(limit)
-        rows = conn.execute(sql, params).fetchall()
-        return [dict(r) for r in rows]
-    except sqlite3.OperationalError:
-        return []
-    finally:
-        conn.close()
-
-
+# Routes at original lines 3242-3328 moved to backend/routers/admin.py (B2.8b)
 @app.get("/api/notifications/me")
 async def get_my_notifications(unread_only: bool = False, user: dict = Depends(get_session_user)):
     conn = sqlite3.connect(DB_PATH)
@@ -3464,55 +3110,7 @@ async def update_notification_preferences(payload: dict, user: dict = Depends(ge
     return {"status": "ok"}
 
 
-@app.get("/api/admin/notifications/history")
-async def admin_notification_history(
-    limit: int = 100,
-    category: Optional[str] = None,
-    _: dict = Depends(require_session_role(Role.ADMIN)),
-):
-    """Admin view: notification history across all users, with read stats per message group."""
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    try:
-        sql = """
-            SELECT
-                n.id,
-                n.message,
-                n.severity,
-                n.category,
-                n.sent_by,
-                n.sent_at,
-                n.link,
-                u.full_name  AS recipient_name,
-                u.email      AS recipient_email,
-                CASE WHEN n.read_at IS NOT NULL THEN 1 ELSE 0 END AS is_read
-            FROM notifications n
-            LEFT JOIN users u ON u.id = n.user_id
-            WHERE 1=1
-        """
-        params: list = []
-        if category:
-            sql += " AND n.category = ?"
-            params.append(category)
-        sql += " ORDER BY n.sent_at DESC LIMIT ?"
-        params.append(limit)
-        rows = c.execute(sql, params).fetchall()
-    except sqlite3.OperationalError:
-        return []
-    finally:
-        conn.close()
-    return [
-        {
-            "id": r[0], "message": r[1], "severity": r[2], "category": r[3] or "general",
-            "sent_by": r[4], "sent_at": r[5], "link": r[6],
-            "recipient_name": r[7], "recipient_email": r[8], "is_read": bool(r[9]),
-        }
-        for r in rows
-    ]
-
-
-# ----- INGESTION DIFF (separate from /admin/ingestion/batches above) -----
-
+# Routes at original lines 3467-3515 moved to backend/routers/admin.py (B2.8b)
 @app.get("/api/admin/ingestion/batches")
 def list_ingestion_batches_diff(limit: int = 20, _: dict = Depends(require_session_role(Role.ADMIN))):
     """Aggregates batch_entity_changes — gives insert/update/delete counts per batch."""
@@ -3807,12 +3405,7 @@ async def notification_stream(user: dict = Depends(get_session_user)):
     )
 
 
-@app.post("/api/admin/check-inactive-recruiters")
-async def check_inactive_recruiters_endpoint(_: dict = Depends(require_session_role(Role.ADMIN))):
-    """Admin-triggered scan. Safe to call repeatedly — dedupes within 24h."""
-    return _check_inactive_recruiters()
-
-
+# Routes at original lines 3810-3815 moved to backend/routers/admin.py (B2.8b)
 # =====================================================================
 # SLA WATCHDOG — flags candidates / jobs / offers stuck longer than SLA
 # thresholds. Read-only `GET /api/sla/alerts` returns the current breaches
