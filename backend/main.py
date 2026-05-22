@@ -58,9 +58,6 @@ from internal_logic import (
 )
 
 app = FastAPI()
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.append(str(PROJECT_ROOT))
 import config as shared_config
 
 limiter = Limiter(key_func=get_remote_address)

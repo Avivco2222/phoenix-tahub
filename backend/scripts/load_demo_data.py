@@ -1,8 +1,10 @@
 """Load all demo data files into the running backend."""
 import requests, json, os, sys
+from pathlib import Path
 
-BASE_URL = "http://127.0.0.1:8010"
-DATA_DIR = r"D:/AI_PROJECTS/fnxdata/test_data"
+BASE_URL = os.environ.get("PHOENIX_API_URL", "http://127.0.0.1:8010")
+# backend/scripts/load_demo_data.py → repo root → test_data/
+DATA_DIR = str(Path(__file__).resolve().parent.parent.parent / "test_data")
 
 session = requests.Session()
 

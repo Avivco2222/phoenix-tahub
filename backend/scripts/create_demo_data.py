@@ -1,6 +1,8 @@
 import csv, os, random
+from pathlib import Path
 
-BASE = r"D:/AI_PROJECTS/fnxdata/test_data"
+# backend/scripts/create_demo_data.py → repo root → test_data/
+BASE = str(Path(__file__).resolve().parent.parent.parent / "test_data")
 random.seed(42)
 
 # ── CANDIDATES (50 rows) ──────────────────────────────────────────────────
