@@ -24,3 +24,17 @@ class Role(str, Enum):
     RECRUITER = "recruiter"
     HIRING_MANAGER = "hiring_manager"
     STANDARD = "standard"
+
+
+# Canonical unified pipeline stages used by every cross-pipeline view
+# (candidates list, job detail, snapshots, frontend chips).
+UNIFIED_STAGES: list[str] = [
+    "ACTIVE",
+    "SCREEN",
+    "INTERVIEW",
+    "OFFER",
+    "HIRED",
+    "AWAITING_START",
+    "STARTED",
+    "REJECTED",
+]
