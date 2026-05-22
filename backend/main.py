@@ -45,6 +45,7 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 from aliases import LEGACY_CANDIDATE_ALIASES, TYPED_INGEST_ALIASES
+from constants import Role
 from internal_logic import (
     build_snapshots,
     canonicalize_statuses,
@@ -601,7 +602,7 @@ async def upload_typed_file(
     request: Request,
     file_type: str,
     file: UploadFile = File(...),
-    _: dict = Depends(require_dual_role("admin", "hrbp")),
+    _: dict = Depends(require_dual_role(Role.ADMIN, Role.HRBP)),
 ):
     """Multi-type ingestion: candidates, jobs, hires, diversity, headcount, budget, attrition.
 
@@ -1957,7 +1958,7 @@ async def upload_file(
     x_schema_version: Optional[str] = Header(default=None),
     x_idempotency_key: Optional[str] = Header(default=None),
     x_preflight_hash: Optional[str] = Header(default=None),
-    user: dict = Depends(require_dual_role("admin", "hrbp", "recruiter")),
+    user: dict = Depends(require_dual_role(Role.ADMIN, Role.HRBP, Role.RECRUITER)),
 ):
     _validate_upload_file(
         file,
@@ -2214,7 +2215,7 @@ async def upload_file(
 # 3. DATA GOVERNANCE API (Admin Tools)
 # ==========================================
 @app.get("/admin/health")
-def get_data_health(_: dict = Depends(require_dual_role("admin", "hrbp"))):
+def get_data_health(_: dict = Depends(require_dual_role(Role.ADMIN, Role.HRBP))):
     """חישוב בריאות נתונים משוקלל על פני הטבלאות"""
     conn = sqlite3.connect(DB_PATH)
     try:
@@ -2325,7 +2326,7 @@ def download_ingestion_template(
 
 @app.get("/api/ingest/smart-template")
 def download_smart_template(
-    _: dict = Depends(require_dual_role("admin", "hrbp")),
+    _: dict = Depends(require_dual_role(Role.ADMIN, Role.HRBP)),
 ):
     """Returns a ready-to-fill Excel workbook with sheets: משרות, מועמדים, גיוסים + הוראות."""
     from openpyxl import Workbook
@@ -2662,7 +2663,7 @@ def get_candidates(
     job_id: str = "",
     days_min: Optional[int] = None,
     days_max: Optional[int] = None,
-    _: dict = Depends(require_dual_role("admin", "hrbp", "recruiter", "hiring_manager")),
+    _: dict = Depends(require_dual_role(Role.ADMIN, Role.HRBP, Role.RECRUITER, Role.HIRING_MANAGER)),
 ):
     """Unified pipeline + onboarding view.
 
@@ -2748,7 +2749,7 @@ def get_jobs(
     status: str = "all",
     department: str = "",
     search: str = "",
-    _: dict = Depends(require_dual_role("admin", "hrbp", "recruiter", "hiring_manager")),
+    _: dict = Depends(require_dual_role(Role.ADMIN, Role.HRBP, Role.RECRUITER, Role.HIRING_MANAGER)),
 ):
     """Returns jobs (open + closed by default) with per-stage candidate breakdown.
 
@@ -3095,7 +3096,7 @@ def get_drilldown(month_name: str, timeframe: str = "all", department: str = "al
 
 
 @app.get("/admin/costs")
-def get_costs(_: dict = Depends(require_dual_role("admin", "hrbp"))):
+def get_costs(_: dict = Depends(require_dual_role(Role.ADMIN, Role.HRBP))):
     """סימולציה של נתוני כספים, הסכמים ועלויות גיוס (CPH)"""
     return {
         "is_demo": True,
@@ -3112,7 +3113,7 @@ def get_costs(_: dict = Depends(require_dual_role("admin", "hrbp"))):
 
 
 @app.get("/admin/automations")
-def get_automations(_: dict = Depends(require_dual_role("admin", "hrbp"))):
+def get_automations(_: dict = Depends(require_dual_role(Role.ADMIN, Role.HRBP))):
     """שליפת חוקי האוטומציה שמוגדרים במערכת"""
     return [
         {"id": 1, "trigger": "סטטוס = 'הצעת שכר'", "condition": "מעל 3 ימים", "action": "שלח התראה אדומה למנהל המגייס", "status": "פעיל", "is_demo": True},
@@ -3127,7 +3128,7 @@ def get_automations(_: dict = Depends(require_dual_role("admin", "hrbp"))):
 # ==========================================
 
 @app.get("/api/finops/data")
-def get_finops_data(_: dict = Depends(require_dual_role("admin", "hrbp"))):
+def get_finops_data(_: dict = Depends(require_dual_role(Role.ADMIN, Role.HRBP))):
     conn = sqlite3.connect(DB_PATH)
     try:
         categories_df = pd.read_sql("SELECT * FROM finops_categories", conn)
@@ -3150,7 +3151,7 @@ def get_finops_data(_: dict = Depends(require_dual_role("admin", "hrbp"))):
 
 @app.post("/api/finops/upload_invoice")
 @limiter.limit("10/minute")
-async def upload_invoice(request: Request, file: UploadFile = File(...), _: dict = Depends(require_dual_role("admin", "hrbp"))):
+async def upload_invoice(request: Request, file: UploadFile = File(...), _: dict = Depends(require_dual_role(Role.ADMIN, Role.HRBP))):
     """מקבל קובץ PDF/תמונה של חשבונית, שומר אותו ומחזיר נתונים ראשוניים"""
     _validate_upload_file(
         file,
@@ -3178,7 +3179,7 @@ async def upload_invoice(request: Request, file: UploadFile = File(...), _: dict
     return {"message": "Invoice processed", "extracted_data": extracted_data}
 
 @app.post("/api/finops/save_invoice")
-def save_invoice(invoice: FinopsInvoicePayload, _: dict = Depends(require_dual_role("admin", "hrbp"))):
+def save_invoice(invoice: FinopsInvoicePayload, _: dict = Depends(require_dual_role(Role.ADMIN, Role.HRBP))):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     try:
@@ -3195,7 +3196,7 @@ def save_invoice(invoice: FinopsInvoicePayload, _: dict = Depends(require_dual_r
         conn.close()
 
 @app.delete("/api/finops/invoice/{invoice_id}")
-def delete_invoice(invoice_id: str, _: dict = Depends(require_dual_role("admin", "hrbp"))):
+def delete_invoice(invoice_id: str, _: dict = Depends(require_dual_role(Role.ADMIN, Role.HRBP))):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     try:
@@ -3206,7 +3207,7 @@ def delete_invoice(invoice_id: str, _: dict = Depends(require_dual_role("admin",
         conn.close()
 
 @app.post("/api/finops/save_vendor")
-def save_vendor(vendor: FinopsVendorPayload, _: dict = Depends(require_dual_role("admin", "hrbp"))):
+def save_vendor(vendor: FinopsVendorPayload, _: dict = Depends(require_dual_role(Role.ADMIN, Role.HRBP))):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     try:
@@ -3220,7 +3221,7 @@ def save_vendor(vendor: FinopsVendorPayload, _: dict = Depends(require_dual_role
         conn.close()
 
 @app.post("/api/finops/save_categories")
-def save_categories(categories: list[FinopsCategoryPayload], _: dict = Depends(require_dual_role("admin", "hrbp"))):
+def save_categories(categories: list[FinopsCategoryPayload], _: dict = Depends(require_dual_role(Role.ADMIN, Role.HRBP))):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     try:
@@ -3497,7 +3498,7 @@ async def generate_pdf_report(payload: dict, _: str = Depends(require_admin)):
     )
 
 @app.post("/api/tools/generate-manager-report")
-async def generate_manager_report(payload: dict, _: dict = Depends(require_dual_role("admin", "hrbp", "recruiter"))):
+async def generate_manager_report(payload: dict, _: dict = Depends(require_dual_role(Role.ADMIN, Role.HRBP, Role.RECRUITER))):
     """
     דוח מרכז למנהל: משפך גיוס בטווח תאריכים + סטטוס נוכחי, לפי משרה.
     מקבל: job_id (או job_title), date_from (ISO), date_to (ISO).
@@ -4007,7 +4008,7 @@ def _persist_onboarding_record(payload: OnboardingPayload) -> str:
         conn.close()
 
 @app.post("/api/onboarding/wizard")
-async def create_onboarding_wizard(payload: OnboardingPayload, _: dict = Depends(require_dual_role("admin", "hrbp", "recruiter"))):
+async def create_onboarding_wizard(payload: OnboardingPayload, _: dict = Depends(require_dual_role(Role.ADMIN, Role.HRBP, Role.RECRUITER))):
     """
     מקבל את כל המידע מה-Wizard (כולל הצ'קליסט, הזכאויות והניתובים).
     שומר את הרשומה במסד הנתונים כ'ממתין לקליטה'.
@@ -4018,7 +4019,7 @@ async def create_onboarding_wizard(payload: OnboardingPayload, _: dict = Depends
     return {"status": "success", "id": ob_id, "message": "Onboarding wizard completed"}
 
 @app.post("/api/onboarding")
-def create_onboarding(payload: OnboardingPayload, _: dict = Depends(require_dual_role("admin", "hrbp", "recruiter"))):
+def create_onboarding(payload: OnboardingPayload, _: dict = Depends(require_dual_role(Role.ADMIN, Role.HRBP, Role.RECRUITER))):
     """יצירת טופס קליטה חדש - שולח 'מיילים' (לוגים) לקב"ט ו-HRO"""
     ob_id = _persist_onboarding_record(payload)
     return {"status": "success", "id": ob_id, "message": "Onboarding created and Fan-out triggered"}
@@ -4027,7 +4028,7 @@ def create_onboarding(payload: OnboardingPayload, _: dict = Depends(require_dual
 @app.get("/api/onboarding")
 def list_onboarding(
     status: Optional[str] = None,
-    _: dict = Depends(require_dual_role("admin", "hrbp", "recruiter"))
+    _: dict = Depends(require_dual_role(Role.ADMIN, Role.HRBP, Role.RECRUITER))
 ):
     conn = sqlite3.connect(DB_PATH)
     try:
@@ -4040,7 +4041,7 @@ def list_onboarding(
 
 
 @app.post("/api/onboarding/bulk-update")
-def bulk_update_onboarding(payload: OnboardingBulkUpdatePayload, _: dict = Depends(require_dual_role("admin", "hrbp", "recruiter"))):
+def bulk_update_onboarding(payload: OnboardingBulkUpdatePayload, _: dict = Depends(require_dual_role(Role.ADMIN, Role.HRBP, Role.RECRUITER))):
     ids = [item for item in payload.ids if item]
     if not ids:
         raise HTTPException(status_code=400, detail="ids is required")
@@ -4065,7 +4066,7 @@ def bulk_update_onboarding(payload: OnboardingBulkUpdatePayload, _: dict = Depen
     return {"status": "success", "affected": affected}
 
 @app.put("/api/onboarding/{ob_id}")
-def update_onboarding(ob_id: str, payload: OnboardingUpdatePayload, _: dict = Depends(require_dual_role("admin", "hrbp", "recruiter"))):
+def update_onboarding(ob_id: str, payload: OnboardingUpdatePayload, _: dict = Depends(require_dual_role(Role.ADMIN, Role.HRBP, Role.RECRUITER))):
     """Edit onboarding form selectively"""
     conn = sqlite3.connect(DB_PATH)
     try:
@@ -4798,7 +4799,7 @@ async def auth_change_password(payload: dict, user: dict = Depends(get_session_u
 # ----- USER MANAGEMENT (admin only) — uses the new `users` table -----
 
 @app.get("/api/admin/users")
-async def admin_list_users(_: dict = Depends(require_session_role("admin"))):
+async def admin_list_users(_: dict = Depends(require_session_role(Role.ADMIN))):
     with db_conn() as conn:
         c = conn.cursor()
         c.execute("SELECT id, email, full_name, role, employee_number, is_active, must_change_password, created_at, last_login_at FROM users ORDER BY created_at DESC")
@@ -4812,7 +4813,7 @@ async def admin_list_users(_: dict = Depends(require_session_role("admin"))):
 
 
 @app.post("/api/admin/users")
-async def admin_create_user(payload: dict, admin: dict = Depends(require_session_role("admin"))):
+async def admin_create_user(payload: dict, admin: dict = Depends(require_session_role(Role.ADMIN))):
     email = (payload.get("email") or "").strip().lower()
     full_name = (payload.get("full_name") or "").strip()
     role = (payload.get("role") or "recruiter").strip()
@@ -4842,7 +4843,7 @@ async def admin_create_user(payload: dict, admin: dict = Depends(require_session
 
 
 @app.put("/api/admin/users/{user_id}")
-async def admin_update_user(user_id: str, payload: dict, admin: dict = Depends(require_session_role("admin"))):
+async def admin_update_user(user_id: str, payload: dict, admin: dict = Depends(require_session_role(Role.ADMIN))):
     fields, values = [], []
     if "full_name" in payload:
         fields.append("full_name = ?"); values.append((payload["full_name"] or "").strip())
@@ -4867,7 +4868,7 @@ async def admin_update_user(user_id: str, payload: dict, admin: dict = Depends(r
 
 
 @app.post("/api/admin/users/{user_id}/reset-password")
-async def admin_reset_password(user_id: str, admin: dict = Depends(require_session_role("admin"))):
+async def admin_reset_password(user_id: str, admin: dict = Depends(require_session_role(Role.ADMIN))):
     temp_password = secrets.token_urlsafe(9)
     with db_conn() as conn:
         c = conn.cursor()
@@ -4885,7 +4886,7 @@ async def admin_reset_password(user_id: str, admin: dict = Depends(require_sessi
 # ----- IMPERSONATION (admin "view as") -----
 
 @app.post("/api/admin/impersonate/{user_id}")
-async def admin_impersonate(user_id: str, response: Response, admin: dict = Depends(require_session_role("admin"))):
+async def admin_impersonate(user_id: str, response: Response, admin: dict = Depends(require_session_role(Role.ADMIN))):
     if admin.get("impersonator"):
         raise HTTPException(status_code=400, detail="כבר במצב impersonation. סיימי את הסשן הנוכחי קודם.")
     with db_conn() as conn:
@@ -4974,7 +4975,7 @@ async def get_app_config(_: dict = Depends(get_session_user)):
 
 
 @app.put("/api/admin/apps/{app_id}")
-async def set_app_override(app_id: str, payload: dict, admin: dict = Depends(require_session_role("admin"))):
+async def set_app_override(app_id: str, payload: dict, admin: dict = Depends(require_session_role(Role.ADMIN))):
     """Upsert override for a single app. Body: {hidden?: bool, tag?: 'new'|'update'|'coming_soon'|'none'|null}.
     Passing tag=null clears the override (falls back to hardcoded default in registry)."""
     hidden = 1 if payload.get("hidden") else 0
@@ -5071,7 +5072,7 @@ def _emit_notification(
 
 
 @app.post("/api/admin/notifications/send")
-async def admin_send_notification(payload: dict, admin: dict = Depends(require_session_role("admin"))):
+async def admin_send_notification(payload: dict, admin: dict = Depends(require_session_role(Role.ADMIN))):
     user_ids = payload.get("user_ids") or []
     target_group = (payload.get("target_group") or "").strip()
     message = (payload.get("message") or "").strip()
@@ -5132,7 +5133,7 @@ async def admin_send_notification(payload: dict, admin: dict = Depends(require_s
 async def admin_notifications_history(
     limit: int = 50,
     category: Optional[str] = None,
-    admin: dict = Depends(require_session_role("admin")),
+    admin: dict = Depends(require_session_role(Role.ADMIN)),
 ):
     """Return the last `limit` notifications (across all users) for the history table."""
     conn = sqlite3.connect(DB_PATH)
@@ -5299,7 +5300,7 @@ async def update_notification_preferences(payload: dict, user: dict = Depends(ge
 async def admin_notification_history(
     limit: int = 100,
     category: Optional[str] = None,
-    _: dict = Depends(require_session_role("admin")),
+    _: dict = Depends(require_session_role(Role.ADMIN)),
 ):
     """Admin view: notification history across all users, with read stats per message group."""
     conn = sqlite3.connect(DB_PATH)
@@ -5345,7 +5346,7 @@ async def admin_notification_history(
 # ----- INGESTION DIFF (separate from /admin/ingestion/batches above) -----
 
 @app.get("/api/admin/ingestion/batches")
-def list_ingestion_batches_diff(limit: int = 20, _: dict = Depends(require_session_role("admin"))):
+def list_ingestion_batches_diff(limit: int = 20, _: dict = Depends(require_session_role(Role.ADMIN))):
     """Aggregates batch_entity_changes — gives insert/update/delete counts per batch."""
     cap = max(1, min(int(limit or 20), 100))
     conn = sqlite3.connect(DB_PATH)
@@ -5373,7 +5374,7 @@ def list_ingestion_batches_diff(limit: int = 20, _: dict = Depends(require_sessi
 @app.get("/api/admin/ingestion/batch/{batch_id}/changes")
 def get_batch_changes(
     batch_id: str, type: Optional[str] = None, limit: int = 50, offset: int = 0,
-    _: dict = Depends(require_session_role("admin")),
+    _: dict = Depends(require_session_role(Role.ADMIN)),
 ):
     cap = max(1, min(int(limit or 50), 200))
     skip = max(0, int(offset or 0))
@@ -5414,7 +5415,7 @@ def get_batch_rejected_rows(
     batch_id: str,
     limit: int = 100,
     offset: int = 0,
-    _: dict = Depends(require_dual_role("admin", "hrbp")),
+    _: dict = Depends(require_dual_role(Role.ADMIN, Role.HRBP)),
 ):
     """Return rows that were rejected during ingestion for a given batch."""
     conn = sqlite3.connect(DB_PATH)
@@ -5640,7 +5641,7 @@ async def notification_stream(user: dict = Depends(get_session_user)):
 
 
 @app.post("/api/admin/check-inactive-recruiters")
-async def check_inactive_recruiters_endpoint(_: dict = Depends(require_session_role("admin"))):
+async def check_inactive_recruiters_endpoint(_: dict = Depends(require_session_role(Role.ADMIN))):
     """Admin-triggered scan. Safe to call repeatedly — dedupes within 24h."""
     return _check_inactive_recruiters()
 
@@ -5729,7 +5730,7 @@ async def get_sla_alerts(
     stale_candidate_days: int = 14,
     stale_offer_days: int = 7,
     open_job_days: int = 60,
-    _: dict = Depends(require_dual_role("admin", "hrbp", "recruiter", "hiring_manager")),
+    _: dict = Depends(require_dual_role(Role.ADMIN, Role.HRBP, Role.RECRUITER, Role.HIRING_MANAGER)),
 ):
     """Read-only listing of current SLA breaches. Pure compute — no side effects."""
     return _compute_sla_alerts({
@@ -5742,7 +5743,7 @@ async def get_sla_alerts(
 @app.post("/api/sla/scan")
 async def post_sla_scan(
     payload: Optional[dict] = None,
-    admin: dict = Depends(require_session_role("admin")),
+    admin: dict = Depends(require_session_role(Role.ADMIN)),
 ):
     """Admin-triggered: compute breaches AND emit notifications. Dedups within 24h
     so calling it repeatedly is safe. Notifications go to the responsible
@@ -5837,7 +5838,7 @@ async def check_my_inactivity(user: dict = Depends(get_session_user)):
 @app.get("/api/candidates/{candidate_key}")
 def get_candidate_detail(
     candidate_key: str,
-    _: dict = Depends(require_dual_role("admin", "hrbp", "recruiter", "hiring_manager")),
+    _: dict = Depends(require_dual_role(Role.ADMIN, Role.HRBP, Role.RECRUITER, Role.HIRING_MANAGER)),
 ):
     """Detail view for a single candidate. The path key matches by
     candidate.id, candidate name (LOWER), or onboarding.id_num — whichever
@@ -5909,7 +5910,7 @@ def get_candidate_detail(
 @app.get("/api/jobs/{job_key}/candidates")
 def get_job_candidates(
     job_key: str,
-    _: dict = Depends(require_dual_role("admin", "hrbp", "recruiter", "hiring_manager")),
+    _: dict = Depends(require_dual_role(Role.ADMIN, Role.HRBP, Role.RECRUITER, Role.HIRING_MANAGER)),
 ):
     """Candidates of a single job, grouped by unified_stage. Path key matches
     by job.id (preferred) or job.job_title (fallback)."""
@@ -5974,7 +5975,7 @@ def get_job_candidates(
 def advance_candidate_stage(
     candidate_key: str,
     payload: dict,
-    user: dict = Depends(require_dual_role("admin", "hrbp", "recruiter", "hiring_manager")),
+    user: dict = Depends(require_dual_role(Role.ADMIN, Role.HRBP, Role.RECRUITER, Role.HIRING_MANAGER)),
 ):
     """Advance (or change) a candidate's stage.
 
@@ -6087,7 +6088,7 @@ def advance_candidate_stage(
 def edit_candidate(
     candidate_id: str,
     payload: CandidateEditPayload,
-    user: dict = Depends(require_dual_role("admin", "hrbp")),
+    user: dict = Depends(require_dual_role(Role.ADMIN, Role.HRBP)),
 ):
     """Direct candidate field editor with phone/email conflict detection."""
     conn = sqlite3.connect(DB_PATH)
@@ -6175,7 +6176,7 @@ def edit_candidate(
 def edit_job(
     job_id: str,
     payload: JobEditPayload,
-    user: dict = Depends(require_dual_role("admin", "hrbp")),
+    user: dict = Depends(require_dual_role(Role.ADMIN, Role.HRBP)),
 ):
     """Direct job field editor with title+department conflict detection."""
     conn = sqlite3.connect(DB_PATH)
@@ -6241,7 +6242,7 @@ def edit_job(
 def edit_application(
     app_id: str,
     payload: ApplicationEditPayload,
-    user: dict = Depends(require_dual_role("admin", "hrbp", "recruiter")),
+    user: dict = Depends(require_dual_role(Role.ADMIN, Role.HRBP, Role.RECRUITER)),
 ):
     """Direct application field editor."""
     conn = sqlite3.connect(DB_PATH)
@@ -6288,7 +6289,7 @@ def edit_application(
 @app.delete("/api/candidates/{candidate_id}")
 def delete_candidate(
     candidate_id: str,
-    user: dict = Depends(require_dual_role("admin", "hrbp")),
+    user: dict = Depends(require_dual_role(Role.ADMIN, Role.HRBP)),
 ):
     """Soft delete candidate and their associated applications."""
     conn = sqlite3.connect(DB_PATH)
@@ -6319,7 +6320,7 @@ def delete_candidate(
 @app.delete("/api/jobs/{job_id}")
 def delete_job(
     job_id: str,
-    user: dict = Depends(require_dual_role("admin", "hrbp")),
+    user: dict = Depends(require_dual_role(Role.ADMIN, Role.HRBP)),
 ):
     """Soft delete job and its associated applications."""
     conn = sqlite3.connect(DB_PATH)
@@ -6350,7 +6351,7 @@ def delete_job(
 @app.delete("/api/applications/{app_id}")
 def delete_application(
     app_id: str,
-    user: dict = Depends(require_dual_role("admin", "hrbp", "recruiter")),
+    user: dict = Depends(require_dual_role(Role.ADMIN, Role.HRBP, Role.RECRUITER)),
 ):
     """Soft delete application."""
     conn = sqlite3.connect(DB_PATH)
@@ -6549,7 +6550,7 @@ def run_anomaly_scan(conn: sqlite3.Connection, batch_id: str | None = None) -> d
 
 @app.post("/api/anomalies/scan")
 def trigger_anomaly_scan(
-    user: dict = Depends(require_dual_role("admin", "hrbp")),
+    user: dict = Depends(require_dual_role(Role.ADMIN, Role.HRBP)),
 ):
     """Trigger a manual full-database anomaly scan."""
     conn = sqlite3.connect(DB_PATH)
@@ -6570,7 +6571,7 @@ def list_anomalies(
     severity: str = "",
     page: int = 1,
     limit: int = 50,
-    _: dict = Depends(require_dual_role("admin", "hrbp", "recruiter")),
+    _: dict = Depends(require_dual_role(Role.ADMIN, Role.HRBP, Role.RECRUITER)),
 ):
     """List flagged anomalies with optional filters."""
     conn = sqlite3.connect(DB_PATH)
@@ -6613,7 +6614,7 @@ def list_anomalies(
 
 @app.get("/api/anomalies/summary")
 def anomaly_summary(
-    _: dict = Depends(require_dual_role("admin", "hrbp", "recruiter")),
+    _: dict = Depends(require_dual_role(Role.ADMIN, Role.HRBP, Role.RECRUITER)),
 ):
     """Aggregated anomaly counts by type, severity, and status."""
     conn = sqlite3.connect(DB_PATH)
@@ -6644,7 +6645,7 @@ class AnomalyReviewPayload(BaseModel):
 def review_anomaly(
     anomaly_id: str,
     payload: AnomalyReviewPayload,
-    user: dict = Depends(require_dual_role("admin", "hrbp")),
+    user: dict = Depends(require_dual_role(Role.ADMIN, Role.HRBP)),
 ):
     """Mark an anomaly as dismissed or resolved."""
     conn = sqlite3.connect(DB_PATH)
@@ -6687,7 +6688,7 @@ def _auto_scan_after_ingest(conn: sqlite3.Connection, batch_id: str):
 
 @app.get("/api/pipeline/summary")
 def get_pipeline_summary(
-    _: dict = Depends(require_dual_role("admin", "hrbp", "recruiter", "hiring_manager")),
+    _: dict = Depends(require_dual_role(Role.ADMIN, Role.HRBP, Role.RECRUITER, Role.HIRING_MANAGER)),
 ):
     """Stage-level pipeline counts and basic KPIs."""
     conn = sqlite3.connect(DB_PATH)
@@ -7493,7 +7494,7 @@ def _persist_rejected_rows_for_batch(batch_id: str, rejected_rows: list[dict]) -
 async def ingest_smart(
     request: Request,
     file: UploadFile = File(...),
-    user: dict = Depends(require_dual_role("admin", "hrbp")),
+    user: dict = Depends(require_dual_role(Role.ADMIN, Role.HRBP)),
 ):
     """Single Excel file with multiple sheets → auto-detect type and route to each handler."""
     _validate_upload_file(
@@ -7665,7 +7666,7 @@ async def ingest_typed(
     request: Request,
     file_type: str,
     file: UploadFile = File(...),
-    user: dict = Depends(require_dual_role("admin", "hrbp")),
+    user: dict = Depends(require_dual_role(Role.ADMIN, Role.HRBP)),
 ):
     """Unified typed ingest. Drives the full pipeline for one of the 7 sources:
     candidates / jobs / hires / diversity / headcount / budget / attrition.
@@ -7798,7 +7799,7 @@ async def read_headcount(
     month: Optional[str] = None,
     department: Optional[str] = None,
     role: Optional[str] = None,
-    user: dict = Depends(require_dual_role("admin", "hrbp", "recruiter", "hiring_manager")),
+    user: dict = Depends(require_dual_role(Role.ADMIN, Role.HRBP, Role.RECRUITER, Role.HIRING_MANAGER)),
 ):
     """Read headcount snapshots. Returns rows sorted by (month desc, dept, role)
     plus a `summary` block with aggregated standard / current / hire_plan totals
@@ -7846,7 +7847,7 @@ async def read_diversity(
     month: Optional[str] = None,
     department: Optional[str] = None,
     dimension: Optional[str] = None,
-    user: dict = Depends(require_dual_role("admin", "hrbp", "recruiter", "hiring_manager")),
+    user: dict = Depends(require_dual_role(Role.ADMIN, Role.HRBP, Role.RECRUITER, Role.HIRING_MANAGER)),
 ):
     """Diversity snapshots (gender / age_range / etc.). Returns long-format rows
     plus a `pivoted` map for chart-friendly consumption: dimension → bucket → count."""
@@ -7884,7 +7885,7 @@ async def read_attrition(
     month_to: Optional[str] = None,
     department: Optional[str] = None,
     voluntary_only: bool = False,
-    user: dict = Depends(require_dual_role("admin", "hrbp", "recruiter", "hiring_manager")),
+    user: dict = Depends(require_dual_role(Role.ADMIN, Role.HRBP, Role.RECRUITER, Role.HIRING_MANAGER)),
 ):
     """Attrition events. Supports date range (YYYY-MM-DD) and department filter.
     Includes a `summary` with totals split by voluntary/involuntary."""
@@ -7921,7 +7922,7 @@ async def read_hires(
     month_from: Optional[str] = None,
     month_to: Optional[str] = None,
     department: Optional[str] = None,
-    user: dict = Depends(require_dual_role("admin", "hrbp", "recruiter", "hiring_manager")),
+    user: dict = Depends(require_dual_role(Role.ADMIN, Role.HRBP, Role.RECRUITER, Role.HIRING_MANAGER)),
 ):
     """Hires (from the typed `hires` ingest pipeline). Returns rows + summary
     with totals, diversity %, and average salary if present."""
@@ -7967,7 +7968,7 @@ async def ingest_preflight(
     request: Request,
     file_type: str,
     file: UploadFile = File(...),
-    _: dict = Depends(require_dual_role("admin", "hrbp")),
+    _: dict = Depends(require_dual_role(Role.ADMIN, Role.HRBP)),
 ):
     """Dry-run: parse + validate without persisting. Lets admins preview what
     will land and what will be rejected BEFORE committing."""
@@ -7999,7 +8000,7 @@ async def ingest_whatif(
     request: Request,
     file_type: str,
     file: UploadFile = File(...),
-    _: dict = Depends(require_dual_role("admin", "hrbp")),
+    _: dict = Depends(require_dual_role(Role.ADMIN, Role.HRBP)),
 ):
     """Enhancement #1 — DRY-RUN "what-if". Runs the full ingest pipeline inside
     a transaction that ROLLS BACK at the end, so admins see exactly how many
@@ -8162,7 +8163,7 @@ def admin_list_batches(
     limit: int = 50,
     file_type: Optional[str] = None,
     status: Optional[str] = None,
-    _: dict = Depends(require_dual_role("admin")),
+    _: dict = Depends(require_dual_role(Role.ADMIN)),
 ):
     """List ingest batches (newest first). Optional filters by file_type and status.
     Returns the full row + a derived `file_type` extracted from filename prefix
@@ -8200,7 +8201,7 @@ def admin_list_batches(
 
 
 @app.post("/api/admin/batches/{batch_id}/revert")
-def admin_revert_batch(batch_id: str, _: dict = Depends(require_dual_role("admin"))):
+def admin_revert_batch(batch_id: str, _: dict = Depends(require_dual_role(Role.ADMIN))):
     """Revert a single batch by walking batch_entity_changes in reverse:
        - insert → DELETE
        - update → UPDATE back to `before_json`
@@ -8254,7 +8255,7 @@ def admin_revert_batch(batch_id: str, _: dict = Depends(require_dual_role("admin
 
 
 @app.get("/api/admin/quality/summary")
-def admin_quality_summary(_: dict = Depends(require_dual_role("admin"))):
+def admin_quality_summary(_: dict = Depends(require_dual_role(Role.ADMIN))):
     """Top-level KPIs for the Quality tab:
        - total candidates
        - candidates without ANY dedup key (no phone_norm AND no email_norm)
@@ -8289,7 +8290,7 @@ def admin_quality_summary(_: dict = Depends(require_dual_role("admin"))):
 
 
 @app.get("/api/admin/quality/duplicates")
-def admin_quality_duplicates(limit: int = 50, _: dict = Depends(require_dual_role("admin"))):
+def admin_quality_duplicates(limit: int = 50, _: dict = Depends(require_dual_role(Role.ADMIN))):
     """Groups of candidates sharing the same lower-cased name but stored as
     separate rows (because phone/email didn't match). Admin can use this to
     merge manually."""
@@ -8310,7 +8311,7 @@ def admin_quality_duplicates(limit: int = 50, _: dict = Depends(require_dual_rol
 
 
 @app.get("/api/admin/quality/missing")
-def admin_quality_missing(_: dict = Depends(require_dual_role("admin"))):
+def admin_quality_missing(_: dict = Depends(require_dual_role(Role.ADMIN))):
     """Candidates whose row lacks any contact dedup key — admin needs to
     enrich them manually or they'll keep getting re-inserted on each upload."""
     conn = sqlite3.connect(DB_PATH)
@@ -8327,7 +8328,7 @@ def admin_quality_missing(_: dict = Depends(require_dual_role("admin"))):
 
 
 @app.get("/api/admin/quality/sanity")
-def admin_quality_sanity(_: dict = Depends(require_dual_role("admin"))):
+def admin_quality_sanity(_: dict = Depends(require_dual_role(Role.ADMIN))):
     """Cross-type sanity checks — flags inconsistencies between related tables
     so the admin can spot data drift quickly. Each check returns {ok, message, value}."""
     conn = sqlite3.connect(DB_PATH)
@@ -8410,7 +8411,7 @@ def admin_quality_sanity(_: dict = Depends(require_dual_role("admin"))):
 # Lists which UI block reads which table. Updated when adding new consumers.
 # =====================================================================
 @app.get("/api/admin/consumer-map")
-def admin_consumer_map(_: dict = Depends(require_dual_role("admin"))):
+def admin_consumer_map(_: dict = Depends(require_dual_role(Role.ADMIN))):
     return {
         "sources": [
             {"table": "candidates", "consumers": [
@@ -8482,7 +8483,7 @@ async def recruiter_job_matrix(
     recruiter: Optional[str] = None,
     dept: Optional[str] = None,
     active_only: bool = True,
-    _user: dict = Depends(require_session_role("admin", "hrbp")),
+    _user: dict = Depends(require_session_role(Role.ADMIN, Role.HRBP)),
 ):
     """Cross-sectional pipeline matrix: for each (recruiter, job) pair return
     stage counts, funnel conversion rates, and a health indicator.
