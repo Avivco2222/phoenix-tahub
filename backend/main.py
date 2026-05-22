@@ -6252,124 +6252,9 @@ def run_anomaly_scan(conn: sqlite3.Connection, batch_id: str | None = None) -> d
 
 
 # ─── Anomaly API ─────────────────────────────────────────────────────────────
-
-@app.post("/api/anomalies/scan")
-def trigger_anomaly_scan(
-    user: dict = Depends(require_dual_role(Role.ADMIN, Role.HRBP)),
-):
-    """Trigger a manual full-database anomaly scan."""
-    conn = sqlite3.connect(DB_PATH)
-    try:
-        summary = run_anomaly_scan(conn, batch_id=None)
-        total = sum(summary.values())
-        log_audit_action("ANOMALY_SCAN", "ok", f"new={total} breakdown={summary}", user=user.get("email", "admin"))
-        return {"status": "scanned", "new_anomalies": total, "breakdown": summary}
-    finally:
-        conn.close()
-
-
-@app.get("/api/anomalies")
-def list_anomalies(
-    status: str = "open",
-    entity_type: str = "",
-    anomaly_type: str = "",
-    severity: str = "",
-    page: int = 1,
-    limit: int = 50,
-    _: dict = Depends(require_dual_role(Role.ADMIN, Role.HRBP, Role.RECRUITER)),
-):
-    """List flagged anomalies with optional filters."""
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    try:
-        where_parts = ["1=1"]
-        params: list = []
-        if status:
-            where_parts.append("status = ?")
-            params.append(status)
-        if entity_type:
-            where_parts.append("entity_type = ?")
-            params.append(entity_type)
-        if anomaly_type:
-            where_parts.append("anomaly_type = ?")
-            params.append(anomaly_type)
-        if severity:
-            where_parts.append("severity = ?")
-            params.append(severity)
-
-        where_sql = " AND ".join(where_parts)
-        total = conn.execute(f"SELECT COUNT(*) FROM data_anomalies WHERE {where_sql}", params).fetchone()[0]
-        offset = (page - 1) * limit
-        rows = conn.execute(
-            f"SELECT * FROM data_anomalies WHERE {where_sql} ORDER BY created_at DESC LIMIT ? OFFSET ?",
-            params + [limit, offset],
-        ).fetchall()
-        data = []
-        for r in rows:
-            item = dict(r)
-            try:
-                item["meta"] = json.loads(item.get("meta_json") or "{}")
-            except Exception:
-                item["meta"] = {}
-            data.append(item)
-        return {"data": data, "total": total, "page": page}
-    finally:
-        conn.close()
-
-
-@app.get("/api/anomalies/summary")
-def anomaly_summary(
-    _: dict = Depends(require_dual_role(Role.ADMIN, Role.HRBP, Role.RECRUITER)),
-):
-    """Aggregated anomaly counts by type, severity, and status."""
-    conn = sqlite3.connect(DB_PATH)
-    try:
-        c = conn.cursor()
-        by_type = c.execute(
-            "SELECT anomaly_type, status, COUNT(*) FROM data_anomalies GROUP BY anomaly_type, status"
-        ).fetchall()
-        by_severity = c.execute(
-            "SELECT severity, COUNT(*) FROM data_anomalies WHERE status='open' GROUP BY severity"
-        ).fetchall()
-        total_open = c.execute("SELECT COUNT(*) FROM data_anomalies WHERE status='open'").fetchone()[0]
-        return {
-            "total_open": total_open,
-            "by_type": [{"type": r[0], "status": r[1], "count": r[2]} for r in by_type],
-            "by_severity": {r[0]: r[1] for r in by_severity},
-        }
-    finally:
-        conn.close()
-
-
-# AnomalyReviewPayload now lives in backend/schemas/anomalies.py and is
-# re-exported by the module-level import block near the top of this file.
-
-
-@app.patch("/api/anomalies/{anomaly_id}")
-def review_anomaly(
-    anomaly_id: str,
-    payload: AnomalyReviewPayload,
-    user: dict = Depends(require_dual_role(Role.ADMIN, Role.HRBP)),
-):
-    """Mark an anomaly as dismissed or resolved."""
-    conn = sqlite3.connect(DB_PATH)
-    try:
-        row = conn.execute("SELECT id FROM data_anomalies WHERE id=?", (anomaly_id,)).fetchone()
-        if not row:
-            raise HTTPException(status_code=404, detail="אנומליה לא נמצאה")
-        conn.execute(
-            "UPDATE data_anomalies SET status=?, reviewed_by=?, reviewed_at=? WHERE id=?",
-            (payload.status, user.get("email", "admin"), _utcnow().isoformat(), anomaly_id),
-        )
-        conn.commit()
-        log_audit_action(
-            "ANOMALY_REVIEW", "ok",
-            f"id={anomaly_id} status={payload.status} note={payload.note}",
-            user=user.get("email", "admin"),
-        )
-        return {"status": "updated", "anomaly_id": anomaly_id, "new_status": payload.status}
-    finally:
-        conn.close()
+# The four /api/anomalies routes (scan, list, summary, review) moved to
+# backend/routers/anomalies.py (B2). They are wired back into `app` via
+# `app.include_router(...)` at the bottom of this file.
 
 
 # ─── Auto-scan hook: called at the end of every successful ingestion ──────────
@@ -8330,4 +8215,13 @@ async def recruiter_job_matrix(
         cache_conn.close()
 
     return result
+
+
+# ─── Router registration (B2) ────────────────────────────────────────────────
+# Wire APIRouters here AFTER all module-level helpers (log_audit_action,
+# _auto_scan_after_ingest, …) are defined, so the late-bound proxies inside
+# each router resolve their imports cleanly at request time.
+from routers import anomalies as _anomalies_router  # noqa: E402
+
+app.include_router(_anomalies_router.router)
 
