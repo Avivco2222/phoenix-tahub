@@ -46,6 +46,14 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 from aliases import LEGACY_CANDIDATE_ALIASES, TYPED_INGEST_ALIASES
 from constants import Role
+from db import (
+    _safe_connect,
+    db_conn,
+    db_transaction,
+    execute as db_execute,
+    fetch_all,
+    fetch_one,
+)
 from internal_logic import (
     build_snapshots,
     canonicalize_statuses,
@@ -370,21 +378,10 @@ def _validate_upload_file(file: UploadFile, *, allowed_extensions: set[str], all
         raise HTTPException(status_code=400, detail=f"Unsupported MIME type: {content_type}")
 
 
-@contextmanager
-def db_conn():
-    conn = sqlite3.connect(DB_PATH)
-    conn.text_factory = lambda b: b.decode("utf-8", errors="replace") if isinstance(b, bytes) else b
-    try:
-        yield conn
-    finally:
-        conn.close()
-
-
-def _safe_connect() -> sqlite3.Connection:
-    """Create a SQLite connection with safe text decoding for Hebrew/Unicode."""
-    conn = sqlite3.connect(DB_PATH)
-    conn.text_factory = lambda b: b.decode("utf-8", errors="replace") if isinstance(b, bytes) else b
-    return conn
+# db_conn() and _safe_connect() moved to backend/db.py (B3). Re-imported
+# at the top of this module so existing call sites keep working without
+# changes. New helpers fetch_one / fetch_all / execute / db_transaction
+# are available there for code that wants to drop the cursor boilerplate.
 
 
 @app.middleware("http")
