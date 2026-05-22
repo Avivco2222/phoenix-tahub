@@ -1,34 +1,12 @@
-# config.py
+"""Shared configuration for the Phoenix Talent OS FastAPI backend.
+
+Historically this module also hosted the Streamlit prototype's
+brand-colour palette and CSV column mapping. The prototype was retired
+in 2026-02 and removed from the repo, so this module now exposes only
+the database location used by the live backend.
+"""
+
 from pathlib import Path
 
-# --- Phoenix Brand Palette ---
-COLORS = {
-    "primary": "#002649",       # Deep Phoenix Blue
-    "secondary": "#EF6B00",     # Phoenix Orange
-    "background": "#F4F7F6",    # Clean Light Gray (SaaS style)
-    "card_bg": "#FFFFFF",       # White
-    "text_main": "#1A202C",     # Dark Gray (Better than black)
-    "text_sub": "#718096",      # Soft Gray
-    "success": "#38A169",       # Green
-    "warning": "#ECC94B",       # Yellow
-    "danger": "#E53E3E"         # Red
-}
-
-# --- Database Config (Single Source of Truth) ---
 PROJECT_ROOT = Path(__file__).resolve().parent
 DB_NAME = str(PROJECT_ROOT / "phoenix_enterprise.db")
-
-# --- Column Mapping (Hebrew to System) ---
-# מיפוי מדויק לפי הקובץ ששלחת
-RAW_DATA_MAPPING = {
-    'שם מועמד': 'candidate_name',
-    'מצב שיוך למשרה': 'status',
-    'מגייס': 'recruiter',
-    'תחילת גיוס': 'start_date',
-    'תאריך עדכון': 'last_update',
-    'רמה 2': 'division',        # חטיבה
-    'רמה 4': 'department',      # מחלקה
-    'שם המשרה': 'job_title',
-    'סוג ספק': 'source_type',
-    'שם הספק': 'source_name'
-}
