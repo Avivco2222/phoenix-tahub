@@ -293,139 +293,23 @@ def _ensure_jwt_ready() -> None:
         )
 
 
-class OnboardingPayload(BaseModel):
-    firstName: Optional[str] = None
-    lastName: Optional[str] = None
-    idNum: Optional[str] = None
-    startDate: Optional[str] = None
-    jobTitle: Optional[str] = None
-    orgUnit: Optional[str] = None
-    manager: Optional[str] = None
-    base_salary: Optional[float] = 0
-    global_salary: Optional[float] = 0
-    parkingType: Optional[str] = None
-    carNum: Optional[str] = None
-    refName: Optional[str] = None
-    refEmpNum: Optional[str] = None
-    hasDisability: Optional[bool] = False
-
-    name: Optional[str] = None
-    id_num: Optional[str] = None
-    role: Optional[str] = None
-    department: Optional[str] = None
-    start_date: Optional[str] = None
-    parking: Optional[bool] = None
-    car_num: Optional[str] = None
-    referral_name: Optional[str] = None
-    referral_id: Optional[str] = None
-    diversity: Optional[str] = None
-
-
-class FinopsInvoicePayload(BaseModel):
-    id: str
-    vendor: str
-    date: str
-    dueDate: Optional[str] = ""
-    budgetMonth: Optional[str] = ""
-    amount: float
-    category: str
-    subcategory: Optional[str] = ""
-    status: str
-    note: Optional[str] = ""
-    fileUrl: Optional[str] = ""
-
-
-class FinopsVendorPayload(BaseModel):
-    id: str
-    name: str
-    defaultCategory: Optional[str] = ""
-    totalPaid: Optional[float] = 0
-    activeInvoices: Optional[int] = 0
-
-
-class FinopsCategoryPayload(BaseModel):
-    id: int
-    name: str
-    target: Optional[float] = 0
-    previousYearSpend: Optional[float] = 0
-    code: Optional[str] = ""
-    notes: Optional[str] = ""
-    subcategories: Optional[list[str]] = None
-
-
-class OnboardingUpdatePayload(BaseModel):
-    status_only: Optional[bool] = False
-    status: Optional[str] = None
-    buddy: Optional[str] = None
-    equipment_ready: Optional[bool] = None
-    start_date: Optional[str] = None
-    notes: Optional[str] = None
-    name: Optional[str] = None
-    id_num: Optional[str] = None
-    role: Optional[str] = None
-    department: Optional[str] = None
-    manager: Optional[str] = None
-    base_salary: Optional[float] = None
-    global_salary: Optional[float] = None
-    parking: Optional[bool] = None
-    car_num: Optional[str] = None
-    referral_name: Optional[str] = None
-    referral_id: Optional[str] = None
-    diversity: Optional[str] = None
-
-
-class OnboardingBulkUpdatePayload(BaseModel):
-    ids: list[str]
-    status: Literal["pending", "completed", "cancelled", "left_company"]
-
-
-class CandidateEditPayload(BaseModel):
-    name: Optional[str] = None
-    phone: Optional[str] = None
-    email: Optional[str] = None
-    source: Optional[str] = None
-    notes: Optional[str] = None
-    linkedin: Optional[str] = None
-    cv_url: Optional[str] = None
-
-
-class JobEditPayload(BaseModel):
-    job_title: Optional[str] = None
-    department: Optional[str] = None
-    hiring_manager: Optional[str] = None
-    opened_at: Optional[str] = None
-    closed_at: Optional[str] = None
-    close_reason: Optional[str] = None
-    target_count: Optional[int] = None
-
-
-class ApplicationEditPayload(BaseModel):
-    status: Optional[str] = None
-    stage_code: Optional[str] = None
-    recruiter: Optional[str] = None
-    application_date: Optional[str] = None
-    days_in_process: Optional[int] = None
-
-
-class JobsBulkUpdatePayload(BaseModel):
-    job_titles: list[str]
-    action: Literal["close", "set_status", "assign_recruiter"]
-    status: Optional[str] = None
-    recruiter: Optional[str] = None
-    status: Optional[str] = None
-    name: Optional[str] = None
-    id_num: Optional[str] = None
-    role: Optional[str] = None
-    department: Optional[str] = None
-    manager: Optional[str] = None
-    start_date: Optional[str] = None
-    base_salary: Optional[float] = 0
-    global_salary: Optional[float] = 0
-    parking: Optional[bool] = None
-    car_num: Optional[str] = None
-    referral_name: Optional[str] = None
-    referral_id: Optional[str] = None
-    diversity: Optional[str] = None
+# Request/response models moved to backend/schemas/ — see B1 of the
+# structural improvement plan. Re-exporting the names so existing
+# `OnboardingPayload`, `FinopsInvoicePayload`, etc. references in this
+# module keep working without further edits.
+from schemas import (
+    AnomalyReviewPayload,
+    ApplicationEditPayload,
+    CandidateEditPayload,
+    FinopsCategoryPayload,
+    FinopsInvoicePayload,
+    FinopsVendorPayload,
+    JobEditPayload,
+    JobsBulkUpdatePayload,
+    OnboardingBulkUpdatePayload,
+    OnboardingPayload,
+    OnboardingUpdatePayload,
+)
 
 
 def _cleanup_generated_file(path: str) -> None:
@@ -6640,9 +6524,8 @@ def anomaly_summary(
         conn.close()
 
 
-class AnomalyReviewPayload(BaseModel):
-    status: Literal["dismissed", "resolved", "open"]
-    note: Optional[str] = None
+# AnomalyReviewPayload now lives in backend/schemas/anomalies.py and is
+# re-exported by the module-level import block near the top of this file.
 
 
 @app.patch("/api/anomalies/{anomaly_id}")
