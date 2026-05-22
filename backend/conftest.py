@@ -51,6 +51,14 @@ if not _test_db:
     _test_db = _tmp.name
     os.environ["PHOENIX_TEST_DB"] = _test_db
 
+# main.py's fail-fast check on JWT_SECRET runs at import time — before
+# pytest sets PYTEST_CURRENT_TEST per-test — so on a clean CI runner
+# (no backend/.env), the test session would die at module import.
+# Provide a deterministic, throwaway JWT_SECRET for tests if the
+# environment doesn't already carry one. The value must be stable
+# across the session so any tokens minted in fixtures still decode.
+os.environ.setdefault("JWT_SECRET", "test-only-jwt-secret-not-for-prod")
+
 
 def pytest_sessionfinish(session, exitstatus):
     """Clean up the temp DB after the whole test run completes."""
