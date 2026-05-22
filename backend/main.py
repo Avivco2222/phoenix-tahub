@@ -4506,11 +4506,10 @@ def get_neglect_alerts(limit: int = 5):
 
 @app.get("/api/admin/config")
 async def get_admin_config(_: str = Depends(require_admin)):
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("SELECT value FROM system_settings WHERE key='admin_config'")
-    row = c.fetchone()
-    conn.close()
+    with db_conn() as conn:
+        c = conn.cursor()
+        c.execute("SELECT value FROM system_settings WHERE key='admin_config'")
+        row = c.fetchone()
     if row:
         return json.loads(row[0])
     return ADMIN_CONFIG_DEFAULTS
@@ -4518,18 +4517,17 @@ async def get_admin_config(_: str = Depends(require_admin)):
 @app.post("/api/admin/config")
 async def save_admin_config(request: Request, section: str = "general", _: str = Depends(require_admin)):
     payload = await request.json()
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("SELECT value FROM system_settings WHERE key='admin_config'")
-    row = c.fetchone()
-    existing = json.loads(row[0]) if row else {}
-    merged = {**existing, **payload}
-    c.execute(
-        "INSERT OR REPLACE INTO system_settings (key, value) VALUES ('admin_config', ?)",
-        (json.dumps(merged),)
-    )
-    conn.commit()
-    conn.close()
+    with db_conn() as conn:
+        c = conn.cursor()
+        c.execute("SELECT value FROM system_settings WHERE key='admin_config'")
+        row = c.fetchone()
+        existing = json.loads(row[0]) if row else {}
+        merged = {**existing, **payload}
+        c.execute(
+            "INSERT OR REPLACE INTO system_settings (key, value) VALUES ('admin_config', ?)",
+            (json.dumps(merged),)
+        )
+        conn.commit()
     changed_keys = list(payload.keys())
     log_audit_action(
         action="ADMIN_CONFIG_UPDATE",
@@ -4688,28 +4686,25 @@ async def auth_login(payload: dict, response: Response):
     if not email or not password:
         raise HTTPException(status_code=400, detail="חסרים אימייל או סיסמה")
 
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute(
-        "SELECT id, email, password_hash, full_name, role, is_active, must_change_password FROM users WHERE LOWER(email) = ?",
-        (email,),
-    )
-    row = c.fetchone()
-    if not row or not row[5]:
-        conn.close()
-        log_audit_action("LOGIN_FAILED", "warn", f"Unknown or inactive: {email}", user=email)
-        raise HTTPException(status_code=401, detail="אימייל או סיסמה שגויים")
+    with db_conn() as conn:
+        c = conn.cursor()
+        c.execute(
+            "SELECT id, email, password_hash, full_name, role, is_active, must_change_password FROM users WHERE LOWER(email) = ?",
+            (email,),
+        )
+        row = c.fetchone()
+        if not row or not row[5]:
+            log_audit_action("LOGIN_FAILED", "warn", f"Unknown or inactive: {email}", user=email)
+            raise HTTPException(status_code=401, detail="אימייל או סיסמה שגויים")
 
-    user_id, user_email, password_hash, full_name, role, _, must_change = row
-    if not _verify_password(password, password_hash):
-        conn.close()
-        log_audit_action("LOGIN_FAILED", "warn", f"Bad password: {email}", user=email)
-        raise HTTPException(status_code=401, detail="אימייל או סיסמה שגויים")
+        user_id, user_email, password_hash, full_name, role, _, must_change = row
+        if not _verify_password(password, password_hash):
+            log_audit_action("LOGIN_FAILED", "warn", f"Bad password: {email}", user=email)
+            raise HTTPException(status_code=401, detail="אימייל או סיסמה שגויים")
 
-    c.execute("UPDATE users SET last_login_at = ? WHERE id = ?",
-              (datetime.now(timezone.utc).isoformat(), user_id))
-    conn.commit()
-    conn.close()
+        c.execute("UPDATE users SET last_login_at = ? WHERE id = ?",
+                  (datetime.now(timezone.utc).isoformat(), user_id))
+        conn.commit()
 
     token = _make_session_token({
         "sub": user_id, "email": user_email, "name": full_name, "role": role,
@@ -4784,20 +4779,18 @@ async def auth_change_password(payload: dict, user: dict = Depends(get_session_u
     if len(new) < 8:
         raise HTTPException(status_code=400, detail="סיסמה חדשה חייבת לכלול לפחות 8 תווים")
 
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("SELECT password_hash FROM users WHERE id = ?", (user.get("sub"),))
-    row = c.fetchone()
-    if not row or not _verify_password(current, row[0]):
-        conn.close()
-        raise HTTPException(status_code=401, detail="הסיסמה הנוכחית שגויה")
+    with db_conn() as conn:
+        c = conn.cursor()
+        c.execute("SELECT password_hash FROM users WHERE id = ?", (user.get("sub"),))
+        row = c.fetchone()
+        if not row or not _verify_password(current, row[0]):
+            raise HTTPException(status_code=401, detail="הסיסמה הנוכחית שגויה")
 
-    c.execute(
-        "UPDATE users SET password_hash = ?, must_change_password = 0 WHERE id = ?",
-        (_hash_password(new), user.get("sub")),
-    )
-    conn.commit()
-    conn.close()
+        c.execute(
+            "UPDATE users SET password_hash = ?, must_change_password = 0 WHERE id = ?",
+            (_hash_password(new), user.get("sub")),
+        )
+        conn.commit()
     log_audit_action("PASSWORD_CHANGED", "ok", f"User changed own password: {user.get('email')}", user=user.get("email", "unknown"))
     return {"status": "ok"}
 
@@ -4806,11 +4799,10 @@ async def auth_change_password(payload: dict, user: dict = Depends(get_session_u
 
 @app.get("/api/admin/users")
 async def admin_list_users(_: dict = Depends(require_session_role("admin"))):
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("SELECT id, email, full_name, role, employee_number, is_active, must_change_password, created_at, last_login_at FROM users ORDER BY created_at DESC")
-    rows = c.fetchall()
-    conn.close()
+    with db_conn() as conn:
+        c = conn.cursor()
+        c.execute("SELECT id, email, full_name, role, employee_number, is_active, must_change_password, created_at, last_login_at FROM users ORDER BY created_at DESC")
+        rows = c.fetchall()
     return [
         {"id": r[0], "email": r[1], "full_name": r[2], "role": r[3],
          "employee_number": r[4], "is_active": bool(r[5]),
@@ -4834,18 +4826,16 @@ async def admin_create_user(payload: dict, admin: dict = Depends(require_session
         raise HTTPException(status_code=400, detail="מספר עובד (USF) חייב לכלול לפחות 4 תווים")
 
     user_id = f"USR-{uuid.uuid4().hex[:8].upper()}"
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    try:
-        c.execute(
-            "INSERT INTO users (id, email, password_hash, full_name, role, employee_number, is_active, must_change_password, created_at) VALUES (?, ?, ?, ?, ?, ?, 1, 0, ?)",
-            (user_id, email, _hash_password(employee_number), full_name, role, employee_number, datetime.now(timezone.utc).isoformat()),
-        )
-        conn.commit()
-    except sqlite3.IntegrityError:
-        conn.close()
-        raise HTTPException(status_code=409, detail="משתמש עם אימייל זה כבר קיים")
-    conn.close()
+    with db_conn() as conn:
+        c = conn.cursor()
+        try:
+            c.execute(
+                "INSERT INTO users (id, email, password_hash, full_name, role, employee_number, is_active, must_change_password, created_at) VALUES (?, ?, ?, ?, ?, ?, 1, 0, ?)",
+                (user_id, email, _hash_password(employee_number), full_name, role, employee_number, datetime.now(timezone.utc).isoformat()),
+            )
+            conn.commit()
+        except sqlite3.IntegrityError:
+            raise HTTPException(status_code=409, detail="משתמש עם אימייל זה כבר קיים")
 
     log_audit_action("USER_CREATED", "ok", f"Created {email} as {role} (USF={employee_number})", user=admin.get("email", "admin"))
     return {"id": user_id, "email": email, "full_name": full_name, "role": role, "employee_number": employee_number}
@@ -4866,14 +4856,12 @@ async def admin_update_user(user_id: str, payload: dict, admin: dict = Depends(r
         raise HTTPException(status_code=400, detail="אין שדות לעדכון")
 
     values.append(user_id)
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute(f"UPDATE users SET {', '.join(fields)} WHERE id = ?", values)
-    if c.rowcount == 0:
-        conn.close()
-        raise HTTPException(status_code=404, detail="משתמש לא נמצא")
-    conn.commit()
-    conn.close()
+    with db_conn() as conn:
+        c = conn.cursor()
+        c.execute(f"UPDATE users SET {', '.join(fields)} WHERE id = ?", values)
+        if c.rowcount == 0:
+            raise HTTPException(status_code=404, detail="משתמש לא נמצא")
+        conn.commit()
     log_audit_action("USER_UPDATED", "ok", f"Updated user {user_id}", user=admin.get("email", "admin"))
     return {"status": "ok"}
 
@@ -4881,17 +4869,15 @@ async def admin_update_user(user_id: str, payload: dict, admin: dict = Depends(r
 @app.post("/api/admin/users/{user_id}/reset-password")
 async def admin_reset_password(user_id: str, admin: dict = Depends(require_session_role("admin"))):
     temp_password = secrets.token_urlsafe(9)
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute(
-        "UPDATE users SET password_hash = ?, must_change_password = 1 WHERE id = ?",
-        (_hash_password(temp_password), user_id),
-    )
-    if c.rowcount == 0:
-        conn.close()
-        raise HTTPException(status_code=404, detail="משתמש לא נמצא")
-    conn.commit()
-    conn.close()
+    with db_conn() as conn:
+        c = conn.cursor()
+        c.execute(
+            "UPDATE users SET password_hash = ?, must_change_password = 1 WHERE id = ?",
+            (_hash_password(temp_password), user_id),
+        )
+        if c.rowcount == 0:
+            raise HTTPException(status_code=404, detail="משתמש לא נמצא")
+        conn.commit()
     log_audit_action("PASSWORD_RESET", "ok", f"Admin reset password for {user_id}", user=admin.get("email", "admin"))
     return {"temp_password": temp_password}
 
@@ -4902,11 +4888,10 @@ async def admin_reset_password(user_id: str, admin: dict = Depends(require_sessi
 async def admin_impersonate(user_id: str, response: Response, admin: dict = Depends(require_session_role("admin"))):
     if admin.get("impersonator"):
         raise HTTPException(status_code=400, detail="כבר במצב impersonation. סיימי את הסשן הנוכחי קודם.")
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("SELECT id, email, full_name, role, is_active FROM users WHERE id = ?", (user_id,))
-    row = c.fetchone()
-    conn.close()
+    with db_conn() as conn:
+        c = conn.cursor()
+        c.execute("SELECT id, email, full_name, role, is_active FROM users WHERE id = ?", (user_id,))
+        row = c.fetchone()
     if not row or not row[4]:
         raise HTTPException(status_code=404, detail="המשתמש לא נמצא או מושעה")
 
@@ -5616,14 +5601,13 @@ async def notification_stream(user: dict = Depends(get_session_user)):
             while True:
                 await asyncio.sleep(5)
                 try:
-                    conn = sqlite3.connect(DB_PATH)
-                    c = conn.cursor()
-                    rows = c.execute(
-                        "SELECT id, message, severity, sent_by, sent_at, read_at, link, category "
-                        "FROM notifications WHERE user_id = ? AND sent_at > ? ORDER BY sent_at ASC",
-                        (user_id, last_checked),
-                    ).fetchall()
-                    conn.close()
+                    with db_conn() as conn:
+                        c = conn.cursor()
+                        rows = c.execute(
+                            "SELECT id, message, severity, sent_by, sent_at, read_at, link, category "
+                            "FROM notifications WHERE user_id = ? AND sent_at > ? ORDER BY sent_at ASC",
+                            (user_id, last_checked),
+                        ).fetchall()
                 except Exception:
                     yield ": keepalive\n\n"
                     continue
@@ -5860,65 +5844,60 @@ def get_candidate_detail(
     hits first. Returns the row from the unified frame plus the matching
     onboarding record (if any) and the latest 10 audit log lines.
     """
-    conn = sqlite3.connect(DB_PATH)
-    try:
-        df = get_unified_data(conn)
-    except Exception as exc:
-        conn.close()
-        raise HTTPException(status_code=500, detail=f"Pipeline read failed: {exc}") from exc
-
-    if df.empty:
-        conn.close()
-        raise HTTPException(status_code=404, detail="המועמד לא נמצא")
-
-    df["unified_stage"] = df.apply(
-        lambda row: _compute_unified_stage(row.get("stage_code"), row.get("onboarding_status")),
-        axis=1,
-    )
-
-    key = (candidate_key or "").strip().lower()
-    matches = df[
-        (df["candidate_id"].astype(str).str.lower() == key)
-        | (df["candidate_name"].astype(str).str.lower() == key)
-        | (df["id_num"].astype(str).str.lower() == key)
-    ]
-
-    if matches.empty:
-        conn.close()
-        raise HTTPException(status_code=404, detail="המועמד לא נמצא")
-
-    # Pick the most recent application row for this candidate.
-    candidate_row = matches.sort_values("start_date", ascending=False).iloc[0].to_dict()
-
-    # Onboarding (full record) if linked.
-    onboarding = None
-    if candidate_row.get("onboarding_id"):
-        c = conn.cursor()
-        c.execute("SELECT * FROM onboarding WHERE id = ?", (candidate_row["onboarding_id"],))
-        cols = [d[0] for d in c.description]
-        row = c.fetchone()
-        if row:
-            onboarding = dict(zip(cols, row))
-
-    # Recent audit logs that mention this candidate (best-effort).
-    audit_logs: list[dict] = []
-    name = candidate_row.get("candidate_name", "")
-    if name:
+    with db_conn() as conn:
         try:
-            c = conn.cursor()
-            c.execute(
-                "SELECT id, timestamp, action, status, details, user FROM audit_logs "
-                "WHERE details LIKE ? ORDER BY timestamp DESC LIMIT 10",
-                (f"%{name}%",),
-            )
-            audit_logs = [
-                {"id": r[0], "timestamp": r[1], "action": r[2], "status": r[3], "details": r[4], "user": r[5]}
-                for r in c.fetchall()
-            ]
-        except sqlite3.OperationalError:
-            audit_logs = []
+            df = get_unified_data(conn)
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"Pipeline read failed: {exc}") from exc
 
-    conn.close()
+        if df.empty:
+            raise HTTPException(status_code=404, detail="המועמד לא נמצא")
+
+        df["unified_stage"] = df.apply(
+            lambda row: _compute_unified_stage(row.get("stage_code"), row.get("onboarding_status")),
+            axis=1,
+        )
+
+        key = (candidate_key or "").strip().lower()
+        matches = df[
+            (df["candidate_id"].astype(str).str.lower() == key)
+            | (df["candidate_name"].astype(str).str.lower() == key)
+            | (df["id_num"].astype(str).str.lower() == key)
+        ]
+
+        if matches.empty:
+            raise HTTPException(status_code=404, detail="המועמד לא נמצא")
+
+        # Pick the most recent application row for this candidate.
+        candidate_row = matches.sort_values("start_date", ascending=False).iloc[0].to_dict()
+
+        # Onboarding (full record) if linked.
+        onboarding = None
+        if candidate_row.get("onboarding_id"):
+            c = conn.cursor()
+            c.execute("SELECT * FROM onboarding WHERE id = ?", (candidate_row["onboarding_id"],))
+            cols = [d[0] for d in c.description]
+            row = c.fetchone()
+            if row:
+                onboarding = dict(zip(cols, row))
+
+        # Recent audit logs that mention this candidate (best-effort).
+        audit_logs: list[dict] = []
+        name = candidate_row.get("candidate_name", "")
+        if name:
+            try:
+                c = conn.cursor()
+                c.execute(
+                    "SELECT id, timestamp, action, status, details, user FROM audit_logs "
+                    "WHERE details LIKE ? ORDER BY timestamp DESC LIMIT 10",
+                    (f"%{name}%",),
+                )
+                audit_logs = [
+                    {"id": r[0], "timestamp": r[1], "action": r[2], "status": r[3], "details": r[4], "user": r[5]}
+                    for r in c.fetchall()
+                ]
+            except sqlite3.OperationalError:
+                audit_logs = []
 
     return {
         "candidate": candidate_row,
@@ -5934,60 +5913,56 @@ def get_job_candidates(
 ):
     """Candidates of a single job, grouped by unified_stage. Path key matches
     by job.id (preferred) or job.job_title (fallback)."""
-    conn = sqlite3.connect(DB_PATH)
-    try:
-        df = get_unified_data(conn)
-    except Exception as exc:
-        conn.close()
-        raise HTTPException(status_code=500, detail=f"Pipeline read failed: {exc}") from exc
+    with db_conn() as conn:
+        try:
+            df = get_unified_data(conn)
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"Pipeline read failed: {exc}") from exc
 
-    if df.empty:
-        conn.close()
-        return {"job": None, "by_stage": {s: [] for s in UNIFIED_STAGES}, "total": 0}
+        if df.empty:
+            return {"job": None, "by_stage": {s: [] for s in UNIFIED_STAGES}, "total": 0}
 
-    df["unified_stage"] = df.apply(
-        lambda row: _compute_unified_stage(row.get("stage_code"), row.get("onboarding_status")),
-        axis=1,
-    )
+        df["unified_stage"] = df.apply(
+            lambda row: _compute_unified_stage(row.get("stage_code"), row.get("onboarding_status")),
+            axis=1,
+        )
 
-    key = (job_key or "").strip().lower()
-    matches = df[
-        (df["job_id"].astype(str).str.lower() == key)
-        | (df["job_title"].astype(str).str.lower() == key)
-    ]
+        key = (job_key or "").strip().lower()
+        matches = df[
+            (df["job_id"].astype(str).str.lower() == key)
+            | (df["job_title"].astype(str).str.lower() == key)
+        ]
 
-    if matches.empty:
-        conn.close()
-        return {"job": None, "by_stage": {s: [] for s in UNIFIED_STAGES}, "total": 0}
+        if matches.empty:
+            return {"job": None, "by_stage": {s: [] for s in UNIFIED_STAGES}, "total": 0}
 
-    # Job header (first row).
-    head = matches.iloc[0]
-    job_meta = {
-        "job_id": head.get("job_id"),
-        "job_title": head.get("job_title"),
-        "department": head.get("department"),
-        "recruiter": head.get("recruiter"),
-    }
+        # Job header (first row).
+        head = matches.iloc[0]
+        job_meta = {
+            "job_id": head.get("job_id"),
+            "job_title": head.get("job_title"),
+            "department": head.get("department"),
+            "recruiter": head.get("recruiter"),
+        }
 
-    by_stage: dict[str, list] = {s: [] for s in UNIFIED_STAGES}
-    for _i, row in matches.iterrows():
-        stage = str(row["unified_stage"])
-        if stage not in by_stage:
-            continue
-        by_stage[stage].append({
-            "candidate_id": row.get("candidate_id"),
-            "candidate_name": row.get("candidate_name"),
-            "email": row.get("email"),
-            "phone": row.get("phone"),
-            "recruiter": row.get("recruiter"),
-            "days_in_process": int(row.get("days_in_process") or 0),
-            "unified_stage": stage,
-            "status": row.get("status"),
-            "onboarding_id": row.get("onboarding_id"),
-            "id_num": row.get("id_num"),
-        })
+        by_stage: dict[str, list] = {s: [] for s in UNIFIED_STAGES}
+        for _i, row in matches.iterrows():
+            stage = str(row["unified_stage"])
+            if stage not in by_stage:
+                continue
+            by_stage[stage].append({
+                "candidate_id": row.get("candidate_id"),
+                "candidate_name": row.get("candidate_name"),
+                "email": row.get("email"),
+                "phone": row.get("phone"),
+                "recruiter": row.get("recruiter"),
+                "days_in_process": int(row.get("days_in_process") or 0),
+                "unified_stage": stage,
+                "status": row.get("status"),
+                "onboarding_id": row.get("onboarding_id"),
+                "id_num": row.get("id_num"),
+            })
 
-    conn.close()
     return {"job": job_meta, "by_stage": by_stage, "total": int(len(matches))}
 
 
