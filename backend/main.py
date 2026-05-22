@@ -44,6 +44,7 @@ from openpyxl.worksheet.datavalidation import DataValidation
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
+from aliases import LEGACY_CANDIDATE_ALIASES, TYPED_INGEST_ALIASES
 from internal_logic import (
     build_snapshots,
     canonicalize_statuses,
@@ -1534,18 +1535,10 @@ def bump_data_version(conn: Optional[sqlite3.Connection] = None) -> int:
 
 def _normalize_upload_frame(df: pd.DataFrame) -> pd.DataFrame:
     df.columns = df.columns.str.strip()
-    col_map = {
-        "שם מועמד": "name", "שם": "name", "full_name": "name",
-        "דוא\"ל": "email", "אימייל": "email", "מייל": "email", "mail": "email",
-        "שם המשרה": "job_title", "משרה": "job_title", "job": "job_title",
-        "מצב שיוך למשרה": "status", "סטטוס": "status",
-        "מגייס": "recruiter", "מגייסת": "recruiter",
-        "תחילת גיוס": "start_date", "תאריך פתיחה": "start_date",
-        "תאריך הגשה": "start_date", "תאריך מועמדות": "start_date",
-        "רמה 2": "department", "מחלקה": "department", "חטיבה": "department",
-        "מקור הגעה": "source", "מקור": "source",
-    }
-    df.rename(columns=col_map, inplace=True)
+    # Alias table now lives in backend/aliases.py — see that module for the
+    # distinction between LEGACY_CANDIDATE_ALIASES (this call site) and
+    # TYPED_INGEST_ALIASES (used by _apply_extra_aliases below).
+    df.rename(columns=LEGACY_CANDIDATE_ALIASES, inplace=True)
     if "name" not in df.columns:
         raise Exception("חובה לכלול עמודת שם מועמד")
     if "job_title" not in df.columns:
@@ -6820,60 +6813,10 @@ INGEST_REQUIREMENTS: dict[str, dict] = {
 }
 
 
-# Extra Hebrew → canonical column aliases for the typed pipeline. Builds
-# on _normalize_upload_frame's existing mapping for the recruiter case.
-EXTRA_HEBREW_ALIASES = {
-    # candidates / general
-    "טלפון": "phone", "נייד": "phone", "מספר טלפון": "phone",
-    "linkedin": "linkedin", "לינקדאין": "linkedin",
-    "קורות חיים": "cv_url", "cv": "cv_url",
-    "הערות": "notes",
-    "תאריך הגשה": "application_date", "תאריך מועמדות": "application_date",
-    # jobs
-    "מנהל מגייס": "hiring_manager",
-    "תאריך פתיחה": "opened_at", "פתיחה": "opened_at",
-    "תאריך סגירה": "closed_at", "סגירה": "closed_at",
-    "סיבת סגירה": "close_reason",
-    "תקן": "target_count",
-    # hires
-    "שם מועמד": "candidate_name", "שם": "candidate_name",
-    "שם משרה": "job_title", "שם המשרה": "job_title",
-    "תאריך קליטה": "hire_date", "תאריך תחילה": "hire_date",
-    "שכר": "salary", "שכר בסיס": "salary",
-    "מנהל ישיר": "manager",
-    "ממליץ": "referral_name", "חמ\"ח": "referral_name",
-    # diversity
-    "חודש": "snapshot_month", "חודש דיווח": "snapshot_month",
-    "מחלקה": "department", "חטיבה": "department",
-    "ממד": "dimension", "מאפיין": "dimension",
-    "קבוצה": "bucket", "פלח": "bucket",
-    "מספר": "count", "כמות": "count", "סה\"כ": "count",
-    # headcount
-    "תפקיד": "role",
-    "תקן מצבה": "standard",
-    "בפועל": "current", "מצב נוכחי": "current",
-    "עזיבות": "attrition_ytd",
-    "תכנית גיוס": "hire_plan",
-    # budget (most aliases already exist in finops payloads)
-    "מזהה חשבונית": "id", "מזהה": "id",
-    "ספק": "vendor", "סכום": "amount", "קטגוריה": "category",
-    "תאריך": "date", "מועד פירעון": "due_date", "חודש תקציב": "budget_month",
-    "URL קובץ": "file_url",
-    # status appears in BOTH candidates ('ראיון', 'הצעה', ...) and budget
-    # ('שולם', 'ממתין לתשלום', ...). The candidates ingester applies its own
-    # normaliser before this alias map, so it's safe to land here too.
-    "סטטוס": "status",
-    "תת קטגוריה": "subcategory", "תת-קטגוריה": "subcategory",
-    # attrition
-    "שם עובד": "employee_name",
-    "תאריך עזיבה": "leave_date",
-    "סיבה": "reason",
-    "וולונטרי": "voluntary",
-    "מנהל": "manager", "מנהל/ת": "manager",
-    "תפקיד אחרון": "last_role",
-    # Note: "תפקיד" (alone) stays mapped to "role" for headcount — don't override.
-    # The attrition ingester reads both `last_role` and falls back to `role`.
-}
+# Alias tables for the typed-ingest pipeline now live in backend/aliases.py.
+# Kept as a module-level re-export so any code still importing the old
+# name from main.py keeps working.
+EXTRA_HEBREW_ALIASES = TYPED_INGEST_ALIASES
 
 
 def _apply_extra_aliases(df: pd.DataFrame) -> pd.DataFrame:
@@ -6881,7 +6824,7 @@ def _apply_extra_aliases(df: pd.DataFrame) -> pd.DataFrame:
     df.columns = [str(c).strip() for c in df.columns]
     rename = {}
     for col in df.columns:
-        target = EXTRA_HEBREW_ALIASES.get(col)
+        target = TYPED_INGEST_ALIASES.get(col)
         if target and target not in df.columns:
             rename[col] = target
     if rename:
