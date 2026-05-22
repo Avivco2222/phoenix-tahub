@@ -66,3 +66,8 @@ __pycache__/
 # Claude Code worktrees and local merge backups
 .claude/worktrees/
 *.pre-merge-backup
+
+# Local ad-hoc backups (e.g. pre-refactor DB snapshots)
+pre-*-backup/
+*.backup
+*.bak
