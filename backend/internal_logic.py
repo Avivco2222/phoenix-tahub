@@ -1,3 +1,18 @@
+"""Internal analytics engine for the Phoenix Talent OS backend.
+
+Owns the cross-cutting derivations the API endpoints rely on:
+
+* Canonicalisation of free-text recruiting statuses into a fixed stage code.
+* ETL rule execution with audit trail.
+* KPI / funnel / job-health snapshot materialisation.
+* Response cache invalidated by a content-addressed data version.
+* Ghosting risk score and executive insight templates.
+
+All public helpers operate on an open :class:`sqlite3.Connection` and a
+pandas :class:`~pandas.DataFrame` produced by ``get_unified_data`` in
+``main.py``. The module is import-safe (no side effects on import).
+"""
+
 import hashlib
 import json
 import math
@@ -8,7 +23,7 @@ from typing import Any
 import pandas as pd
 
 
-DEFAULT_STATUS_LEXICON = [
+DEFAULT_STATUS_LEXICON: list[tuple[str, str]] = [
     ("HIRED", "קליטה|גיוס|התקבל"),
     ("OFFER", "הצעת שכר|חוזה|ממתין לחתימה|הצעה"),
     ("INTERVIEW", "ראיון|מקצועי|מרכז הערכה|מנהל"),
@@ -17,7 +32,7 @@ DEFAULT_STATUS_LEXICON = [
     ("ACTIVE", "חדש|בתהליך|ממתין"),
 ]
 
-DEFAULT_INSIGHT_TEMPLATES = [
+DEFAULT_INSIGHT_TEMPLATES: list[tuple[str, str, str]] = [
     (
         "high_sla",
         "Executive alert: {breach_percentage}% of active pipeline is above SLA. Top bottlenecks: {top_jobs}.",
@@ -34,6 +49,11 @@ DEFAULT_INSIGHT_TEMPLATES = [
         "True",
     ),
 ]
+
+# Centralised regex patterns reused by several functions.
+CLOSED_STATUS_PATTERN: str = "קליטה|גיוס|התקבל|דחייה|הסרה|ויתור|הקפאה|נדחה"
+HIRED_STATUS_PATTERN: str = "קליטה|גיוס|התקבל"
+SLA_BREACH_DAYS_THRESHOLD: int = 40
 
 
 def seed_internal_logic_tables(conn: sqlite3.Connection) -> None:
