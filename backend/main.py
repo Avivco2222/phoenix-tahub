@@ -726,6 +726,11 @@ CONTRACTS_DIR = os.path.join(os.path.dirname(__file__), "contracts")
 # 1. ENTITY RELATIONSHIP MODEL (יצירת הטבלאות)
 # ==========================================
 def init_db():
+    # init_db runs once at module load. Failure here kills the import
+    # (and the process), so the connection would not "leak" in any
+    # meaningful sense; wrapping the full 480-line body in try/finally
+    # would force a re-indent across the whole function and is left
+    # for a future routers-split refactor.
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
 
@@ -5444,52 +5449,51 @@ def cross_module_search(q: str = "", limit: int = 10, _: dict = Depends(get_sess
     cap = max(1, min(int(limit or 10), 25))
     pattern = f"%{query.lower()}%"
 
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
     candidates, jobs, applications = [], [], []
-    try:
-        c.execute(
-            """SELECT id, name, email, phone, source FROM candidates
-               WHERE (LOWER(IFNULL(name,'')) LIKE ? OR LOWER(IFNULL(email,'')) LIKE ?
-                  OR LOWER(IFNULL(phone,'')) LIKE ? OR LOWER(IFNULL(id,'')) LIKE ?)
-                  AND COALESCE(is_active, 1) = 1 LIMIT ?""",
-            (pattern, pattern, pattern, pattern, cap),
-        )
-        candidates = [{"id": r[0], "name": r[1], "email": r[2], "phone": r[3], "source": r[4]} for r in c.fetchall()]
-    except sqlite3.OperationalError:
-        pass
-    try:
-        c.execute(
-            """SELECT id, job_title, department, hiring_manager FROM jobs
-               WHERE (LOWER(IFNULL(job_title,'')) LIKE ? OR LOWER(IFNULL(department,'')) LIKE ?
-                  OR LOWER(IFNULL(hiring_manager,'')) LIKE ? OR LOWER(IFNULL(id,'')) LIKE ?)
-                  AND COALESCE(is_active, 1) = 1 LIMIT ?""",
-            (pattern, pattern, pattern, pattern, cap),
-        )
-        jobs = [{"id": r[0], "title": r[1], "department": r[2], "hiring_manager": r[3]} for r in c.fetchall()]
-    except sqlite3.OperationalError:
-        pass
-    try:
-        c.execute(
-            """SELECT a.app_id, a.status, a.recruiter, a.start_date, a.days_in_process,
-                      c.name, j.job_title
-               FROM applications a
-               LEFT JOIN candidates c ON c.id = a.candidate_id
-               LEFT JOIN jobs j       ON j.id = a.job_id
-               WHERE (LOWER(IFNULL(a.app_id,'')) LIKE ? OR LOWER(IFNULL(a.status,'')) LIKE ?
-                  OR LOWER(IFNULL(a.recruiter,'')) LIKE ? OR LOWER(IFNULL(c.name,'')) LIKE ?
-                  OR LOWER(IFNULL(j.job_title,'')) LIKE ?)
-                  AND COALESCE(a.is_active, 1) = 1 AND COALESCE(c.is_active, 1) = 1 AND COALESCE(j.is_active, 1) = 1 LIMIT ?""",
-            (pattern, pattern, pattern, pattern, pattern, cap),
-        )
-        applications = [{
-            "app_id": r[0], "status": r[1], "recruiter": r[2],
-            "start_date": r[3], "days_in_process": r[4],
-            "candidate_name": r[5], "job_title": r[6],
-        } for r in c.fetchall()]
-    except sqlite3.OperationalError:
-        pass
-    conn.close()
+    with db_conn() as conn:
+        c = conn.cursor()
+        try:
+            c.execute(
+                """SELECT id, name, email, phone, source FROM candidates
+                   WHERE (LOWER(IFNULL(name,'')) LIKE ? OR LOWER(IFNULL(email,'')) LIKE ?
+                      OR LOWER(IFNULL(phone,'')) LIKE ? OR LOWER(IFNULL(id,'')) LIKE ?)
+                      AND COALESCE(is_active, 1) = 1 LIMIT ?""",
+                (pattern, pattern, pattern, pattern, cap),
+            )
+            candidates = [{"id": r[0], "name": r[1], "email": r[2], "phone": r[3], "source": r[4]} for r in c.fetchall()]
+        except sqlite3.OperationalError:
+            pass
+        try:
+            c.execute(
+                """SELECT id, job_title, department, hiring_manager FROM jobs
+                   WHERE (LOWER(IFNULL(job_title,'')) LIKE ? OR LOWER(IFNULL(department,'')) LIKE ?
+                      OR LOWER(IFNULL(hiring_manager,'')) LIKE ? OR LOWER(IFNULL(id,'')) LIKE ?)
+                      AND COALESCE(is_active, 1) = 1 LIMIT ?""",
+                (pattern, pattern, pattern, pattern, cap),
+            )
+            jobs = [{"id": r[0], "title": r[1], "department": r[2], "hiring_manager": r[3]} for r in c.fetchall()]
+        except sqlite3.OperationalError:
+            pass
+        try:
+            c.execute(
+                """SELECT a.app_id, a.status, a.recruiter, a.start_date, a.days_in_process,
+                          c.name, j.job_title
+                   FROM applications a
+                   LEFT JOIN candidates c ON c.id = a.candidate_id
+                   LEFT JOIN jobs j       ON j.id = a.job_id
+                   WHERE (LOWER(IFNULL(a.app_id,'')) LIKE ? OR LOWER(IFNULL(a.status,'')) LIKE ?
+                      OR LOWER(IFNULL(a.recruiter,'')) LIKE ? OR LOWER(IFNULL(c.name,'')) LIKE ?
+                      OR LOWER(IFNULL(j.job_title,'')) LIKE ?)
+                      AND COALESCE(a.is_active, 1) = 1 AND COALESCE(c.is_active, 1) = 1 AND COALESCE(j.is_active, 1) = 1 LIMIT ?""",
+                (pattern, pattern, pattern, pattern, pattern, cap),
+            )
+            applications = [{
+                "app_id": r[0], "status": r[1], "recruiter": r[2],
+                "start_date": r[3], "days_in_process": r[4],
+                "candidate_name": r[5], "job_title": r[6],
+            } for r in c.fetchall()]
+        except sqlite3.OperationalError:
+            pass
     return {"candidates": candidates, "jobs": jobs, "applications": applications}
 
 
