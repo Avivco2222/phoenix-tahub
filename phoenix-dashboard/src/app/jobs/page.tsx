@@ -10,12 +10,13 @@ import { canMutateData } from "@/lib/access-control";
 import {
   Briefcase, Search, Download, TrendingUp, TrendingDown,
   LayoutGrid, List, MoreVertical, Mail, Zap, MessageSquare,
-  Check, Settings, X, Save, RotateCcw, Info, Calculator, Users, PieChart
+  Check, Settings, X, Save, RotateCcw, Info, Calculator, Users, PieChart, Plus
 } from "lucide-react";
 import { PageHeader } from "@/components/PageHeader";
 import { JobSidePanel } from "@/components/JobSidePanel";
+import JobCreateModal from "@/components/JobCreateModal";
 import { STAGE_ORDER, getStageMeta, type UnifiedStage } from "@/lib/stages";
-import { useDataVersion } from "@/context/DataVersionContext";
+import { useDataVersion, useDataVersionRefresh } from "@/context/DataVersionContext";
 
 interface Job {
   id: string; title: string; dept: string; type: string; recruiter: string;
@@ -67,6 +68,10 @@ function JobsPageInner() {
   const [drillJob, setDrillJob] = useState<{ key: string; initialStage: UnifiedStage | "" } | null>(null);
   // Triggers a refetch whenever a new batch lands via /api/ingest/{type}.
   const dataVersion = useDataVersion();
+  // "+ job" modal — A9-FU UX wave 3. Bumps data_version on success so the
+  // jobs list refetches via the existing useEffect hook.
+  const [createOpen, setCreateOpen] = useState(false);
+  const refreshDataVersion = useDataVersionRefresh();
   const normalizedSearch = searchTerm.trim().toLowerCase();
   const [selectedJobTitles, setSelectedJobTitles] = useState<string[]>([]);
   const [bulkAction, setBulkAction] = useState<"close" | "set_status" | "assign_recruiter">("close");
@@ -420,6 +425,9 @@ function JobsPageInner() {
           subtitle="הצלבת נתוני ATS (פתוחות) מול דוח קליטות (סגורות) + דירוג בריאות חכם"
           actions={
             <div className="flex items-center gap-3">
+            <button onClick={() => setCreateOpen(true)} className="bg-[#002649] text-white px-4 py-2.5 rounded-xl font-bold text-sm flex items-center gap-2 hover:bg-[#EF6B00] transition-all shadow-sm">
+                <Plus size={16} /> משרה חדשה
+            </button>
             <button onClick={() => setShowAdmin(true)} className="p-2.5 bg-white border border-slate-200 text-slate-500 rounded-xl hover:text-[#EF6B00] transition-all shadow-sm flex items-center gap-2 font-bold text-sm">
                 <Settings size={18} /> הגדרות אלגוריתם
             </button>
@@ -437,6 +445,14 @@ function JobsPageInner() {
           }
         />
       </div>
+
+      {/* Manual job-create form — replaces the Excel round-trip for the
+          single-row case. Bumps data_version on success. */}
+      <JobCreateModal
+        open={createOpen}
+        onClose={() => setCreateOpen(false)}
+        onCreated={() => { void refreshDataVersion(); }}
+      />
 
       <div className="max-w-[1600px] mx-auto px-8 mt-4 space-y-6">
         {/* --- סרגל סינון --- */}

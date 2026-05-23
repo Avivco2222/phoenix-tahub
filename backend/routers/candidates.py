@@ -1,20 +1,24 @@
-"""Candidate endpoints — list, detail, stage advance, edit, soft-delete.
+"""Candidate endpoints — list, detail, create, stage advance, edit, soft-delete.
 
-Five routes that drive the candidates view + side panel:
+Six routes that drive the candidates view + side panel:
 
     GET    /api/candidates                   (alias /candidates)
     GET    /api/candidates/{candidate_key}
+    POST   /api/candidates                   — manual create + inline application
     PATCH  /api/candidates/{candidate_key}/stage
     PATCH  /api/candidates/{candidate_id}
     DELETE /api/candidates/{candidate_id}
 
-Auth gates preserved from the inline versions:
-- list, detail, stage:  ADMIN | HRBP | RECRUITER | HIRING_MANAGER
-- edit, delete:         ADMIN | HRBP
+Auth gates:
+- list, detail, stage, create: ADMIN | HRBP | RECRUITER | HIRING_MANAGER
+- edit, delete:                ADMIN | HRBP
 
-Endpoint bodies are reproduced verbatim from main.py — same SQL,
-same response shapes, same validators — so this is a pure relocation
-with zero observable API change.
+POST /api/candidates was added in A9-FU UX wave 3 so a recruiter can
+add one person via a form instead of downloading an Excel template,
+filling one row, and uploading. It reuses the same dedup / insert
+primitives that the Excel ingest handlers use (insert_candidate +
+find_existing_candidate) so behaviour and audit trail match the bulk
+path exactly.
 """
 
 import sqlite3
@@ -22,7 +26,8 @@ import uuid
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
-from utils import _nan_safe_records, mask_value, normalize_email, normalize_phone
+from utils import _nan_safe_records, iteration_signature, mask_value, normalize_email, normalize_phone
+from ingestion import find_existing_candidate, insert_candidate
 from pipeline import _compute_unified_stage, get_unified_data
 from typing import Optional
 
@@ -31,7 +36,7 @@ from audit import _create_manual_edit_batch, _record_change, bump_data_version, 
 from auth import require_dual_role
 from constants import Role, UNIFIED_STAGES
 from db import db_conn
-from schemas import CandidateEditPayload
+from schemas import CandidateCreatePayload, CandidateEditPayload
 
 
 router = APIRouter(tags=["candidates"])
@@ -216,6 +221,126 @@ def get_candidate_detail(
         "candidate": candidate_row,
         "onboarding": onboarding,
         "audit_logs": audit_logs,
+    }
+
+
+@router.post("/api/candidates", status_code=201)
+def create_candidate(
+    payload: CandidateCreatePayload,
+    user: dict = Depends(require_dual_role(Role.ADMIN, Role.HRBP, Role.RECRUITER)),
+):
+    """Create one candidate, with an optional inline application row.
+
+    Mirrors the candidate-ingest path so behaviour is identical to a
+    single-row Excel upload:
+
+    * Normalises phone / email and masks them with the same helpers
+      (``normalize_phone`` / ``normalize_email`` / ``mask_value``) so
+      the resulting ``phone_norm`` / ``email_norm`` columns match what
+      the Excel pipeline would produce.
+    * Dedup via ``find_existing_candidate`` — if a candidate with the
+      same masked phone or email already exists, returns **409** with
+      ``conflicting_id`` and ``conflicting_name``. The UI uses that to
+      offer "add a job to the existing candidate" instead of forcing a
+      duplicate. Same shape as the PATCH conflict response below.
+    * Creates a per-edit audit batch (``EDIT-CAN-*``) via
+      ``_create_manual_edit_batch`` and records the insert in
+      ``batch_entity_changes`` so the existing revert flow works on
+      manually-created candidates too.
+    * Bumps the global data_version so the frontend re-fetches its
+      candidates list automatically.
+
+    If ``job_id`` is provided, an ``applications`` row is also inserted
+    in the same transaction (this is the 90% case — recruiter creates
+    a candidate they just interviewed for a specific job).
+    """
+    actor = user.get("email", "user")
+
+    # Step 1: normalise + mask exactly like the ingest path does.
+    raw_phone_norm = normalize_phone(payload.phone)
+    raw_email_norm = normalize_email(payload.email)
+    parsed = {
+        "name": payload.name.strip(),
+        "phone": mask_value(payload.phone),
+        "email": mask_value(payload.email),
+        "phone_norm": mask_value(raw_phone_norm),
+        "email_norm": mask_value(raw_email_norm),
+        "source": payload.source,
+        "notes": payload.notes,
+        "linkedin": payload.linkedin,
+        "cv_url": payload.cv_url,
+    }
+
+    conn = sqlite3.connect(shared_config.DB_NAME)
+    try:
+        # Step 2: dedup gate — refuse if phone or email collides.
+        existing_id = find_existing_candidate(conn, parsed["phone_norm"], parsed["email_norm"])
+        if existing_id:
+            row = conn.execute(
+                "SELECT id, name FROM candidates WHERE id = ?", (existing_id,)
+            ).fetchone()
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "CANDIDATE_CONFLICT",
+                    "message": f"מועמד עם טלפון/אימייל זה כבר קיים: {row[1] if row else existing_id}",
+                    "conflicting_id": existing_id,
+                    "conflicting_name": row[1] if row else None,
+                },
+            )
+
+        # Step 3: insert candidate using the shared primitive so the audit
+        # trail matches the ingest path bit-for-bit.
+        batch_id = _create_manual_edit_batch("candidate", "new", actor)
+        candidate_id = insert_candidate(conn, parsed, batch_id)
+        _record_change(conn, batch_id, "candidate", candidate_id, "insert", None, parsed)
+
+        # Step 4: optional inline application.
+        application_id: Optional[str] = None
+        if payload.job_id:
+            # Verify the job exists so we fail fast with a clean message
+            # rather than dropping a dangling application.
+            jrow = conn.execute("SELECT id FROM jobs WHERE id = ?", (payload.job_id,)).fetchone()
+            if not jrow:
+                conn.rollback()
+                raise HTTPException(status_code=400, detail=f"job_id לא נמצא: {payload.job_id}")
+            now_iso = datetime.now(timezone.utc).isoformat()
+            sig = iteration_signature(payload.status, now_iso, payload.recruiter)
+            application_id = f"APP-{uuid.uuid4().hex[:10].upper()}"
+            conn.execute(
+                """INSERT INTO applications
+                   (app_id, candidate_id, job_id, status, recruiter, start_date,
+                    days_in_process, stage_code, iteration_signature, application_date, batch_id)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    application_id, candidate_id, payload.job_id,
+                    payload.status, payload.recruiter,
+                    now_iso, 0,
+                    "ACTIVE",  # the runtime status lexicon recomputes this when /candidates is read
+                    sig, now_iso, batch_id,
+                ),
+            )
+            _record_change(conn, batch_id, "application", application_id, "insert", None, {
+                "candidate_id": candidate_id, "job_id": payload.job_id,
+                "status": payload.status, "recruiter": payload.recruiter,
+                "iteration_signature": sig,
+            })
+
+        conn.commit()
+    finally:
+        conn.close()
+
+    log_audit_action(
+        "CANDIDATE_CREATE", "ok",
+        f"id={candidate_id} job_id={payload.job_id or '-'} batch={batch_id}",
+        user=actor,
+    )
+    bump_data_version()
+    return {
+        "status": "created",
+        "candidate_id": candidate_id,
+        "application_id": application_id,
+        "batch_id": batch_id,
     }
 
 

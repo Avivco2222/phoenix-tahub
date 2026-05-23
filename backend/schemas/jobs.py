@@ -23,6 +23,19 @@ class JobEditPayload(BaseModel):
     target_count: Optional[int] = None
 
 
+class JobCreatePayload(BaseModel):
+    """Body for POST /api/jobs. ``job_title`` and ``department`` are both
+    required because the dedup key is the ``(job_title, department)`` pair —
+    a job named "Backend Engineer" can legitimately exist in both R&D and
+    Service, so neither alone is unique."""
+
+    job_title: str
+    department: str
+    hiring_manager: Optional[str] = None
+    opened_at: Optional[str] = None
+    target_count: Optional[int] = 1
+
+
 class JobsBulkUpdatePayload(BaseModel):
     job_titles: list[str]
     action: Literal["close", "set_status", "assign_recruiter"]

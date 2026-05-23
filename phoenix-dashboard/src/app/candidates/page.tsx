@@ -10,10 +10,11 @@ import { PageHeader } from "@/components/PageHeader";
 import { StageBadge } from "@/components/StageBadge";
 import { StageFilterChips } from "@/components/StageFilterChips";
 import { CandidateSidePanel } from "@/components/CandidateSidePanel";
-import { useDataVersion } from "@/context/DataVersionContext";
+import CandidateCreateModal from "@/components/CandidateCreateModal";
+import { useDataVersion, useDataVersionRefresh } from "@/context/DataVersionContext";
 import type { UnifiedStage } from "@/lib/stages";
 import {
-  Users, Search, Briefcase, Plus, UserCheck,
+  Users, Search, Briefcase, Plus, UserCheck, UserPlus,
   Clock, XCircle, CheckCircle2, Edit3, Trash2,
   Lock, CheckSquare, Save, Settings, X,
   Car, Smartphone, Coffee, Download, Send, UserMinus, UserCheck2, Loader2
@@ -237,6 +238,11 @@ export default function CandidatesPage() {
   const dataVersion = useDataVersion();
   useEffect(() => { void reloadUnified(); }, [reloadUnified, dataVersion]);
 
+  // "+ candidate" modal — A9-FU UX wave 3. Triggers a data_version bump
+  // on success which re-runs reloadUnified() via the effect above.
+  const [createOpen, setCreateOpen] = useState(false);
+  const refreshDataVersion = useDataVersionRefresh();
+
   // Recruiter / department options derived from the rows themselves so the
   // dropdowns stay in sync with what the user actually sees.
   const filterOptions = React.useMemo(() => {
@@ -433,16 +439,34 @@ export default function CandidatesPage() {
         title="ניהול מועמדים"
         subtitle="ניהול משפך הגיוס, טרום קליטה, ועובדים שנקלטו בארגון."
         actions={
-          effectiveUser.role === "admin" ? (
-            <div className="flex items-center gap-3 bg-slate-100 p-2 rounded-xl border border-slate-200">
-              <span className="text-xs font-bold text-slate-500">תצוגה כ:</span>
-              <select value={userRole} onChange={e => {setUserRole(e.target.value as "recruiter" | "admin"); if(e.target.value==='recruiter' && activeTab==='archive') setActiveTab('preboarding');}} className="bg-white border border-slate-200 rounded-lg text-sm font-bold text-[#002649] p-1.5 outline-none cursor-pointer">
-                <option value="recruiter">מגייסת (Recruiter)</option>
-                <option value="admin">מנהלת מערכת (Admin)</option>
-              </select>
-            </div>
-          ) : null
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => setCreateOpen(true)}
+              className="px-4 py-2 rounded-xl bg-[#002649] text-white text-sm font-black hover:bg-[#EF6B00] transition-colors flex items-center gap-2 shadow-sm"
+            >
+              <UserPlus size={16} /> מועמד חדש
+            </button>
+            {effectiveUser.role === "admin" && (
+              <div className="flex items-center gap-3 bg-slate-100 p-2 rounded-xl border border-slate-200">
+                <span className="text-xs font-bold text-slate-500">תצוגה כ:</span>
+                <select value={userRole} onChange={e => {setUserRole(e.target.value as "recruiter" | "admin"); if(e.target.value==='recruiter' && activeTab==='archive') setActiveTab('preboarding');}} className="bg-white border border-slate-200 rounded-lg text-sm font-bold text-[#002649] p-1.5 outline-none cursor-pointer">
+                  <option value="recruiter">מגייסת (Recruiter)</option>
+                  <option value="admin">מנהלת מערכת (Admin)</option>
+                </select>
+              </div>
+            )}
+          </div>
         }
+      />
+
+      {/* Manual candidate-create form — replaces the Excel round-trip for the
+          single-row case. On success it bumps data_version which re-fetches
+          the candidates list automatically. */}
+      <CandidateCreateModal
+        open={createOpen}
+        onClose={() => setCreateOpen(false)}
+        onCreated={() => { void refreshDataVersion(); }}
       />
 
       {/* Stage filter chips — single row covering the entire funnel. */}

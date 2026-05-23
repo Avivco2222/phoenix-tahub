@@ -12,13 +12,13 @@ the more specific ``from schemas.onboarding import X`` if they prefer.
 
 from .anomalies import AnomalyReviewPayload
 from .applications import ApplicationEditPayload
-from .candidates import CandidateEditPayload
+from .candidates import CandidateCreatePayload, CandidateEditPayload
 from .finops import (
     FinopsCategoryPayload,
     FinopsInvoicePayload,
     FinopsVendorPayload,
 )
-from .jobs import JobEditPayload, JobsBulkUpdatePayload
+from .jobs import JobCreatePayload, JobEditPayload, JobsBulkUpdatePayload
 from .onboarding import (
     OnboardingBulkUpdatePayload,
     OnboardingPayload,
@@ -28,10 +28,12 @@ from .onboarding import (
 __all__ = [
     "AnomalyReviewPayload",
     "ApplicationEditPayload",
+    "CandidateCreatePayload",
     "CandidateEditPayload",
     "FinopsCategoryPayload",
     "FinopsInvoicePayload",
     "FinopsVendorPayload",
+    "JobCreatePayload",
     "JobEditPayload",
     "JobsBulkUpdatePayload",
     "OnboardingBulkUpdatePayload",

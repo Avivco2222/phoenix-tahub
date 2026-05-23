@@ -23,6 +23,8 @@ zero observable API change.
 
 import json
 import sqlite3
+import uuid
+from datetime import datetime, timezone
 
 import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException
@@ -35,7 +37,7 @@ from auth import require_admin, require_dual_role
 from constants import Role, UNIFIED_STAGES
 from db import db_conn
 from internal_logic import get_cached_response, set_cached_response
-from schemas import JobEditPayload, JobsBulkUpdatePayload
+from schemas import JobCreatePayload, JobEditPayload, JobsBulkUpdatePayload
 
 
 router = APIRouter(tags=["jobs"])
@@ -164,6 +166,75 @@ def get_jobs(
         key=lambda x: (not x["is_active"], -x["sla_breaches"], -x["max_days"]),
     )
     return jobs_summary
+
+
+@router.post("/api/jobs", status_code=201)
+def create_job(
+    payload: JobCreatePayload,
+    user: dict = Depends(require_dual_role(Role.ADMIN, Role.HRBP)),
+):
+    """Create one job manually (A9-FU UX wave 3).
+
+    Mirrors the Excel ingest path's job upsert exactly:
+
+    * Dedup key is ``(LOWER(job_title), LOWER(IFNULL(department,'')))`` —
+      the same key the ``_ingest_jobs`` handler uses. If a matching row
+      exists, returns 409 with ``existing_id`` so the UI can offer
+      "open the existing job" instead of forcing a duplicate.
+    * ``opened_at`` defaults to ``datetime.now(UTC).isoformat()`` (same
+      fallback the ingest handler applies when the column is missing).
+    * Creates a per-edit audit batch (``EDIT-JOB-*``) via
+      ``_create_manual_edit_batch`` + records the insert in
+      ``batch_entity_changes`` so the existing revert flow works.
+    * Bumps the global data_version so the jobs list refreshes.
+    """
+    actor = user.get("email", "user")
+    title = payload.job_title.strip()
+    dept = payload.department.strip() or "General"
+
+    conn = sqlite3.connect(shared_config.DB_NAME)
+    try:
+        existing = conn.execute(
+            "SELECT id FROM jobs WHERE LOWER(job_title) = LOWER(?) "
+            "AND LOWER(IFNULL(department,'')) = LOWER(?) LIMIT 1",
+            (title, dept),
+        ).fetchone()
+        if existing:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "JOB_CONFLICT",
+                    "message": f"משרה '{title}' בחטיבה '{dept}' כבר קיימת",
+                    "existing_id": existing[0],
+                },
+            )
+
+        batch_id = _create_manual_edit_batch("job", "new", actor)
+        job_id = f"JOB-{uuid.uuid4().hex[:10].upper()}"
+        opened_at = payload.opened_at or datetime.now(timezone.utc).isoformat()
+        target_count = int(payload.target_count or 1)
+        conn.execute(
+            """INSERT INTO jobs (id, job_title, department, hiring_manager,
+                                  opened_at, target_count, first_ingested_batch)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (job_id, title, dept, payload.hiring_manager, opened_at, target_count, batch_id),
+        )
+        _record_change(conn, batch_id, "job", job_id, "insert", None, {
+            "id": job_id, "job_title": title, "department": dept,
+            "hiring_manager": payload.hiring_manager,
+            "opened_at": opened_at, "target_count": target_count,
+        })
+        conn.commit()
+    finally:
+        conn.close()
+
+    log_audit_action(
+        "JOB_CREATE", "ok",
+        f"id={job_id} title='{title}' dept='{dept}' batch={batch_id}",
+        user=actor,
+    )
+    bump_data_version()
+    return {"status": "created", "job_id": job_id, "batch_id": batch_id}
 
 
 @router.post("/api/jobs/bulk-update")
