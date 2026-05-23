@@ -14,6 +14,7 @@ import {
   Sunrise, Sun, Sunset, Moon,
 } from "lucide-react";
 import { AreaChart, Area, XAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, Legend, PieChart as RechartsPie, Pie, Cell } from 'recharts';
+import { FutureBadge } from "@/components/FutureBadge";
 
 // --- Types ---
 interface Notification {
@@ -66,6 +67,37 @@ interface StrategicSourceCardProps {
 
 type TooltipPlacement = "top" | "bottom";
 type TooltipCoords = { top: number; left: number };
+
+/** Response shape of GET /api/dashboard/metrics — see
+ *  backend/routers/metrics.py for the field-level docstrings. Mirrored
+ *  here only for type-safe access on the React side; the server is the
+ *  source of truth for what each number means. */
+interface DashboardMetrics {
+  hires: number;
+  hires_this_month: number;
+  hires_in_period: number;
+  attrition: number;
+  applications: number;
+  applications_db: number;
+  sla_alerts: number;
+  ghosting_count: number;
+  e2e_pct: number;
+  oar_pct: number;
+  internal_mobility_pct: number;
+  internal_hires: number;
+  internal_candidates: number;
+  avg_days_to_hire: number;
+  cph: number;
+  total_recruitment_spend: number;
+  sources_breakdown: Array<{ name: string; cvs: number; hires: number }>;
+  attrition_reasons: Array<{ name: string; value: number }>;
+  funnel: Array<{ stage: string; count: number; percentage: number }>;
+  chart_data: Array<{ name: string; candidates: number }>;
+  hires_yoy_pct: number | null;
+  attrition_yoy_pct: number | null;
+  future_blocks: Array<{ key: string; label: string; reason: string }>;
+  period: { start: string | null; end: string | null };
+}
 
 interface NeglectedJob {
   job_title: string;
@@ -199,6 +231,11 @@ export default function DashboardPage() {
   const [liveMeta, setLiveMeta] = useState<{departments:string[];recruiters:string[]}>({departments: [], recruiters: []});
   const [neglectData, setNeglectData] = useState<NeglectPayload | null>(null);
   const [liveDataError, setLiveDataError] = useState<string | null>(null);
+  // Audit Phase 3B: the new /api/dashboard/metrics endpoint returns
+  // every KPI the page renders in one call. We keep liveStats around
+  // (other places on the page still read from it) but every KPI card
+  // and pie/source breakdown now sources its number from `metrics`.
+  const [metrics, setMetrics] = useState<DashboardMetrics | null>(null);
   
   // Greeting Engine
   const [slogan] = useState(getRandomSlogan);
@@ -228,9 +265,11 @@ export default function DashboardPage() {
     const loadLive = async () => {
       try {
         setLiveDataError(null);
-        const [statsRes, metaRes] = await Promise.all([
-          fetch(`${apiBase}/stats?timeframe=${timeframe}&department=${department}&recruiter=${recruiter}`, { cache: "no-store" }),
+        const qs = `timeframe=${timeframe}&department=${department}&recruiter=${recruiter}`;
+        const [statsRes, metaRes, metricsRes] = await Promise.all([
+          fetch(`${apiBase}/stats?${qs}`, { cache: "no-store" }),
           fetch(`${apiBase}/meta`, { cache: "no-store" }),
+          fetch(`${apiBase}/api/dashboard/metrics?${qs}`, { cache: "no-store" }),
         ]);
         if (statsRes.ok) {
           const stats = await statsRes.json();
@@ -242,6 +281,9 @@ export default function DashboardPage() {
             departments: Array.isArray(meta?.departments) ? meta.departments : [],
             recruiters: Array.isArray(meta?.recruiters) ? meta.recruiters : [],
           });
+        }
+        if (metricsRes.ok) {
+          setMetrics(await metricsRes.json());
         }
       } catch {
         setLiveDataError("Live API is unavailable");
@@ -267,10 +309,37 @@ export default function DashboardPage() {
 
   // --- Dynamic Live Data (Slicers Engine) - computed via useMemo (deterministic seed for purity) ---
   type ChartPoint = { name: string; candidates: number; compCandidates?: number };
+  // KPI source-of-truth: /api/dashboard/metrics (one round-trip, all
+  // values computed server-side from real DB data — see
+  // backend/routers/metrics.py). The legacy /stats endpoint is kept
+  // around for backward compat, but only the fields that the new
+  // endpoint doesn't yet return fall back to it.
   const kpis = useMemo(() => {
-    if (!liveStats) {
-      return { hires: 0, attrition: 0, applications: 0, e2e: 0, ttf: 0, oar: 0, cph: 0, ghosting: 0 };
+    if (metrics) {
+      return {
+        hires: metrics.hires,                       // applications.status ∈ {קליטה, גיוס, התקבל}
+        attrition: metrics.attrition,               // count of attrition_events in period
+        applications: metrics.applications,         // count of active applications
+        e2e: metrics.e2e_pct,                       // hires / applications * 100
+        ttf: metrics.avg_days_to_hire,              // mean of days_in_process for hires
+        oar: metrics.oar_pct,                       // hires / (hires + offer + rejected) * 100
+        cph: metrics.cph,                           // total_spend / hires_in_period
+        ghosting: metrics.ghosting_count,           // active applications stuck > 14 days
+        internalMobility: metrics.internal_mobility_pct,
+        hiresYoyPct: metrics.hires_yoy_pct,
+        attritionYoyPct: metrics.attrition_yoy_pct,
+      };
     }
+    if (!liveStats) {
+      return {
+        hires: 0, attrition: 0, applications: 0, e2e: 0, ttf: 0,
+        oar: 0, cph: 0, ghosting: 0,
+        internalMobility: 0, hiresYoyPct: null as number | null,
+        attritionYoyPct: null as number | null,
+      };
+    }
+    // Fallback path — /api/dashboard/metrics didn't return; degrade to
+    // the limited /stats payload so the dashboard isn't blank.
     return {
       hires: Number(liveStats.hired_this_month ?? 0),
       attrition: 0,
@@ -280,8 +349,11 @@ export default function DashboardPage() {
       oar: 0,
       cph: 0,
       ghosting: Number(liveStats.sla_alerts ?? 0),
+      internalMobility: 0,
+      hiresYoyPct: null as number | null,
+      attritionYoyPct: null as number | null,
     };
-  }, [liveStats]);
+  }, [metrics, liveStats]);
 
   const dynamicChart = useMemo<ChartPoint[]>(() => {
     const deptFactor = department !== 'all' ? 0.4 : 1;
@@ -507,39 +579,76 @@ export default function DashboardPage() {
       <div className="space-y-8 relative z-20">
         
         {/* ROW 1: THE BOTTOM LINES */}
+        {/* Subtext for hires + attrition is now driven by the real YoY %
+            from /api/dashboard/metrics (null → no subtext rather than a
+            fake "+15%"). The label switches sign + colour-cues based on
+            whether the value is positive (more hires good, more attrition bad). */}
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-5">
-          <KpiCard title="סה״כ קליטות בפועל" value={kpis.hires} icon={<CheckCircle className="text-green-600" size={20}/>} borderColorClass="border-t-green-500" subtext={compareMode !== 'none' ? "⬆️ גידול של 15% בהשוואה" : null} 
-            info="מניית כל המועמדים שסטטוס ה-ATS שלהם השתנה ל'קליטה' או 'גיוס' בטווח התאריכים והסינונים שנבחרו." />
-          
-          <KpiCard title="סה״כ עזיבות (Attrition)" value={kpis.attrition} isWarning={kpis.attrition > 5} icon={<UserMinus className="text-orange-500" size={20}/>} borderColorClass="border-t-orange-500" subtext={compareMode !== 'none' ? "⬇️ ירידה בנטישה בהשוואה" : null}
-            info="עובדים שעזבו את הארגון בטווח הזמן שנבחר. הנתון נשאב מקובץ ה-HRIS שמוזן למערכת." />
-            
-          <KpiCard title="סה״כ קורות חיים" value={kpis.applications.toLocaleString()} icon={<Users className="text-blue-500" size={20}/>} borderColorClass="border-t-blue-500"
-            info="נפח קורות החיים המלא שנכנס למערכת מכלל המקורות." />
-            
-          <KpiCard title="יחס המרה (E2E Conversion)" value={`${kpis.e2e}%`} icon={<Percent className="text-purple-500" size={20}/>} borderColorClass="border-t-purple-500" subtext="בנצ'מארק שוק: 0.5%"
-            info="אחוז המועמדים שנקלטו בפועל מתוך סך קורות החיים שהוגשו (קליטות חלקי קורות חיים). מודד את איכות הסינון בערוצי המקור." />
+          <KpiCard
+            title="סה״כ קליטות בפועל"
+            value={kpis.hires}
+            icon={<CheckCircle className="text-green-600" size={20}/>}
+            borderColorClass="border-t-green-500"
+            subtext={kpis.hiresYoyPct !== null ? `${kpis.hiresYoyPct >= 0 ? "⬆️ +" : "⬇️ "}${kpis.hiresYoyPct}% מול שנה שעברה` : null}
+            info="כל המועמדים שסטטוס ה-ATS שלהם הוא 'קליטה' / 'גיוס' / 'התקבל' לפי הסינון שנבחר."
+          />
+
+          <KpiCard
+            title="סה״כ עזיבות (Attrition)"
+            value={kpis.attrition}
+            isWarning={kpis.attrition > 5}
+            icon={<UserMinus className="text-orange-500" size={20}/>}
+            borderColorClass="border-t-orange-500"
+            subtext={kpis.attritionYoyPct !== null ? `${kpis.attritionYoyPct >= 0 ? "⬆️ +" : "⬇️ "}${kpis.attritionYoyPct}% מול שנה שעברה` : null}
+            info="עובדים שעזבו (attrition_events) בטווח הזמן שנבחר."
+          />
+
+          <KpiCard
+            title="סה״כ קורות חיים"
+            value={kpis.applications.toLocaleString()}
+            icon={<Users className="text-blue-500" size={20}/>}
+            borderColorClass="border-t-blue-500"
+            info="נפח קורות החיים שנכנסו למערכת מכלל המקורות."
+          />
+
+          <KpiCard
+            title="יחס המרה (E2E Conversion)"
+            value={`${kpis.e2e}%`}
+            icon={<Percent className="text-purple-500" size={20}/>}
+            borderColorClass="border-t-purple-500"
+            subtext="בנצ'מארק שוק: 0.5%"
+            info="אחוז המועמדים שנקלטו בפועל מתוך סך קורות החיים שהוגשו (קליטות ÷ קורות חיים × 100)."
+          />
         </div>
 
         {/* ROW 2: ADVANCED KPIs */}
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-5">
-          <KpiCard title={currentRole === 'recruiter' ? "ימי SLA ממוצעים שלי" : "זמן איוש חציוני (TTF)"} value={`${kpis.ttf} ימים`} icon={<Clock className="text-purple-600" size={20}/>} borderColorClass="border-t-purple-600" subtext={kpis.ttf > 40 ? "חריגה מהיעד (40)" : "עמידה ביעד"} 
-            info="TTF (Time to Fill): הזמן החציוני שלוקח לאייש משרה, מרגע פתיחתה במערכת ועד חתימת חוזה. חציון מנטרל משרות חריגות שנתקעו חודשים." />
-          
+          {/* TTF — backend computes the *mean* of days_in_process (not the
+              median). The label used to say "חציוני" which was a mismatch;
+              corrected to "ממוצע" so the screen tells the truth. */}
+          <KpiCard title={currentRole === 'recruiter' ? "ימי SLA ממוצעים שלי" : "זמן איוש ממוצע (TTF)"} value={`${kpis.ttf} ימים`} icon={<Clock className="text-purple-600" size={20}/>} borderColorClass="border-t-purple-600" subtext={kpis.ttf > 40 ? "חריגה מהיעד (40)" : "עמידה ביעד"}
+            info="TTF (Time to Fill): הזמן הממוצע מפתיחת המשרה ועד חתימת החוזה. ממוצע (mean) על השדה days_in_process של רשומות שסטטוסן 'קליטה/גיוס/התקבל'." />
+
+          {/* OAR — rough approximation, see the formula and its caveats
+              in backend/routers/metrics.py (current schema has no
+              state-transition history). */}
           <KpiCard title="אחוז חתימת חוזים (OAR)" value={`${kpis.oar}%`} isPositive={kpis.oar >= 80} isWarning={kpis.oar < 80} icon={<Activity className="text-green-600" size={20}/>} borderColorClass="border-t-green-600" subtext="בנצ'מארק שוק: 80%"
-              info="Offer Acceptance Rate: כמה מתוך הצעות השכר שניתנו התקבלו ונחתמו. מדד קריטי לבחינת תחרותיות השכר של הפניקס בשוק."/>
+              info="OAR (Offer Acceptance Rate): התקבל ÷ (התקבל + הצעה + נדחה) × 100. קירוב — ה-DB מחזיק רק סטטוס נוכחי, לא היסטוריית מעברים."/>
 
           {currentRole === "admin" || currentRole === "hrbp" ? (
-            <KpiCard title="עלות ממוצעת לאיוש (CPH)" value={`₪${kpis.cph.toLocaleString()}`} icon={<BadgeDollarSign className="text-orange-600" size={20}/>} borderColorClass="border-t-orange-600" subtext="מחושב מתוך מודול FinOps" 
-              info="Cost Per Hire: סך ההוצאות הישירות והעקיפות (פרסום, השמה, רישיונות) חלקי כמות המגויסים. מודל מלא מול FinOps." />
+            <KpiCard title="עלות ממוצעת לאיוש (CPH)" value={`₪${kpis.cph.toLocaleString()}`} icon={<BadgeDollarSign className="text-orange-600" size={20}/>} borderColorClass="border-t-orange-600" subtext="סך הוצאות / מספר קליטות"
+              info="CPH (Cost Per Hire): SUM(finops_invoices.amount בתקופה) ÷ COUNT(hires באותה תקופה). כל החשבוניות נכללות; סינון לקטגוריה ייתוסף ברגע שמיפוי הקטגוריות יציב." />
           ) : (
-            <KpiCard title="מועמדים בסיכון (Ghosting)" value={kpis.ghosting} isWarning={kpis.ghosting > 0} icon={<AlertTriangle className="text-red-600" size={20}/>} borderColorClass="border-t-red-600" subtext="ממתינים לתשובה מעל 14 יום" 
-              info="ספירת מועמדים פעילים שנמצאים ללא תזוזת סטטוס במערכת מעל לשבועיים, ועלולים לנטוש את התהליך." />
+            <KpiCard title="מועמדים בסיכון (Ghosting)" value={kpis.ghosting} isWarning={kpis.ghosting > 0} icon={<AlertTriangle className="text-red-600" size={20}/>} borderColorClass="border-t-red-600" subtext="ממתינים מעל 14 יום"
+              info="מועמדים פעילים שתקועים יותר מ-14 ימים בלי תזוזת סטטוס. מודד 'דממה' ולא חריגת SLA (שתי בעיות שונות)." />
           )}
 
           {currentRole === "admin" && (
-            <KpiCard title="איכות הגיוס (Quality of Hire)" value="0%" isPositive={false} icon={<Trophy className="text-yellow-500" size={20}/>} borderColorClass="border-t-yellow-500" subtext="ממתין לנתוני HRIS חיים" 
-              info="הגביע הקדוש של הגיוס: מודד איזה אחוז מהמגויסים נשארו בארגון למעלה משנה (Retention). מצליב נתוני ATS ישירות עם נתוני HRIS." />
+            <div className="relative">
+              <FutureBadge reason={metrics?.future_blocks.find(b => b.key === "quality_of_hire")?.reason} />
+              <KpiCard title="איכות הגיוס (Quality of Hire)" value="—" isPositive={false} icon={<Trophy className="text-yellow-500" size={20}/>} borderColorClass="border-t-yellow-500" subtext="דורש HRIS"
+                info="הגביע הקדוש של הגיוס: אחוז מגויסים שנשארו בארגון מעל שנה (Retention). חסום עד שיוזרם נתון מ-HRIS." />
+            </div>
           )}
         </div>
 
@@ -576,17 +685,25 @@ export default function DashboardPage() {
             </h3>
             <div className="space-y-5">
               {(() => {
-                const applications = Math.max(0, Number(kpis.applications ?? 0));
-                const stages = [
-                  { stage: "קורות חיים", count: applications, color: "bg-[#002649]", drop: null },
-                  { stage: "סינון / ראיון טלפוני", count: Math.floor(applications * 0.25), color: "bg-blue-800", drop: "-5%" },
-                  { stage: "ראיון HR / מקצועי", count: Math.floor(applications * 0.10), color: "bg-blue-600", drop: "-11%" },
-                  { stage: "הצעות שכר", count: Math.floor(Number(kpis.hires ?? 0) * 1.5), color: "bg-blue-400", drop: "+4%" },
-                  { stage: "קליטות בארגון", count: Math.max(0, Number(kpis.hires ?? 0)), color: "bg-green-500", drop: "+2%" }
-                ].map((stage) => {
-                  const pct = applications > 0 ? Number(((stage.count / applications) * 100).toFixed(1)) : 0;
-                  return { ...stage, pct };
-                });
+                // Funnel now sources directly from metrics.funnel — each
+                // stage count is a real applications.status text match
+                // (see backend/routers/metrics.py `funnel` build). The
+                // previous "Math.floor(hires * 1.5)" approximation has
+                // been removed — that was a synthetic multiplier with no
+                // basis in the data.
+                const FUNNEL_COLOURS = [
+                  "bg-[#002649]", "bg-blue-800", "bg-blue-600",
+                  "bg-blue-400", "bg-green-500",
+                ];
+                const realFunnel = metrics?.funnel ?? [];
+                const applications = realFunnel[0]?.count ?? Math.max(0, Number(kpis.applications ?? 0));
+                const stages = realFunnel.map((s, i) => ({
+                  stage: s.stage,
+                  count: s.count,
+                  pct: applications > 0 ? Number(((s.count / applications) * 100).toFixed(1)) : 0,
+                  color: FUNNEL_COLOURS[i] ?? "bg-slate-400",
+                  drop: null as string | null,
+                }));
 
                 return stages.map((s, i) => (
                 <div key={i} className="relative">
@@ -665,9 +782,26 @@ export default function DashboardPage() {
             {/* STRATEGIC FOCUS CARDS */}
             {sourcesData.length > 0 && (
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6 animate-in slide-in-from-bottom-8">
-                 <StrategicSourceCard title="ניוד פנימי" icon={<ArrowRightLeft className="text-purple-600"/>} color="purple" cvs={0} hires={0} totalHires={kpis.hires} />
-                 <StrategicSourceCard title="חבר מביא חבר" icon={<Users className="text-green-600"/>} color="green" cvs={0} hires={0} totalHires={kpis.hires} />
-                 <StrategicSourceCard title="לינקדאין (אורגני וממומן)" icon={<Linkedin className="text-blue-600"/>} color="blue" cvs={0} hires={0} totalHires={kpis.hires} />
+                 {(() => {
+                   // Strategic sources used to be hardcoded zeros. They now
+                   // pull from metrics.sources_breakdown (candidates.source
+                   // group-by) so each card shows the real CV count and
+                   // real hires for that source channel.
+                   const findSource = (...keys: string[]) =>
+                     (metrics?.sources_breakdown ?? []).find(s =>
+                       keys.some(k => s.name.toLowerCase() === k.toLowerCase())
+                     ) ?? { cvs: 0, hires: 0 };
+                   const internal = findSource("Internal", "פנימי");
+                   const referral = findSource("Referral", "חבר מביא חבר");
+                   const linkedin = findSource("LinkedIn");
+                   return (
+                     <>
+                       <StrategicSourceCard title="ניוד פנימי" icon={<ArrowRightLeft className="text-purple-600"/>} color="purple" cvs={internal.cvs} hires={internal.hires} totalHires={kpis.hires} />
+                       <StrategicSourceCard title="חבר מביא חבר" icon={<Users className="text-green-600"/>} color="green" cvs={referral.cvs} hires={referral.hires} totalHires={kpis.hires} />
+                       <StrategicSourceCard title="לינקדאין (אורגני וממומן)" icon={<Linkedin className="text-blue-600"/>} color="blue" cvs={linkedin.cvs} hires={linkedin.hires} totalHires={kpis.hires} />
+                     </>
+                   );
+                 })()}
               </div>
             )}
 
@@ -677,9 +811,20 @@ export default function DashboardPage() {
         {/* ROW 5: REASONS BREAKDOWN (3 PIES) */}
         {(currentRole === "admin" || currentRole === "hrbp") && (
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6 animate-in slide-in-from-bottom-8">
-            <PieBreakdownCard title="סיבות דחיית מועמדים" icon={<UserMinus size={18} className="text-orange-500"/>} data={rejectReasons} info="מדוע אנחנו דחינו מועמדים? עוזר לדייק דרישות משרה." />
-            <PieBreakdownCard title="סיבות הסרת מועמדות" icon={<AlertTriangle size={18} className="text-red-500"/>} data={withdrawReasons} info="מדוע מועמדים פרשו מהתהליך בעצמם? חיוני לזיהוי בעיות שכר." />
-            <PieBreakdownCard title="סיבות עזיבת עובדים" icon={<ArrowDownToLine size={18} className="text-purple-500"/>} data={attritionReasons} info="מדוע עובדים חדשים עזבו בשנה הראשונה? (מידע מ-HRIS)." />
+            {/* Two of these need a `rejection_reason` / `withdrawal_reason`
+                field on applications that doesn't exist yet — they get an
+                honest "future" badge instead of an empty pie. The third
+                (attrition reasons) IS computable: it's a group-by on
+                attrition_events.reason, surfaced via metrics.attrition_reasons. */}
+            <div className="relative">
+              <FutureBadge reason={metrics?.future_blocks.find(b => b.key === "rejection_reasons")?.reason} />
+              <PieBreakdownCard title="סיבות דחיית מועמדים" icon={<UserMinus size={18} className="text-orange-500"/>} data={rejectReasons} info="מדוע אנחנו דחינו מועמדים? עוזר לדייק דרישות משרה. דורש שדה rejection_reason ב-applications + תיוג ע״י המגייסת." />
+            </div>
+            <div className="relative">
+              <FutureBadge reason={metrics?.future_blocks.find(b => b.key === "withdrawal_reasons")?.reason} />
+              <PieBreakdownCard title="סיבות הסרת מועמדות" icon={<AlertTriangle size={18} className="text-red-500"/>} data={withdrawReasons} info="מדוע מועמדים פרשו מהתהליך בעצמם? חיוני לזיהוי בעיות שכר. דורש שדה withdrawal_reason ב-applications." />
+            </div>
+            <PieBreakdownCard title="סיבות עזיבת עובדים" icon={<ArrowDownToLine size={18} className="text-purple-500"/>} data={metrics?.attrition_reasons ?? attritionReasons} info="מדוע עובדים עזבו בשנה הראשונה. נשאב מ-attrition_events.reason (top 5 לפי התקופה שנבחרה)." />
           </div>
         )}
 
