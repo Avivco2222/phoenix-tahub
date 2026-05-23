@@ -59,6 +59,34 @@ from utils import (
     normalize_email,
     normalize_phone,
 )
+from ingestion import (
+    CONTRACTS_DIR,
+    DEFAULT_SCHEMA_VERSION,
+    DEPT_NORMALIZATION,
+    INGEST_REQUIREMENTS,
+    MAX_ERROR_RATE,
+    MAX_UPLOAD_BYTES,
+    MAX_UPLOAD_MB,
+    SUPPORTED_SCHEMA_VERSIONS,
+    TEMPLATE_SPECS,
+    _FK_ORDER,
+    _apply_extra_aliases,
+    _auto_scan_after_ingest,
+    _create_ingest_batch,
+    _detect_sheet_type,
+    _finalise_ingest_batch,
+    _load_dataframe_from_upload,
+    _load_schema_contract,
+    _normalize_upload_frame,
+    _parse_xml_to_dataframe,
+    _persist_rejected_rows_for_batch,
+    _read_file_with_limit,
+    _record_batch_change,
+    _validate_ingest_frame,
+    _validate_schema_contract,
+    _validate_upload_file,
+    find_existing_candidate,
+)
 from auth import (
     BCRYPT_AVAILABLE,
     IMPERSONATOR_COOKIE,
@@ -129,12 +157,8 @@ if not JWT_SECRET and not os.getenv("PYTEST_CURRENT_TEST") and not os.getenv("AL
     sys.exit(1)
 # SESSION_COOKIE and IMPERSONATOR_COOKIE moved to backend/auth.py (B4)
 # and re-imported at the top of this module.
-MAX_UPLOAD_MB = int(os.getenv("MAX_UPLOAD_MB", "10"))
-MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024
-# auth_scheme, _utcnow, _REVOKED_TOKENS, _revoke_token_signature, and
-# _is_token_revoked moved to backend/auth.py (B4). Re-imported below.
-
-
+# MAX_UPLOAD_MB moved to backend/ingestion/ (A9-fu Phase 2)
+# MAX_UPLOAD_BYTES moved to backend/ingestion/ (A9-fu Phase 2)
 class RequestLoggerAdapter(logging.LoggerAdapter):
     def process(self, msg, kwargs):
         extra = kwargs.setdefault("extra", {})
@@ -198,42 +222,8 @@ def _cleanup_generated_file(path: str) -> None:
 # _normalize_onboarding_payload moved to backend/routers/onboarding.py (B2.3)
 
 
-async def _read_file_with_limit(file: UploadFile) -> bytes:
-    chunks: list[bytes] = []
-    total_size = 0
-    while True:
-        chunk = await file.read(1024 * 1024)
-        if not chunk:
-            break
-        total_size += len(chunk)
-        if total_size > MAX_UPLOAD_BYTES:
-            raise HTTPException(
-                status_code=413,
-                detail=f"File too large. Max size is {MAX_UPLOAD_MB}MB",
-            )
-        chunks.append(chunk)
-    await file.seek(0)
-    return b"".join(chunks)
-
-
-def _validate_upload_file(file: UploadFile, *, allowed_extensions: set[str], allowed_mime_prefixes: tuple[str, ...]) -> None:
-    filename = (file.filename or "").strip()
-    if not filename:
-        raise HTTPException(status_code=400, detail="Filename is required")
-    ext = os.path.splitext(filename.lower())[1]
-    if ext not in allowed_extensions:
-        raise HTTPException(status_code=400, detail=f"Unsupported file extension: {ext}")
-    content_type = (file.content_type or "").lower()
-    if not any(content_type.startswith(prefix) for prefix in allowed_mime_prefixes):
-        raise HTTPException(status_code=400, detail=f"Unsupported MIME type: {content_type}")
-
-
-# db_conn() and _safe_connect() moved to backend/db.py (B3). Re-imported
-# at the top of this module so existing call sites keep working without
-# changes. New helpers fetch_one / fetch_all / execute / db_transaction
-# are available there for code that wants to drop the cursor boilerplate.
-
-
+# _read_file_with_limit moved to backend/ingestion/ (A9-fu Phase 2)
+# _validate_upload_file moved to backend/ingestion/ (A9-fu Phase 2)
 @app.middleware("http")
 async def request_logging_middleware(request: Request, call_next):
     request_id = request.headers.get("x-request-id", uuid.uuid4().hex[:12])
@@ -321,11 +311,10 @@ def mask_sensitive_data(df):
 # mask_value moved to backend/utils.py (A9-fu Phase 1)
 DB_PATH = shared_config.DB_NAME
 
-SUPPORTED_SCHEMA_VERSIONS = {"1.0"}
-DEFAULT_SCHEMA_VERSION = "1.0"
-MAX_ERROR_RATE = float(os.getenv("MAX_INGEST_ERROR_RATE", "0.2"))
-CONTRACTS_DIR = os.path.join(os.path.dirname(__file__), "contracts")
-
+# SUPPORTED_SCHEMA_VERSIONS moved to backend/ingestion/ (A9-fu Phase 2)
+# DEFAULT_SCHEMA_VERSION moved to backend/ingestion/ (A9-fu Phase 2)
+# MAX_ERROR_RATE moved to backend/ingestion/ (A9-fu Phase 2)
+# CONTRACTS_DIR moved to backend/ingestion/ (A9-fu Phase 2)
 # ==========================================
 # 1. ENTITY RELATIONSHIP MODEL (יצירת הטבלאות)
 # ==========================================
@@ -822,15 +811,7 @@ init_db()
 # ==========================================
 # מילון נורמליזציה (Standardization Dictionary)
 # ==========================================
-DEPT_NORMALIZATION = {
-    "מו\"פ": "R&D",
-    "פיתוח": "R&D",
-    "משאבי אנוש": "HR",
-    "משאבי-אנוש": "HR",
-    "מכירות ושירות": "Sales & Service",
-    "שירות": "Sales & Service"
-}
-
+# DEPT_NORMALIZATION moved to backend/ingestion/ (A9-fu Phase 2)
 # ==========================================
 # שאילתת תאימות ל-UI הקיים (View Pattern)
 # ==========================================
@@ -912,24 +893,7 @@ def _compute_unified_stage(stage_code: str | None, onboarding_status: str | None
 # normalize_phone moved to backend/utils.py (A9-fu Phase 1)
 # normalize_email moved to backend/utils.py (A9-fu Phase 1)
 # iteration_signature moved to backend/utils.py (A9-fu Phase 1)
-def find_existing_candidate(conn: sqlite3.Connection, phone_norm: Optional[str], email_norm: Optional[str]) -> Optional[str]:
-    """Returns candidate.id if a row already exists matching the normalized
-    phone OR email. Phone takes precedence (more unique in IL B2C). Returns
-    None when nothing to match against — caller inserts a new candidate."""
-    if not phone_norm and not email_norm:
-        return None
-    c = conn.cursor()
-    if phone_norm:
-        row = c.execute("SELECT id FROM candidates WHERE phone_norm = ? LIMIT 1", (phone_norm,)).fetchone()
-        if row:
-            return row[0]
-    if email_norm:
-        row = c.execute("SELECT id FROM candidates WHERE email_norm = ? LIMIT 1", (email_norm,)).fetchone()
-        if row:
-            return row[0]
-    return None
-
-
+# find_existing_candidate moved to backend/ingestion/ (A9-fu Phase 2)
 def merge_candidate(conn: sqlite3.Connection, candidate_id: str, parsed: dict) -> dict:
     """Upsert merge: writes only NON-EMPTY incoming values to the candidate
     row. Preserves prior data when the upload is missing a field. Returns
@@ -1053,79 +1017,10 @@ def bump_data_version(conn: Optional[sqlite3.Connection] = None) -> int:
             conn.close()
 
 
-def _normalize_upload_frame(df: pd.DataFrame) -> pd.DataFrame:
-    df.columns = df.columns.str.strip()
-    # Alias table now lives in backend/aliases.py — see that module for the
-    # distinction between LEGACY_CANDIDATE_ALIASES (this call site) and
-    # TYPED_INGEST_ALIASES (used by _apply_extra_aliases below).
-    df.rename(columns=LEGACY_CANDIDATE_ALIASES, inplace=True)
-    if "name" not in df.columns:
-        raise Exception("חובה לכלול עמודת שם מועמד")
-    if "job_title" not in df.columns:
-        raise Exception("חובה לכלול עמודת שם משרה")
-    if "email" not in df.columns:
-        df["email"] = df["name"].apply(lambda x: f"{str(x).strip().replace(' ', '.')}@unknown.com")
-    if "source" not in df.columns:
-        df["source"] = "Organic / Unknown"
-    if "start_date" not in df.columns:
-        df["start_date"] = pd.Timestamp.now()
-    if "department" not in df.columns:
-        df["department"] = "General"
-    if "status" not in df.columns:
-        df["status"] = "חדש"
-    if "recruiter" not in df.columns:
-        df["recruiter"] = "לא שויך"
-    for col in ["name", "email", "job_title", "status", "recruiter", "department", "source"]:
-        df[col] = df[col].astype(str).str.strip()
-    df["department"] = df["department"].replace(DEPT_NORMALIZATION)
-    df["start_date"] = pd.to_datetime(df["start_date"], errors="coerce")
-    df["days_in_process"] = (pd.Timestamp.now() - df["start_date"]).dt.days.fillna(0).clip(lower=0).astype(int)
-    return df
-
-
-def _parse_xml_to_dataframe(content: bytes) -> pd.DataFrame:
-    root = ET.fromstring(content)
-    xml_schema_version = root.attrib.get("schema_version")
-    if xml_schema_version and xml_schema_version not in SUPPORTED_SCHEMA_VERSIONS:
-        raise Exception(f"Unsupported XML schema_version: {xml_schema_version}")
-    if root.tag != "records":
-        raise Exception("XML root tag must be <records>")
-    rows: list[dict] = []
-    required_xml_tags = {"name", "email", "job_title", "status", "recruiter", "start_date", "department", "source"}
-    for row_node in root.findall(".//row"):
-        row_data = {}
-        for child in list(row_node):
-            row_data[child.tag] = child.text
-        if row_data:
-            missing = [tag for tag in required_xml_tags if tag not in row_data]
-            if missing:
-                raise Exception(f"XML row missing required tags: {','.join(missing)}")
-            rows.append(row_data)
-    if not rows:
-        raise Exception("XML does not include <row> elements")
-    return pd.DataFrame(rows)
-
-
-def _load_schema_contract(schema_version: str) -> dict:
-    candidates = [
-        os.path.join(CONTRACTS_DIR, f"ingestion_schema_v{schema_version.replace('.', '_')}.json"),
-        os.path.join(CONTRACTS_DIR, f"ingestion_schema_v{schema_version.split('.')[0]}.json"),
-    ]
-    contract_path = next((p for p in candidates if os.path.exists(p)), None)
-    if not contract_path:
-        raise Exception(f"Missing schema contract file for version {schema_version}")
-    with open(contract_path, "r", encoding="utf-8") as f:
-        return json.load(f)
-
-
-def _validate_schema_contract(df: pd.DataFrame, schema_version: str) -> None:
-    contract = _load_schema_contract(schema_version)
-    required_columns = contract.get("required_columns", [])
-    missing = [col for col in required_columns if col not in df.columns]
-    if missing:
-        raise Exception(f"Schema validation failed. Missing columns: {','.join(missing)}")
-
-
+# _normalize_upload_frame moved to backend/ingestion/ (A9-fu Phase 2)
+# _parse_xml_to_dataframe moved to backend/ingestion/ (A9-fu Phase 2)
+# _load_schema_contract moved to backend/ingestion/ (A9-fu Phase 2)
+# _validate_schema_contract moved to backend/ingestion/ (A9-fu Phase 2)
 # =====================================================================
 # TEMPLATE_SPECS — per-file-type Excel template definitions.
 #
@@ -1135,105 +1030,7 @@ def _validate_schema_contract(df: pd.DataFrame, schema_version: str) -> None:
 # the master template see the exact columns the /api/ingest/{type}
 # handler expects (mapped via EXTRA_HEBREW_ALIASES).
 # =====================================================================
-TEMPLATE_SPECS: dict[str, dict] = {
-    "candidates": {
-        "required": [("שם מועמד", "name"), ("אימייל", "email"), ("טלפון", "phone")],
-        "recommended": [("משרה", "job_title"), ("חטיבה", "department"), ("סטטוס", "status"),
-                        ("מגייסת", "recruiter"), ("תאריך הגשה", "application_date"), ("מקור", "source")],
-        "validations": {"סטטוס": ["חדש", "סינון", "ראיון", "הצעה", "התקבל", "נדחה"]},
-        "sample": {"שם מועמד": "דנה כהן", "אימייל": "dana@example.com", "טלפון": "0541234567",
-                   "משרה": "Backend Engineer", "חטיבה": "R&D", "סטטוס": "ראיון", "מגייסת": "מור",
-                   "תאריך הגשה": "2026-05-11", "מקור": "LinkedIn"},
-        "title": "תבנית מועמדים בתהליך — Dedup לפי טלפון/אימייל",
-        "instructions": [
-            "שורה אחת לכל איטרציית מועמד×משרה.",
-            "מועמד יזוהה לפי טלפון (+972XXXXXXXXX) או אימייל. בלי אחד מהם — יוקלט כחדש בכל העלאה.",
-            "סטטוס + מגייסת + תאריך הגשה זהים = איטרציה זהה (תידחה ככפילות). שינוי באחד מהם = איטרציה חדשה.",
-        ],
-    },
-    "jobs": {
-        "required": [("שם משרה", "job_title"), ("חטיבה", "department")],
-        "recommended": [("מנהל מגייס", "hiring_manager"), ("תאריך פתיחה", "opened_at"),
-                        ("תאריך סגירה", "closed_at"), ("סיבת סגירה", "close_reason"), ("תקן", "target_count")],
-        "validations": {},
-        "sample": {"שם משרה": "Senior Frontend Engineer", "חטיבה": "R&D",
-                   "מנהל מגייס": "דוד לוי", "תאריך פתיחה": "2026-04-15", "תקן": 1},
-        "title": "תבנית משרות פתוחות וסגורות",
-        "instructions": [
-            "שורה אחת לכל משרה. דדופ לפי (שם משרה + חטיבה), case-insensitive.",
-            "תאריך סגירה ריק = משרה פתוחה. מילוי תאריך = משרה סגורה; אז חובה גם סיבת סגירה.",
-        ],
-    },
-    "hires": {
-        "required": [("שם מועמד", "candidate_name"), ("שם משרה", "job_title"), ("תאריך קליטה", "hire_date")],
-        "recommended": [("שכר", "salary"), ("חטיבה", "department"), ("מנהל ישיר", "manager"),
-                        ("ממליץ", "referral_name"), ("גיוון", "is_diversity")],
-        "validations": {"גיוון": ["כן", "לא"]},
-        "sample": {"שם מועמד": "נועה מזרחי", "שם משרה": "Customer Success",
-                   "תאריך קליטה": "2026-05-12", "שכר": 22000, "חטיבה": "Service", "מנהל ישיר": "ליטל"},
-        "title": "תבנית קליטות בפועל",
-        "instructions": [
-            "שורה אחת לכל קליטה שהתבצעה. המערכת תקשר אוטומטית למועמד קיים אם נמצא לפי שם/טלפון/אימייל.",
-            "תאריך קליטה בפורמט YYYY-MM-DD. דדופ: שורה זהה (מועמד+משרה+תאריך) תידחה.",
-        ],
-    },
-    "diversity": {
-        "required": [("חודש", "snapshot_month"), ("חטיבה", "department"),
-                     ("ממד", "dimension"), ("קבוצה", "bucket"), ("כמות", "count")],
-        "recommended": [],
-        "validations": {"ממד": ["gender", "age_range", "ethnicity", "tenure"]},
-        "sample": {"חודש": "2026-05", "חטיבה": "R&D", "ממד": "gender", "קבוצה": "F", "כמות": 42},
-        "title": "תבנית מדדי גיוון לפי חודש",
-        "instructions": [
-            "שורה אחת לכל (חודש × חטיבה × ממד × קבוצה).",
-            "חודש בפורמט YYYY-MM (ללא יום).",
-            "ערכי 'ממד' מותרים: gender (M/F/Other), age_range (e.g. 30-40), ethnicity, tenure.",
-        ],
-    },
-    "headcount": {
-        "required": [("חודש", "snapshot_month"), ("חטיבה", "department"), ("תפקיד", "role")],
-        "recommended": [("תקן מצבה", "standard"), ("בפועל", "current"),
-                        ("עזיבות מתחילת השנה", "attrition_ytd"), ("תכנית גיוס", "hire_plan")],
-        "validations": {},
-        "sample": {"חודש": "2026-05", "חטיבה": "R&D", "תפקיד": "Backend Engineer",
-                   "תקן מצבה": 12, "בפועל": 11, "עזיבות מתחילת השנה": 2, "תכנית גיוס": 1},
-        "title": "תבנית תקן מצבה (Standard vs Current)",
-        "instructions": [
-            "שורה אחת לכל (חודש × חטיבה × תפקיד).",
-            "ה-attrition_ytd צריך להתאים לסכום אירועי העזיבה באותה תקופה — בקרת איכות תזהיר על פערים.",
-        ],
-    },
-    "budget": {
-        "required": [("מזהה חשבונית", "id"), ("ספק", "vendor"), ("תאריך", "date"),
-                     ("סכום", "amount"), ("קטגוריה", "category")],
-        "recommended": [("מועד פירעון", "due_date"), ("חודש תקציב", "budget_month"),
-                        ("סטטוס", "status"), ("URL קובץ", "file_url")],
-        "validations": {"סטטוס": ["ממתין למיפוי", "ממתין לתשלום", "שולם", "בוטל"]},
-        "sample": {"מזהה חשבונית": "INV-2026-001", "ספק": "Workday", "תאריך": "2026-05-01",
-                   "סכום": 12500, "קטגוריה": "תוכנה", "חודש תקציב": "2026-Q2"},
-        "title": "תבנית חשבוניות FinOps",
-        "instructions": [
-            "מזהה חשבונית חייב להיות ייחודי — אם קיים, החשבונית תעודכן (upsert).",
-            "תאריך + מועד פירעון בפורמט YYYY-MM-DD.",
-        ],
-    },
-    "attrition": {
-        "required": [("שם עובד", "employee_name"), ("תאריך עזיבה", "leave_date")],
-        "recommended": [("חטיבה", "department"), ("מנהל", "manager"), ("תפקיד אחרון", "last_role"),
-                        ("סיבה", "reason"), ("וולונטרי", "voluntary")],
-        "validations": {"וולונטרי": ["כן", "לא"]},
-        "sample": {"שם עובד": "אורית גרשון", "תאריך עזיבה": "2026-04-30", "חטיבה": "Sales",
-                   "מנהל": "אבי כהן", "תפקיד אחרון": "Account Manager", "סיבה": "הזדמנות בחו\"ל", "וולונטרי": "כן"},
-        "title": "תבנית אירועי עזיבה",
-        "instructions": [
-            "שורה אחת לכל אירוע עזיבה. דדופ לפי (שם עובד + תאריך עזיבה).",
-            "המערכת תקשר אוטומטית לרשומת מועמד קיימת אם השם תואם.",
-        ],
-    },
-}
-
-
-# _col_letter moved to backend/utils.py (A9-fu Phase 1)
+# TEMPLATE_SPECS moved to backend/ingestion/ (A9-fu Phase 2)
 def _legacy_build_excel_template_bytes(file_type: str, schema_version: str) -> bytes:
     """Original recruiter-applications template — preserved for any caller
     that still relies on the schema contract shape. Used as fallback when a
@@ -1409,38 +1206,8 @@ def _build_preflight_report(filename: str, content: bytes, schema_version: str) 
     }
 
 
-def _load_dataframe_from_upload(filename: str, content: bytes) -> pd.DataFrame:
-    lower_name = (filename or "").lower()
-    buf = io.BytesIO(content)
-    if lower_name.endswith(".xml"):
-        return _parse_xml_to_dataframe(content)
-    if lower_name.endswith(".xlsx") or lower_name.endswith(".xls"):
-        return pd.read_excel(buf)
-    try:
-        return pd.read_csv(io.BytesIO(content))
-    except Exception:
-        try:
-            return pd.read_csv(io.BytesIO(content), encoding="iso-8859-8")
-        except Exception:
-            return pd.read_excel(io.BytesIO(content))
-
-
-def _record_batch_change(conn: sqlite3.Connection, batch_id: str, entity_type: str, entity_id: str, change_type: str, before_obj: dict | None, after_obj: dict | None):
-    conn.execute(
-        """INSERT INTO batch_entity_changes(batch_id, entity_type, entity_id, change_type, before_json, after_json, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?)""",
-        (
-            batch_id,
-            entity_type,
-            entity_id,
-            change_type,
-            json.dumps(before_obj, ensure_ascii=False) if before_obj else None,
-            json.dumps(after_obj, ensure_ascii=False) if after_obj else None,
-            _utcnow().isoformat(),
-        ),
-    )
-
-
+# _load_dataframe_from_upload moved to backend/ingestion/ (A9-fu Phase 2)
+# _record_batch_change moved to backend/ingestion/ (A9-fu Phase 2)
 @app.get("/")
 def read_root():
     return {"status": "Phoenix Enterprise Brain is Active 🧠"}
@@ -3461,18 +3228,7 @@ def run_anomaly_scan(conn: sqlite3.Connection, batch_id: str | None = None) -> d
 
 # ─── Auto-scan hook: called at the end of every successful ingestion ──────────
 
-def _auto_scan_after_ingest(conn: sqlite3.Connection, batch_id: str):
-    """
-    Called inside the ingestion transaction BEFORE commit so the scan
-    benefits from the freshly loaded data.  Errors are swallowed so
-    they never fail a successful upload.
-    """
-    try:
-        run_anomaly_scan(conn, batch_id=batch_id)
-    except Exception:
-        pass
-
-
+# _auto_scan_after_ingest moved to backend/ingestion/ (A9-fu Phase 2)
 # =====================================================================
 # PIPELINE SUMMARY — GET /api/pipeline/summary
 # =====================================================================
@@ -3535,150 +3291,14 @@ def get_pipeline_summary(
 # Per-type required columns. The Hebrew/English aliases come from the
 # existing _normalize_upload_frame; here we require the *canonical* name
 # after that normalisation runs.
-INGEST_REQUIREMENTS: dict[str, dict] = {
-    "candidates": {
-        # Accept either alias: "candidate_name" (new canonical via EXTRA_HEBREW_ALIASES)
-        # or "name" (legacy via _normalize_upload_frame). Validation succeeds when EITHER
-        # is present — handled by _validate_ingest_frame's per-row required check below.
-        "required": ["candidate_name"],
-        "recommended": ["email", "phone", "job_title", "status", "recruiter"],
-        "description": "מועמדים בתהליך — שורה אחת לכל איטרציית מועמד×משרה",
-    },
-    "jobs": {
-        "required": ["job_title", "department"],
-        "recommended": ["hiring_manager", "opened_at", "target_count"],
-        "description": "פתיחת/סגירת משרות — שורה אחת לכל משרה",
-    },
-    "hires": {
-        "required": ["candidate_name", "job_title", "hire_date"],
-        "recommended": ["salary", "department", "manager"],
-        "description": "קליטות עובדים שהתבצעו",
-    },
-    "diversity": {
-        "required": ["snapshot_month", "department", "dimension", "bucket", "count"],
-        "recommended": [],
-        "description": "מדדי גיוון לפי חודש × מחלקה × ממד",
-    },
-    "headcount": {
-        "required": ["snapshot_month", "department", "role"],
-        "recommended": ["standard", "current", "attrition_ytd", "hire_plan"],
-        "description": "תקן מצבה (תקן מול בפועל) לפי חודש × מחלקה × תפקיד",
-    },
-    "budget": {
-        "required": ["id", "vendor", "date", "amount", "category"],
-        "recommended": ["due_date", "budget_month", "status", "file_url"],
-        "description": "חשבוניות FinOps",
-    },
-    "attrition": {
-        "required": ["employee_name", "leave_date"],
-        "recommended": ["department", "manager", "reason", "voluntary"],
-        "description": "אירועי עזיבה",
-    },
-}
-
-
-# Alias tables for the typed-ingest pipeline now live in backend/aliases.py.
-# Kept as a module-level re-export so any code still importing the old
-# name from main.py keeps working.
+# INGEST_REQUIREMENTS moved to backend/ingestion/ (A9-fu Phase 2)
 EXTRA_HEBREW_ALIASES = TYPED_INGEST_ALIASES
 
 
-def _apply_extra_aliases(df: pd.DataFrame) -> pd.DataFrame:
-    """Map extra Hebrew column names to canonical ones used by the typed handlers."""
-    df.columns = [str(c).strip() for c in df.columns]
-    rename = {}
-    for col in df.columns:
-        target = TYPED_INGEST_ALIASES.get(col)
-        if target and target not in df.columns:
-            rename[col] = target
-    if rename:
-        df = df.rename(columns=rename)
-    # Compatibility shim: legacy uploads use "name" while the new typed handlers
-    # work with "candidate_name". Expose both so either side of the divide
-    # passes validation.
-    if "candidate_name" in df.columns and "name" not in df.columns:
-        df["name"] = df["candidate_name"]
-    elif "name" in df.columns and "candidate_name" not in df.columns:
-        df["candidate_name"] = df["name"]
-    return df
-
-
-def _validate_ingest_frame(df: pd.DataFrame, file_type: str) -> tuple[pd.DataFrame, list[dict]]:
-    """Returns (valid_df, rejected_rows). A row is rejected when any required
-    column is missing/empty. The reason is human-readable Hebrew for the
-    rejected_rows admin view."""
-    spec = INGEST_REQUIREMENTS.get(file_type)
-    if not spec:
-        raise HTTPException(status_code=400, detail=f"Unknown ingest type: {file_type}")
-    required = spec["required"]
-    missing_cols = [c for c in required if c not in df.columns]
-    if missing_cols:
-        raise HTTPException(
-            status_code=400,
-            detail=f"חסרות עמודות חובה לסוג '{file_type}': {', '.join(missing_cols)}",
-        )
-
-    rejected: list[dict] = []
-    keep_mask: list[bool] = []
-    for _, row in df.iterrows():
-        problems = []
-        for col in required:
-            val = row.get(col)
-            if val is None or (isinstance(val, str) and not val.strip()):
-                problems.append(f"חסר ערך ל'{col}'")
-            elif isinstance(val, float) and pd.isna(val):
-                problems.append(f"חסר ערך ל'{col}'")
-        if problems:
-            rejected.append({"row": row.to_dict(), "reasons": problems})
-            keep_mask.append(False)
-        else:
-            keep_mask.append(True)
-    return df[keep_mask].reset_index(drop=True), rejected
-
-
-def _create_ingest_batch(file_type: str, filename: str, rows_received: int, user_email: str) -> str:
-    """Open a new ingestion_batches row. Returns batch_id."""
-    batch_id = f"ING-{file_type[:3].upper()}-{uuid.uuid4().hex[:8].upper()}"
-    started_at = datetime.now(timezone.utc).isoformat()
-    conn = sqlite3.connect(DB_PATH)
-    try:
-        c = conn.cursor()
-        # Insert with the columns ingestion_batches actually has — match the existing init_db schema.
-        c.execute(
-            """INSERT INTO ingestion_batches
-               (batch_id, filename, schema_version, status, rows_received, rows_loaded,
-                rows_rejected, duplicate_rows, quality_score, started_at)
-               VALUES (?, ?, ?, 'pending', ?, 0, 0, 0, 0, ?)""",
-            (batch_id, f"{file_type}::{filename}", DEFAULT_SCHEMA_VERSION, rows_received, started_at),
-        )
-        conn.commit()
-    finally:
-        conn.close()
-    return batch_id
-
-
-def _finalise_ingest_batch(batch_id: str, status: str, stats: dict) -> None:
-    finished_at = datetime.now(timezone.utc).isoformat()
-    total = max(1, int(stats.get("received") or 1))
-    loaded = int(stats.get("inserted", 0)) + int(stats.get("updated", 0))
-    rejected = int(stats.get("rejected", 0))
-    duplicate = int(stats.get("skipped_duplicate", 0))
-    quality = int(round(((total - rejected) / total) * 100))
-    conn = sqlite3.connect(DB_PATH)
-    try:
-        c = conn.cursor()
-        c.execute(
-            """UPDATE ingestion_batches
-               SET status = ?, rows_loaded = ?, rows_rejected = ?, duplicate_rows = ?,
-                   quality_score = ?, finished_at = ?
-               WHERE batch_id = ?""",
-            (status, loaded, rejected, duplicate, quality, finished_at, batch_id),
-        )
-        conn.commit()
-    finally:
-        conn.close()
-
-
+# _apply_extra_aliases moved to backend/ingestion/ (A9-fu Phase 2)
+# _validate_ingest_frame moved to backend/ingestion/ (A9-fu Phase 2)
+# _create_ingest_batch moved to backend/ingestion/ (A9-fu Phase 2)
+# _finalise_ingest_batch moved to backend/ingestion/ (A9-fu Phase 2)
 def _record_change(conn: sqlite3.Connection, batch_id: str, entity_type: str,
                    entity_id: str, change_type: str, before: Optional[dict], after: Optional[dict]) -> None:
     """Record a single insert/update/delete row in batch_entity_changes."""
@@ -4136,102 +3756,12 @@ INGEST_HANDLERS = {
 # ---------------------------------------------------------------------------
 
 # שמות גיליונות קנוניים (hint בלבד, לא תנאי מחייב)
-_SHEET_NAME_HINTS: dict[str, str] = {
-    "משרות": "jobs",         "jobs": "jobs",
-    "מועמדים": "candidates", "candidates": "candidates",
-    "גיוסים": "hires",       "hires": "hires",
-    "תקן": "headcount",      "headcount": "headcount",
-    "גיוון": "diversity",    "diversity": "diversity",
-    "עזיבות": "attrition",   "attrition": "attrition",
-    "תקציב": "budget",       "budget": "budget",
-}
-
-# עמודות חתימה לזיהוי — חייב להיות canonical (אחרי _apply_extra_aliases)
-_SHEET_SIGNATURES: dict[str, list[str]] = {
-    "jobs":       ["job_title", "department"],
-    "candidates": ["candidate_name", "email", "status"],
-    "hires":      ["candidate_name", "hire_date", "salary"],
-    "headcount":  ["snapshot_month", "role", "standard"],
-    "diversity":  ["snapshot_month", "dimension", "bucket", "count"],
-    "attrition":  ["employee_name", "leave_date"],
-    "budget":     ["vendor", "amount", "category"],
-}
-
-_SHEET_MIN_CONFIDENCE: dict[str, int] = {
-    "jobs": 2, "candidates": 2, "hires": 2,
-    "headcount": 2, "diversity": 3, "attrition": 1, "budget": 2,
-}
-
-# סדר עיבוד בטוח לפי FK dependencies
-_FK_ORDER = ["jobs", "candidates", "hires", "headcount", "diversity", "attrition", "budget"]
-
-
-def _detect_sheet_type(df_columns: list[str], sheet_name: str = "") -> tuple[str | None, float]:
-    """
-    Returns (file_type, confidence 0-1) after _apply_extra_aliases normalization.
-    Returns (None, 0.0) if no type passes the minimum confidence threshold.
-    """
-    col_set = {c.lower() for c in df_columns}
-    best_type: str | None = None
-    best_score = 0
-    best_confidence = 0.0
-
-    for file_type in _FK_ORDER:
-        sig = _SHEET_SIGNATURES[file_type]
-        matched = sum(1 for s in sig if s in col_set)
-        if matched < _SHEET_MIN_CONFIDENCE[file_type]:
-            continue
-        # jobs: if email present → likely candidates, not jobs
-        if file_type == "jobs" and "email" in col_set:
-            continue
-        if matched > best_score:
-            best_score = matched
-            best_type = file_type
-            best_confidence = round(matched / len(sig), 2)
-
-    # Tiebreak / override: sheet name hint
-    hint = _SHEET_NAME_HINTS.get(sheet_name.strip())
-    if hint:
-        sig = _SHEET_SIGNATURES.get(hint, [])
-        matched = sum(1 for s in sig if s in col_set)
-        if matched >= _SHEET_MIN_CONFIDENCE.get(hint, 2) and matched >= best_score:
-            best_type = hint
-            best_confidence = round(matched / len(sig), 2) if sig else 0.0
-
-    return best_type, best_confidence
-
-
-def _persist_rejected_rows_for_batch(batch_id: str, rejected_rows: list[dict]) -> None:
-    """Persist rejected rows to rejected_rows table for a given batch."""
-    if not rejected_rows:
-        return
-    conn = sqlite3.connect(DB_PATH)
-    try:
-        for r in rejected_rows:
-            try:
-                conn.execute(
-                    "INSERT INTO rejected_rows (batch_id, raw_row, reason_detail, created_at) VALUES (?,?,?,?)",
-                    (
-                        batch_id,
-                        json.dumps(r.get("row", r), ensure_ascii=False, default=str),
-                        "; ".join(r.get("reasons", [])),
-                        datetime.now(timezone.utc).isoformat(),
-                    ),
-                )
-            except Exception:
-                pass
-        conn.commit()
-    finally:
-        conn.close()
-
-
-# ---------------------------------------------------------------------------
-# Smart Ingest — single Excel file, multi-sheet auto-routing
-# MUST be registered BEFORE /api/ingest/{file_type} to avoid route shadowing
-# ---------------------------------------------------------------------------
-
-# POST /api/ingest/smart and POST /api/ingest/{file_type} moved to backend/routers/ingestion.py (B2.7b)
-
+# _SHEET_NAME_HINTS moved to backend/ingestion/ (A9-fu Phase 2)
+# _SHEET_SIGNATURES moved to backend/ingestion/ (A9-fu Phase 2)
+# _SHEET_MIN_CONFIDENCE moved to backend/ingestion/ (A9-fu Phase 2)
+# _FK_ORDER moved to backend/ingestion/ (A9-fu Phase 2)
+# _detect_sheet_type moved to backend/ingestion/ (A9-fu Phase 2)
+# _persist_rejected_rows_for_batch moved to backend/ingestion/ (A9-fu Phase 2)
 # ==========================================
 # CONSUMER ENDPOINTS — read APIs for typed ingest tables
 # ==========================================

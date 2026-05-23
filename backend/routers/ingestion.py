@@ -48,6 +48,28 @@ from internal_logic import (
     execute_etl_rules,
 )
 from rate_limit import limiter
+from ingestion import (
+    DEFAULT_SCHEMA_VERSION,
+    INGEST_REQUIREMENTS,
+    MAX_ERROR_RATE,
+    SUPPORTED_SCHEMA_VERSIONS,
+    TEMPLATE_SPECS,
+    _FK_ORDER,
+    _apply_extra_aliases,
+    _auto_scan_after_ingest,
+    _create_ingest_batch,
+    _detect_sheet_type,
+    _finalise_ingest_batch,
+    _load_dataframe_from_upload,
+    _normalize_upload_frame,
+    _persist_rejected_rows_for_batch,
+    _read_file_with_limit,
+    _record_batch_change,
+    _validate_ingest_frame,
+    _validate_schema_contract,
+    _validate_upload_file,
+    find_existing_candidate,
+)
 
 
 router = APIRouter(tags=["ingestion"])
@@ -58,40 +80,6 @@ router = APIRouter(tags=["ingestion"])
 # routes use them too; they'll move out once the bigger ingestion endpoints
 # follow in B2.7b.
 
-def _read_file_with_limit(file):
-    from main import _read_file_with_limit as _impl
-    import asyncio
-    return _impl(file)
-
-
-async def _aread_file_with_limit(file):
-    from main import _read_file_with_limit as _impl
-    return await _impl(file)
-
-
-def _validate_upload_file(file, *, allowed_extensions, allowed_mime_prefixes):
-    from main import _validate_upload_file as _impl
-    return _impl(file, allowed_extensions=allowed_extensions, allowed_mime_prefixes=allowed_mime_prefixes)
-
-
-def _load_dataframe_from_upload(filename, content):
-    from main import _load_dataframe_from_upload as _impl
-    return _impl(filename, content)
-
-
-def _apply_extra_aliases(df):
-    from main import _apply_extra_aliases as _impl
-    return _impl(df)
-
-
-def _validate_ingest_frame(df, file_type):
-    from main import _validate_ingest_frame as _impl
-    return _impl(df, file_type)
-
-
-def _normalize_upload_frame(df):
-    from main import _normalize_upload_frame as _impl
-    return _impl(df)
 
 
 
@@ -102,9 +90,18 @@ def _normalize_upload_frame(df):
 
 
 
-def _find_existing_candidate(conn, phone_norm, email_norm):
-    from main import find_existing_candidate as _impl
-    return _impl(conn, phone_norm, email_norm)
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -116,27 +113,15 @@ def _ingest_handlers():
     return INGEST_HANDLERS
 
 
-def _ingest_requirements():
-    from main import INGEST_REQUIREMENTS
-    return INGEST_REQUIREMENTS
 
 
-def _template_specs():
-    from main import TEMPLATE_SPECS
-    return TEMPLATE_SPECS
 
 
 # Extra proxies used by the persistent /upload + /api/ingest endpoints (B2.7b)
-def _validate_schema_contract(df, version):
-    from main import _validate_schema_contract as _impl
-    return _impl(df, version)
 
 
 
 
-def _record_batch_change(conn, batch_id, entity_type, entity_id, action, before, after):
-    from main import _record_batch_change as _impl
-    return _impl(conn, batch_id, entity_type, entity_id, action, before, after)
 
 
 def _get_unified_data(conn):
@@ -144,34 +129,16 @@ def _get_unified_data(conn):
     return _impl(conn)
 
 
-def _auto_scan_after_ingest(conn, batch_id):
-    from main import _auto_scan_after_ingest as _impl
-    return _impl(conn, batch_id)
 
 
-def _create_ingest_batch(file_type, filename, row_count, actor):
-    from main import _create_ingest_batch as _impl
-    return _impl(file_type, filename, row_count, actor)
 
 
-def _finalise_ingest_batch(batch_id, status, stats):
-    from main import _finalise_ingest_batch as _impl
-    return _impl(batch_id, status, stats)
 
 
-def _persist_rejected_rows_for_batch(batch_id, rejected):
-    from main import _persist_rejected_rows_for_batch as _impl
-    return _impl(batch_id, rejected)
 
 
-def _detect_sheet_type(columns, sheet_name):
-    from main import _detect_sheet_type as _impl
-    return _impl(columns, sheet_name)
 
 
-def _fk_order():
-    from main import _FK_ORDER
-    return _FK_ORDER
 
 
 def _bump_data_version(conn=None):
@@ -189,9 +156,6 @@ def _log_audit(action, status, details, user):
     _impl(action=action, status=status, details=details, user=user)
 
 
-def _ingest_constants():
-    from main import SUPPORTED_SCHEMA_VERSIONS, DEFAULT_SCHEMA_VERSION, MAX_ERROR_RATE
-    return SUPPORTED_SCHEMA_VERSIONS, DEFAULT_SCHEMA_VERSION, MAX_ERROR_RATE
 
 
 def _session_cookie_name():
@@ -207,7 +171,6 @@ def download_smart_template(
     _: dict = Depends(require_dual_role(Role.ADMIN, Role.HRBP)),
 ):
     """Returns a ready-to-fill Excel workbook with sheets: משרות, מועמדים, גיוסים + הוראות."""
-    TEMPLATE_SPECS = _template_specs()
 
     SMART_SHEETS = [
         ("משרות",   "jobs"),
@@ -284,12 +247,11 @@ async def ingest_preflight(
     """Dry-run: parse + validate without persisting. Lets admins preview what
     will land and what will be rejected BEFORE committing."""
     INGEST_HANDLERS = _ingest_handlers()
-    INGEST_REQUIREMENTS = _ingest_requirements()
 
     if file_type not in INGEST_HANDLERS:
         raise HTTPException(status_code=400, detail=f"Unknown ingest type. Allowed: {list(INGEST_HANDLERS.keys())}")
 
-    content = await _aread_file_with_limit(file)
+    content = await _read_file_with_limit(file)
     try:
         df = _load_dataframe_from_upload(file.filename or "", content)
     except Exception as exc:
@@ -334,7 +296,7 @@ async def ingest_whatif(
                                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                                "application/xml", "text/xml", "application/octet-stream"),
     )
-    content = await _aread_file_with_limit(file)
+    content = await _read_file_with_limit(file)
     try:
         df = _load_dataframe_from_upload(file.filename or "", content)
     except Exception as exc:
@@ -361,7 +323,7 @@ async def ingest_whatif(
         stats["received"] = int(len(df))
 
         def _exists_candidate(phone_norm, email_norm):
-            return _find_existing_candidate(conn, phone_norm, email_norm) is not None
+            return find_existing_candidate(conn, phone_norm, email_norm) is not None
 
         for _, row in valid_df.iterrows():
             parsed = _row_to_scalar(dict(row.items()))
@@ -385,7 +347,7 @@ async def ingest_whatif(
                         "SELECT id FROM jobs WHERE LOWER(job_title) = LOWER(?) LIMIT 1", (job_title,),
                     ).fetchone()
                     if jrow:
-                        existing_cid = _find_existing_candidate(conn, parsed.get("phone_norm"), parsed.get("email_norm"))
+                        existing_cid = find_existing_candidate(conn, parsed.get("phone_norm"), parsed.get("email_norm"))
                         if existing_cid:
                             dup = conn.execute(
                                 "SELECT 1 FROM applications WHERE candidate_id = ? AND job_id = ? AND iteration_signature = ?",
@@ -473,7 +435,6 @@ async def upload_file(
     x_preflight_hash: Optional[str] = Header(default=None),
     user: dict = Depends(require_dual_role(Role.ADMIN, Role.HRBP, Role.RECRUITER)),
 ):
-    SUPPORTED_SCHEMA_VERSIONS, DEFAULT_SCHEMA_VERSION, MAX_ERROR_RATE = _ingest_constants()
 
     _validate_upload_file(
         file,
@@ -490,7 +451,7 @@ async def upload_file(
     log_id = str(uuid.uuid4())[:8]
     batch_id = f"bat-{uuid.uuid4().hex[:10]}"
     now = _utcnow().isoformat()
-    content = await _aread_file_with_limit(file)
+    content = await _read_file_with_limit(file)
     payload_hash = hashlib.sha256(content).hexdigest()
     idempotency_key = (x_idempotency_key or payload_hash[:16]).strip()
     schema_version = x_schema_version or DEFAULT_SCHEMA_VERSION
@@ -602,7 +563,7 @@ async def upload_file(
             masked_email = mask_value(email_val)
             masked_phone = mask_value(phone_val)
 
-            c_id = _find_existing_candidate(conn, masked_phone_norm, masked_email_norm)
+            c_id = find_existing_candidate(conn, masked_phone_norm, masked_email_norm)
             if not c_id:
                 if masked_email_norm:
                     c_id = str(uuid.uuid5(uuid.NAMESPACE_URL, masked_email_norm))
@@ -760,7 +721,7 @@ async def upload_typed_file(
             "application/octet-stream",
         ),
     )
-    content = await _aread_file_with_limit(file)
+    content = await _read_file_with_limit(file)
 
     valid_types = [
         "candidates", "jobs", "hires", "diversity",
@@ -834,7 +795,6 @@ async def ingest_smart(
 ):
     """Single Excel file with multiple sheets → auto-detect type and route to each handler."""
     INGEST_HANDLERS = _ingest_handlers()
-    _FK_ORDER = _fk_order()
 
     _validate_upload_file(
         file,
@@ -844,7 +804,7 @@ async def ingest_smart(
             "application/octet-stream",
         ),
     )
-    content = await _aread_file_with_limit(file)
+    content = await _read_file_with_limit(file)
     filename = file.filename or "smart_upload.xlsx"
 
     try:
@@ -1024,7 +984,7 @@ async def ingest_typed(
             "application/xml", "text/xml", "application/octet-stream",
         ),
     )
-    content = await _aread_file_with_limit(file)
+    content = await _read_file_with_limit(file)
 
     # Stage 1-2: Parse + alias.
     try:
