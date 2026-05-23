@@ -57,10 +57,17 @@ jobs:
       # pytest needs a JWT_SECRET to import main.py — set a deterministic
       # one rather than relying on the fail-open PYTEST_CURRENT_TEST escape
       # hatch (which only kicks in when the var is unset).
+      #
+      # SESSION_UNLOCK_PIN matches the value the test fixtures fall back to
+      # via os.environ.setdefault("SESSION_UNLOCK_PIN", "246810") in
+      # tests/__init__.py. Setting a different value here would override
+      # the fixture (setdefault is no-op when the env var is already set)
+      # and break test_unlock_accepts_valid_password. Same goes for
+      # ADMIN_API_TOKEN — must match what the test fixtures expect.
       - name: Run tests
         env:
           JWT_SECRET: ci-deterministic-secret-not-for-production
           ADMIN_API_TOKEN: test-admin-token
-          SESSION_UNLOCK_PIN: ci-pin
+          SESSION_UNLOCK_PIN: "246810"
           ENV: test
         run: pytest -q
