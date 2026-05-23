@@ -3414,6 +3414,7 @@ from routers import candidates as _candidates_router  # noqa: E402
 from routers import finops as _finops_router  # noqa: E402
 from routers import ingestion as _ingestion_router  # noqa: E402
 from routers import jobs as _jobs_router  # noqa: E402
+from routers import metrics as _metrics_router  # noqa: E402
 from routers import onboarding as _onboarding_router  # noqa: E402
 
 app.include_router(_admin_router.router)
@@ -3423,5 +3424,6 @@ app.include_router(_candidates_router.router)
 app.include_router(_finops_router.router)
 app.include_router(_ingestion_router.router)
 app.include_router(_jobs_router.router)
+app.include_router(_metrics_router.router)
 app.include_router(_onboarding_router.router)
 
