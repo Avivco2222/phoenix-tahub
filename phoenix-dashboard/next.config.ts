@@ -12,7 +12,9 @@ const nextConfig: NextConfig = {
       { source: "/admin/health", destination: `${BACKEND_URL}/admin/health` },
       { source: "/admin/ingestion/:path*", destination: `${BACKEND_URL}/admin/ingestion/:path*` },
       { source: "/admin/revert/:path*", destination: `${BACKEND_URL}/admin/revert/:path*` },
-      { source: "/admin/revert-batch/:path*", destination: `${BACKEND_URL}/admin/revert-batch/:path*` },
+      // /admin/revert-batch/* removed in A9-FU UX wave 1 — the canonical
+      // revert path is /api/admin/batches/{batch_id}/revert (already
+      // matched by the catch-all /api/:path* rewrite above).
       { source: "/admin/reset-for-final-test", destination: `${BACKEND_URL}/admin/reset-for-final-test` },
       { source: "/upload", destination: `${BACKEND_URL}/upload` },
       { source: "/upload/:path*", destination: `${BACKEND_URL}/upload/:path*` },

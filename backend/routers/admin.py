@@ -229,54 +229,9 @@ async def save_admin_config(request: Request, section: str = "general", _: str =
     return {"status": "saved", "timestamp": timestamp}
 
 
-@router.get("/api/admin/consumer-map")
-def admin_consumer_map(_: dict = Depends(require_dual_role(Role.ADMIN))):
-    return {
-        "sources": [
-            {"table": "candidates", "consumers": [
-                {"block": "דשבורד KPI — סה\"כ מועמדים פעילים", "page": "/"},
-                {"block": "Intelligence funnel", "page": "/intelligence"},
-                {"block": "Cross-module search", "page": "header"},
-                {"block": "Candidates list + side-panel", "page": "/candidates"},
-                {"block": "Jobs — per-job candidate count", "page": "/jobs"},
-            ]},
-            {"table": "applications", "consumers": [
-                {"block": "Candidates page stage chips", "page": "/candidates"},
-                {"block": "Jobs stage breakdown", "page": "/jobs"},
-                {"block": "Intelligence TTF/OAR metrics", "page": "/intelligence"},
-            ]},
-            {"table": "jobs", "consumers": [
-                {"block": "Jobs page table + grid", "page": "/jobs"},
-                {"block": "דשבורד KPI — משרות פתוחות", "page": "/"},
-                {"block": "Intelligence neglect alerts", "page": "/intelligence"},
-                {"block": "Side-panel job detail", "page": "/jobs"},
-            ]},
-            {"table": "hires", "consumers": [
-                {"block": "דשבורד — קליטות החודש", "page": "/"},
-                {"block": "Intelligence hires trend", "page": "/intelligence"},
-            ]},
-            {"table": "diversity_snapshots", "consumers": [
-                {"block": "Headcount — תצוגת גיוון", "page": "/headcount"},
-                {"block": "דשבורד — % גיוון", "page": "/"},
-            ]},
-            {"table": "headcount_snapshots", "consumers": [
-                {"block": "Headcount — מטריצת תקן/בפועל", "page": "/headcount"},
-                {"block": "דשבורד — סטיית תקן", "page": "/"},
-            ]},
-            {"table": "finops_invoices", "consumers": [
-                {"block": "Budget — FinOps תפעול", "page": "/budget"},
-                {"block": "דשבורד — תקציב מנוצל", "page": "/"},
-            ]},
-            {"table": "attrition_events", "consumers": [
-                {"block": "Headcount — attrition_ytd", "page": "/headcount"},
-                {"block": "Intelligence — churn alerts", "page": "/intelligence"},
-            ]},
-            {"table": "notifications", "consumers": [
-                {"block": "BellDropdown header", "page": "all"},
-                {"block": "Notification context", "page": "global"},
-            ]},
-        ],
-    }
+# /api/admin/consumer-map removed (A9-FU UX wave 4 cleanup): returned a
+# static source-to-consumer map for the now-retired ConsumerMapTab UI.
+# Treat the docs/architecture diagram as the source of truth instead.
 
 
 @router.get("/api/admin/active-schema")

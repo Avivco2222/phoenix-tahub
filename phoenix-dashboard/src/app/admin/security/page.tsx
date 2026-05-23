@@ -1,21 +1,33 @@
 "use client";
 
+/**
+ * /admin/security — destructive-controls dashboard.
+ *
+ * This page used to host both the AI kill-switch + PII status + audit log,
+ * gated behind a 20-minute password challenge. In A9-FU UX wave 2 the audit
+ * log moved to /admin?group=settings&sub=audit-log (no password gate — the
+ * caller is already authenticated as ADMIN via the session cookie).
+ *
+ * What stays here:
+ *   * AI Kill Switch — toggles the AI pipeline at the server. Genuinely
+ *     destructive, so we keep the password challenge.
+ *   * PII Scrubber status — read-only confirmation that the scrubber is
+ *     active. Pinned to this page because admins look for it next to the
+ *     kill switch when incident-responding.
+ *   * Session-timeout banner — visual reassurance that destructive controls
+ *     auto-lock.
+ *
+ * What moved out (A9-FU UX wave 4 cleanup):
+ *   * The audit-log table — see AuditLogTab.tsx, accessed via the new
+ *     "audit-log" sub-tab under /admin?group=settings.
+ */
+
 import { useState, useEffect, useCallback } from "react";
-import { ShieldAlert, Lock, Unlock, Power, Clock, EyeOff, Activity, AlertTriangle, CheckCircle2, Search } from "lucide-react";
+import Link from "next/link";
+import { ShieldAlert, Lock, Unlock, Power, Clock, EyeOff, AlertTriangle, CheckCircle2, Activity } from "lucide-react";
 import { getAdminHeaders, getApiBaseUrl } from "@/lib/api";
 import { saveAccessToken } from "@/lib/auth";
 
-interface AuditLog {
-  id: string;
-  date: string;
-  time: string;
-  action: string;
-  status: string;
-  details: string;
-  user: string;
-  ip_address: string;
-  is_destructive: boolean;
-}
 
 export default function SecurityAndPrivacyPage() {
   const SESSION_TIMEOUT_MINUTES = 20;
@@ -24,12 +36,10 @@ export default function SecurityAndPrivacyPage() {
   const [errorMsg, setErrorMsg] = useState("");
 
   const [aiEnabled, setAiEnabled] = useState(true);
-  const [logs, setLogs] = useState<AuditLog[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [fetchError, setFetchError] = useState("");
   const [sessionStartedAt, setSessionStartedAt] = useState<number | null>(null);
   const [sessionNow, setSessionNow] = useState(Date.now());
-  const [auditSearch, setAuditSearch] = useState("");
 
   const fetchSecurityData = useCallback(async () => {
     try {
@@ -39,17 +49,11 @@ export default function SecurityAndPrivacyPage() {
       if (!statusRes.ok) throw new Error("status fetch failed");
       const statusData = await statusRes.json();
       setAiEnabled(statusData.ai_enabled);
-
-      const logsRes = await fetch(`${apiUrl}/api/security/audit-logs`, { headers });
-      if (!logsRes.ok) throw new Error("logs fetch failed");
-      const logsData = await logsRes.json();
-      setLogs(logsData);
       setFetchError("");
     } catch (error) {
       console.error("[Security] Backend unavailable", error);
       setFetchError("שגיאה בטעינת נתוני אבטחה חיים מהשרת.");
       setAiEnabled(false);
-      setLogs([]);
     }
   }, []);
 
@@ -112,12 +116,6 @@ export default function SecurityAndPrivacyPage() {
     }
   };
 
-  const getStatusClass = (status: string) => {
-    if (status === 'Success') return 'bg-green-100 text-green-700';
-    if (status === 'Warning') return 'bg-yellow-100 text-yellow-700';
-    return 'bg-red-100 text-red-700';
-  };
-
   if (!isUnlocked) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[600px] animate-in fade-in duration-500">
@@ -127,7 +125,15 @@ export default function SecurityAndPrivacyPage() {
           </div>
           <div>
             <h2 className="text-2xl font-black text-[#002649]">אזור מאובטח (Production)</h2>
-            <p className="text-slate-500 mt-2 font-medium text-sm">הגישה לניהול הגנת המידע והפרטיות מוגבלת למורשים בלבד.</p>
+            <p className="text-slate-500 mt-2 font-medium text-sm">
+              שליטה בכלים הרסניים (AI Kill Switch, PII Scrubbing) מוגבלת למורשים בלבד.
+            </p>
+            <p className="text-slate-400 mt-2 text-xs">
+              ליומן ביקורת רגיל אין צורך בנעילה זו — ראו{' '}
+              <Link href="/admin?group=settings&sub=audit-log" className="text-[#EF6B00] underline font-bold">
+                הגדרות → יומן ביקורת
+              </Link>.
+            </p>
           </div>
           <form onSubmit={handleUnlock} className="space-y-4">
             <label htmlFor="security-password" className="sr-only">סיסמת הרשאה</label>
@@ -154,16 +160,6 @@ export default function SecurityAndPrivacyPage() {
   const remainingMs = Math.max(0, totalMs - elapsedMs);
   const remainingMinutes = Math.ceil(remainingMs / 60000);
   const timeoutProgress = Math.max(0, Math.min(100, (remainingMs / totalMs) * 100));
-  const filteredLogs = logs.filter((log) => {
-    const query = auditSearch.trim().toLowerCase();
-    if (!query) return true;
-    return (
-      log.action.toLowerCase().includes(query) ||
-      log.user.toLowerCase().includes(query) ||
-      log.ip_address.toLowerCase().includes(query) ||
-      log.details.toLowerCase().includes(query)
-    );
-  });
 
   return (
     <div className="max-w-[1600px] mx-auto space-y-8 animate-in fade-in duration-500 px-2 md:px-6 pb-20">
@@ -175,8 +171,16 @@ export default function SecurityAndPrivacyPage() {
           </h1>
           <p className="text-slate-500 mt-2 font-medium">המערכת מחוברת ישירות למסד הנתונים (Live Environment).</p>
         </div>
-        <div className="bg-green-50 text-green-700 px-4 py-2 rounded-xl font-bold flex items-center gap-2 border border-green-200">
-          <CheckCircle2 size={18} /> חיבור Backend מאובטח פעיל
+        <div className="flex items-center gap-3">
+          <Link
+            href="/admin?group=settings&sub=audit-log"
+            className="bg-white border border-slate-200 px-4 py-2 rounded-xl font-bold flex items-center gap-2 text-slate-600 hover:text-[#EF6B00] hover:border-[#EF6B00]/40 transition-all text-sm"
+          >
+            <Activity size={16} /> יומן ביקורת מלא
+          </Link>
+          <div className="bg-green-50 text-green-700 px-4 py-2 rounded-xl font-bold flex items-center gap-2 border border-green-200">
+            <CheckCircle2 size={18} /> חיבור Backend מאובטח פעיל
+          </div>
         </div>
       </div>
       {fetchError && (
@@ -248,64 +252,16 @@ export default function SecurityAndPrivacyPage() {
         </div>
       </div>
 
-      <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden mt-8">
-        <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
-          <h3 className="font-black text-xl text-[#002649] flex items-center gap-2">
-            <Activity size={20} className="text-blue-500" /> יומן פעולות שרת (Live Audit Log)
-          </h3>
-          <div className="relative w-72">
-            <Search size={16} className="absolute right-3 top-2.5 text-slate-400" />
-            <input
-              type="text"
-              value={auditSearch}
-              onChange={(e) => setAuditSearch(e.target.value)}
-              placeholder="חפש פעולה, משתמש, IP..."
-              className="w-full pr-9 pl-3 py-2 rounded-lg border border-slate-200 bg-white text-sm outline-none focus:border-[#EF6B00]"
-            />
-          </div>
-        </div>
-        <div className="overflow-x-auto max-h-[400px] overflow-y-auto">
-          <table className="w-full text-right text-sm">
-            <thead className="bg-white text-slate-400 font-bold text-xs uppercase border-b border-slate-100 sticky top-0">
-              <tr>
-                <th className="px-6 py-4">מזהה</th>
-                <th className="px-6 py-4">תאריך</th>
-                <th className="px-6 py-4">זמן</th>
-                <th className="px-6 py-4">פעולה</th>
-                <th className="px-6 py-4">סטטוס</th>
-                <th className="px-6 py-4">IP</th>
-                <th className="px-6 py-4">פרטים נוספים</th>
-                <th className="px-6 py-4">משתמש</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-50">
-              {filteredLogs.length === 0 ? (
-                <tr>
-                  <td colSpan={8} className="px-6 py-12 text-center text-slate-400 font-medium">
-                    אין רשומות עדיין. נסה לכבות ולהדליק את מנוע ה-AI כדי לייצר את הרשומה הראשונה במסד הנתונים.
-                  </td>
-                </tr>
-              ) : (
-                filteredLogs.map((log) => (
-                  <tr key={log.id} className={`hover:bg-slate-50 transition-colors group ${log.is_destructive ? "bg-red-50/40" : ""}`}>
-                    <td className="px-6 py-4 font-mono text-xs text-slate-400">{log.id}</td>
-                    <td className="px-6 py-4 font-bold text-slate-700">{log.date}</td>
-                    <td className="px-6 py-4 font-bold text-slate-700">{log.time}</td>
-                    <td className="px-6 py-4 font-bold text-[#002649]">{log.action}</td>
-                    <td className="px-6 py-4">
-                      <span className={`px-2.5 py-1 rounded-md text-[10px] font-black uppercase tracking-wider ${getStatusClass(log.status)}`}>
-                        {log.status}
-                      </span>
-                    </td>
-                    <td className="px-6 py-4 text-xs font-mono text-slate-600">{log.ip_address}</td>
-                    <td className="px-6 py-4 text-slate-500 text-xs">{log.details}</td>
-                    <td className="px-6 py-4 text-slate-600 font-medium">{log.user}</td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
+      <div className="bg-slate-50 border border-slate-200 rounded-2xl p-6 text-sm text-slate-600 font-medium">
+        <p className="font-bold text-[#002649] mb-2">לאן הלך יומן הביקורת?</p>
+        <p>
+          יומן הביקורת המלא — עם סינון לפי פעולה, משתמש, batch_id וטווח תאריכים — עבר ל-
+          <Link href="/admin?group=settings&sub=audit-log" className="text-[#EF6B00] underline font-bold">
+            הגדרות → יומן ביקורת
+          </Link>
+          . שם אין חיכוך של סיסמה נפרדת — מנהל מערכת מאומת ב-session cookie יכול לצפות ישירות.
+          הדף הזה נשמר רק לכלים הרסניים (AI kill switch + PII status) שמצדיקים נעילה נוספת.
+        </p>
       </div>
     </div>
   );
