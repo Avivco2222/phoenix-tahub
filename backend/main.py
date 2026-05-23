@@ -158,11 +158,32 @@ import config as shared_config
 from rate_limit import limiter  # shared instance — see backend/rate_limit.py
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(name)s req_id=%(request_id)s %(message)s",
-)
-logger = logging.getLogger("phoenix-api")
+
+# CORS — when the frontend lives on a different origin (the Vercel
+# two-project setup puts Next.js on app.example.com and FastAPI on
+# api-app.example.com), the browser blocks cross-origin requests unless
+# the backend opts in. Same-origin dev (Next.js rewrites /api/* on
+# localhost:3000) does NOT need this, but adding it costs nothing.
+#
+# CORS_ALLOW_ORIGINS = comma-separated absolute URLs (no trailing slash).
+# Leave empty in same-origin deployments to disable the middleware.
+_cors_origins = [o.strip() for o in os.getenv("CORS_ALLOW_ORIGINS", "").split(",") if o.strip()]
+if _cors_origins:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=_cors_origins,
+        allow_credentials=True,   # required so the session cookie flows on cross-origin XHRs
+        allow_methods=["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
+        allow_headers=["Content-Type", "Authorization", "X-Admin-Token",
+                       "x-schema-version", "x-idempotency-key", "x-preflight-hash"],
+    )
+# Logging is now configured by backend/logging_setup.py — text format in
+# dev (human-readable tail of uvicorn) and JSON-per-line in production
+# (set ENV=production) so log drains can index by field. The previous
+# call to logging.basicConfig stays only as documentation of the legacy
+# format string; configure_logging() replaces it at runtime.
+from logging_setup import configure_logging
+logger = configure_logging()
 SESSION_UNLOCK_PIN = os.getenv("SESSION_UNLOCK_PIN")
 JWT_SECRET = os.getenv("JWT_SECRET")
 JWT_TTL_MINUTES = int(os.getenv("JWT_TTL_MINUTES", "120"))
