@@ -22,6 +22,7 @@ import uuid
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
+from utils import _nan_safe_records, mask_value, normalize_email, normalize_phone
 from typing import Optional
 
 import config as shared_config
@@ -45,24 +46,12 @@ def _compute_unified_stage(stage_code, onboarding_status):
     return _impl(stage_code, onboarding_status)
 
 
-def _nan_safe_records(df):
-    from main import _nan_safe_records as _impl
-    return _impl(df)
 
 
-def _normalize_phone(value):
-    from main import normalize_phone as _impl
-    return _impl(value)
 
 
-def _normalize_email(value):
-    from main import normalize_email as _impl
-    return _impl(value)
 
 
-def _mask_value(value):
-    from main import mask_value as _impl
-    return _impl(value)
 
 
 def _create_manual_edit_batch(entity_type: str, entity_id: str, actor: str) -> str:
@@ -380,8 +369,8 @@ def edit_candidate(
         updates: dict = {}
 
         if payload.phone is not None:
-            new_norm = _normalize_phone(payload.phone)
-            masked_new_norm = _mask_value(new_norm)
+            new_norm = normalize_phone(payload.phone)
+            masked_new_norm = mask_value(new_norm)
             if masked_new_norm and masked_new_norm != before.get("phone_norm"):
                 conflict = conn.execute(
                     "SELECT id, name FROM candidates WHERE phone_norm = ? AND id != ?",
@@ -397,12 +386,12 @@ def edit_candidate(
                             "conflicting_name": conflict["name"],
                         },
                     )
-            updates["phone"] = _mask_value(payload.phone)
+            updates["phone"] = mask_value(payload.phone)
             updates["phone_norm"] = masked_new_norm
 
         if payload.email is not None:
-            new_email_norm = _normalize_email(payload.email)
-            masked_new_email_norm = _mask_value(new_email_norm)
+            new_email_norm = normalize_email(payload.email)
+            masked_new_email_norm = mask_value(new_email_norm)
             if masked_new_email_norm and masked_new_email_norm != before.get("email_norm"):
                 conflict = conn.execute(
                     "SELECT id, name FROM candidates WHERE email_norm = ? AND id != ?",
@@ -418,7 +407,7 @@ def edit_candidate(
                             "conflicting_name": conflict["name"],
                         },
                     )
-            updates["email"] = _mask_value(payload.email)
+            updates["email"] = mask_value(payload.email)
             updates["email_norm"] = masked_new_email_norm
 
         for field in ("name", "source", "notes", "linkedin", "cv_url"):

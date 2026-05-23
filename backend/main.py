@@ -45,6 +45,20 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 from aliases import LEGACY_CANDIDATE_ALIASES, TYPED_INGEST_ALIASES
+from utils import (
+    _col_letter,
+    _empty_stats,
+    _nan_safe_records,
+    _normalize_score,
+    _row_to_scalar,
+    _safe_pct,
+    _scalar,
+    _to_int,
+    iteration_signature,
+    mask_value,
+    normalize_email,
+    normalize_phone,
+)
 from auth import (
     BCRYPT_AVAILABLE,
     IMPERSONATOR_COOKIE,
@@ -304,40 +318,7 @@ def mask_sensitive_data(df):
     return df
 
 
-def mask_value(val) -> Optional[str]:
-    if val is None:
-        return None
-    val_str = str(val).strip()
-    if not val_str or val_str.lower() in ('nan', 'none', 'null', 'n/a', '-'):
-        return None
-    return hashlib.sha256(val_str.encode("utf-8")).hexdigest()[:12]
-
-
-# POST /upload/{file_type} moved to backend/routers/ingestion.py (B2.7b)
-
-cors_origins_env = os.getenv("CORS_ALLOW_ORIGINS", "").strip()
-if cors_origins_env:
-    origins = [origin.strip() for origin in cors_origins_env.split(",") if origin.strip()]
-else:
-    # Local dev defaults (Next may run on 3000/3001/3002)
-    origins = [
-        "http://localhost:3000",
-        "http://localhost:3001",
-        "http://localhost:3002",
-        "http://127.0.0.1:3000",
-        "http://127.0.0.1:3001",
-        "http://127.0.0.1:3002",
-        "https://phoenix-tahub2.vercel.app",
-    ]
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=origins,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
+# mask_value moved to backend/utils.py (A9-fu Phase 1)
 DB_PATH = shared_config.DB_NAME
 
 SUPPORTED_SCHEMA_VERSIONS = {"1.0"}
@@ -920,42 +901,7 @@ def _compute_unified_stage(stage_code: str | None, onboarding_status: str | None
 # UNIFIED_STAGES moved to backend/constants.py; re-imported at top of this file.
 
 
-def _nan_safe_records(df: "pd.DataFrame") -> list:
-    """Convert a DataFrame to records list, replacing NaN/inf/numpy types with JSON-safe values.
-
-    Python's json.dumps raises ValueError on float('nan') and float('inf'). pandas DataFrames
-    frequently have NaN floats in numeric columns when a DB row has NULL.  This utility converts
-    them to Python None so FastAPI can serialize them as JSON null values.
-    Also handles numpy scalar types (np.int64, np.float64, etc.) that are not JSON serializable.
-    """
-    import math
-    try:
-        import numpy as np
-        _np_integer = np.integer
-        _np_floating = np.floating
-        _np_ndarray = np.ndarray
-    except ImportError:
-        _np_integer = _np_floating = _np_ndarray = type(None)  # type: ignore
-
-    raw = df.where(df.notna(), other=None).to_dict(orient="records")
-
-    def safe(v):
-        if v is None:
-            return None
-        if isinstance(v, float) and (math.isnan(v) or math.isinf(v)):
-            return None
-        if isinstance(v, _np_integer):
-            return int(v)
-        if isinstance(v, _np_floating):
-            f = float(v)
-            return None if (math.isnan(f) or math.isinf(f)) else f
-        if isinstance(v, _np_ndarray):
-            return v.tolist()
-        return v
-
-    return [{k: safe(v) for k, v in row.items()} for row in raw]
-
-
+# _nan_safe_records moved to backend/utils.py (A9-fu Phase 1)
 # =====================================================================
 # DATA PIPELINE V2 — shared helpers used by all ingest stage-handlers.
 # Phone normalisation, iteration signature, candidate match+merge, and a
@@ -963,61 +909,9 @@ def _nan_safe_records(df: "pd.DataFrame") -> list:
 # =====================================================================
 
 
-def normalize_phone(raw) -> Optional[str]:
-    """Israeli mobile/landline → +972XXXXXXXXX canonical form.
-
-    Strips non-digits, removes leading 0 / 972, returns None when the result
-    isn't a plausible 9-digit IL number. Returning None means "can't dedupe
-    on this field" — the caller falls back to email or inserts as new.
-    """
-    if raw is None:
-        return None
-    digits = re.sub(r"\D", "", str(raw))
-    if not digits:
-        return None
-    if digits.startswith("972"):
-        digits = digits[3:]
-    if digits.startswith("0"):
-        digits = digits[1:]
-    # IL mobile = 5XXXXXXXX (9 digits). IL landline = 2|3|4|7|8|9 + 7 digits.
-    if len(digits) == 9 and digits[0] in {"5", "7"}:
-        return "+972" + digits
-    if len(digits) == 8 and digits[0] in {"2", "3", "4", "8", "9"}:
-        return "+972" + digits
-    return None
-
-
-def normalize_email(raw) -> Optional[str]:
-    if raw is None:
-        return None
-    v = str(raw).strip().lower()
-    if not v or "@" not in v:
-        return None
-    return v
-
-
-def iteration_signature(status, application_date, recruiter) -> str:
-    """Two application rows are the SAME iteration only if status, date and
-    recruiter all match. Different in any of these = a distinct iteration
-    (e.g. re-applied a year later, or moved to a new stage by a different recruiter).
-
-    Returns a 16-char hex digest used in the unique index (candidate_id, job_id, iteration_signature).
-    Inputs may be strings, datetimes, NaN, None — anything stringifiable.
-    """
-    def _norm(v) -> str:
-        if v is None:
-            return ""
-        if isinstance(v, float) and pd.isna(v):
-            return ""
-        return str(v).strip().lower()
-    parts = [
-        _norm(status),
-        _norm(application_date)[:10],
-        _norm(recruiter),
-    ]
-    return hashlib.sha256("|".join(parts).encode("utf-8")).hexdigest()[:16]
-
-
+# normalize_phone moved to backend/utils.py (A9-fu Phase 1)
+# normalize_email moved to backend/utils.py (A9-fu Phase 1)
+# iteration_signature moved to backend/utils.py (A9-fu Phase 1)
 def find_existing_candidate(conn: sqlite3.Connection, phone_norm: Optional[str], email_norm: Optional[str]) -> Optional[str]:
     """Returns candidate.id if a row already exists matching the normalized
     phone OR email. Phone takes precedence (more unique in IL B2C). Returns
@@ -1339,15 +1233,7 @@ TEMPLATE_SPECS: dict[str, dict] = {
 }
 
 
-def _col_letter(idx: int) -> str:
-    """1-based column index → Excel letter (A, B, ..., Z, AA, AB, ...)."""
-    s = ""
-    while idx > 0:
-        idx, r = divmod(idx - 1, 26)
-        s = chr(65 + r) + s
-    return s
-
-
+# _col_letter moved to backend/utils.py (A9-fu Phase 1)
 def _legacy_build_excel_template_bytes(file_type: str, schema_version: str) -> bytes:
     """Original recruiter-applications template — preserved for any caller
     that still relies on the schema contract shape. Used as fallback when a
@@ -2526,32 +2412,9 @@ ADMIN_CONFIG_DEFAULTS = {
 }
 
 
-def _safe_pct(numerator: int, denominator: int) -> float:
-    if denominator <= 0:
-        return 0.0
-    return round((numerator / denominator) * 100, 1)
-
-
-def _to_int(value, fallback: int) -> int:
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return fallback
-
-
-def _normalize_score(value: float, lower: float, upper: float) -> float:
-    if upper <= lower:
-        return 0.0
-    clipped = min(max(value, lower), upper)
-    return (clipped - lower) / (upper - lower)
-
-
-# GET /jobs/neglect-alerts moved to backend/routers/jobs.py (B2.6)
-
-# GET/POST /api/admin/config moved to backend/routers/admin.py (B2.8a)
-
-
-# Routes at original lines 2744-2830 moved to backend/routers/admin.py (B2.8b)
+# _safe_pct moved to backend/utils.py (A9-fu Phase 1)
+# _to_int moved to backend/utils.py (A9-fu Phase 1)
+# _normalize_score moved to backend/utils.py (A9-fu Phase 1)
 # =====================================================================
 # REAL AUTH (per-user login via bcrypt + cookie JWT) — phase-1 merge
 # This block coexists with the Bearer-based admin auth above. Endpoints
@@ -3860,59 +3723,9 @@ def _create_manual_edit_batch(entity_type: str, entity_id: str, actor: str) -> s
     return batch_id
 
 
-def _empty_stats() -> dict:
-    """Per-batch stats. `inserted/updated/skipped_duplicate` are entity-level
-    aggregates (kept for backwards compat with the legacy ingest UI); the
-    per-entity counters below let the new admin Toast and Diff modal say
-    'X new candidates · Y new applications · Z skipped' precisely."""
-    return {
-        "received": 0,
-        # Legacy aggregates (sum over all entity types in this batch):
-        "inserted": 0, "updated": 0, "skipped_duplicate": 0,
-        # Per-entity breakdown:
-        "candidates_inserted": 0, "candidates_updated": 0,
-        "applications_inserted": 0, "applications_skipped": 0,
-        "jobs_inserted": 0, "jobs_updated": 0,
-        # Pipeline outcome:
-        "rejected": 0, "rejected_reasons": [],
-    }
-
-
-def _scalar(value):
-    """SQLite parameter-binding doesn't accept pandas Timestamps / NaT / etc.
-    Coerce anything non-native to a plain string (or None for NaN/NaT).
-
-    IMPORTANT: pandas reads CSV columns of all-digit values as float64. A
-    phone "0541234567" becomes 541234567.0 — str()-ing that yields
-    "541234567.0", and normalize_phone() then sees 10 digits and bails out.
-    To preserve dedup keys, we narrow whole-number floats to int first so
-    downstream code sees a clean numeric string."""
-    if value is None:
-        return None
-    if isinstance(value, float):
-        if pd.isna(value):
-            return None
-        # Whole-number float → int (e.g. 541234567.0 → 541234567)
-        if value.is_integer():
-            return int(value)
-        return value
-    if isinstance(value, (str, int, bool, bytes)):
-        return value
-    if hasattr(value, "isoformat"):
-        try:
-            return value.isoformat()
-        except Exception:
-            return str(value)
-    if pd.isna(value):
-        return None
-    return str(value)
-
-
-def _row_to_scalar(parsed: dict) -> dict:
-    """Apply _scalar to every value in a parsed row. Use before INSERTs."""
-    return {k: _scalar(v) for k, v in parsed.items()}
-
-
+# _empty_stats moved to backend/utils.py (A9-fu Phase 1)
+# _scalar moved to backend/utils.py (A9-fu Phase 1)
+# _row_to_scalar moved to backend/utils.py (A9-fu Phase 1)
 # =====================================================================
 # Per-type stage handlers
 # =====================================================================

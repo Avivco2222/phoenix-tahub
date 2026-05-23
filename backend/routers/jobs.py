@@ -26,6 +26,7 @@ import sqlite3
 
 import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException
+from utils import _normalize_score, _safe_pct, _to_int
 
 import config as shared_config
 from auth import require_admin, require_dual_role
@@ -54,19 +55,10 @@ def _get_orphan_jobs():
     return _impl()
 
 
-def _to_int(value, default):
-    from main import _to_int as _impl
-    return _impl(value, default)
 
 
-def _normalize_score(value, lo, hi):
-    from main import _normalize_score as _impl
-    return _impl(value, lo, hi)
 
 
-def _safe_pct(num, denom):
-    from main import _safe_pct as _impl
-    return _impl(num, denom)
 
 
 def _admin_config_defaults():

@@ -23,6 +23,7 @@ import uuid
 
 import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException
+from utils import _nan_safe_records
 from typing import Optional
 
 import config as shared_config
@@ -44,9 +45,6 @@ def _log_audit(action: str, status: str, details: str, user: str) -> None:
     log_audit_action(action=action, status=status, details=details, user=user)
 
 
-def _nan_safe_records(df):
-    from main import _nan_safe_records as _impl
-    return _impl(df)
 
 
 def _bump_data_version(conn=None) -> int:

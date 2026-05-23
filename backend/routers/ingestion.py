@@ -32,6 +32,7 @@ from typing import Optional
 
 import pandas as pd
 from fastapi import APIRouter, Depends, File, Header, HTTPException, Request, UploadFile
+from utils import _col_letter, _empty_stats, _row_to_scalar, iteration_signature, mask_value, normalize_email, normalize_phone
 from fastapi.responses import StreamingResponse
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
@@ -93,24 +94,12 @@ def _normalize_upload_frame(df):
     return _impl(df)
 
 
-def _empty_stats():
-    from main import _empty_stats as _impl
-    return _impl()
 
 
-def _row_to_scalar(d):
-    from main import _row_to_scalar as _impl
-    return _impl(d)
 
 
-def _normalize_phone(v):
-    from main import normalize_phone as _impl
-    return _impl(v)
 
 
-def _normalize_email(v):
-    from main import normalize_email as _impl
-    return _impl(v)
 
 
 def _find_existing_candidate(conn, phone_norm, email_norm):
@@ -118,14 +107,8 @@ def _find_existing_candidate(conn, phone_norm, email_norm):
     return _impl(conn, phone_norm, email_norm)
 
 
-def _iteration_signature(*args, **kwargs):
-    from main import iteration_signature as _impl
-    return _impl(*args, **kwargs)
 
 
-def _col_letter(idx):
-    from main import _col_letter as _impl
-    return _impl(idx)
 
 
 def _ingest_handlers():
@@ -149,9 +132,6 @@ def _validate_schema_contract(df, version):
     return _impl(df, version)
 
 
-def _mask_value(v):
-    from main import mask_value as _impl
-    return _impl(v)
 
 
 def _record_batch_change(conn, batch_id, entity_type, entity_id, action, before, after):
@@ -387,8 +367,8 @@ async def ingest_whatif(
             parsed = _row_to_scalar(dict(row.items()))
             if not parsed.get("name") and parsed.get("candidate_name"):
                 parsed["name"] = parsed["candidate_name"]
-            parsed["phone_norm"] = _normalize_phone(parsed.get("phone"))
-            parsed["email_norm"] = _normalize_email(parsed.get("email"))
+            parsed["phone_norm"] = normalize_phone(parsed.get("phone"))
+            parsed["email_norm"] = normalize_email(parsed.get("email"))
 
             if file_type == "candidates":
                 if _exists_candidate(parsed.get("phone_norm"), parsed.get("email_norm")):
@@ -400,7 +380,7 @@ async def ingest_whatif(
                 # Application iteration prediction
                 job_title = (parsed.get("job_title") or "").strip()
                 if job_title:
-                    sig = _iteration_signature(parsed.get("status"), parsed.get("application_date") or parsed.get("start_date"), parsed.get("recruiter"))
+                    sig = iteration_signature(parsed.get("status"), parsed.get("application_date") or parsed.get("start_date"), parsed.get("recruiter"))
                     jrow = conn.execute(
                         "SELECT id FROM jobs WHERE LOWER(job_title) = LOWER(?) LIMIT 1", (job_title,),
                     ).fetchone()
@@ -613,14 +593,14 @@ async def upload_file(
         for row in valid_rows:
             email_val = row.get("email")
             phone_val = row.get("phone")
-            email_norm = _normalize_email(email_val)
-            phone_norm = _normalize_phone(phone_val)
+            email_norm = normalize_email(email_val)
+            phone_norm = normalize_phone(phone_val)
 
             # Mask values for storage in DB
-            masked_email_norm = _mask_value(email_norm)
-            masked_phone_norm = _mask_value(phone_norm)
-            masked_email = _mask_value(email_val)
-            masked_phone = _mask_value(phone_val)
+            masked_email_norm = mask_value(email_norm)
+            masked_phone_norm = mask_value(phone_norm)
+            masked_email = mask_value(email_val)
+            masked_phone = mask_value(phone_val)
 
             c_id = _find_existing_candidate(conn, masked_phone_norm, masked_email_norm)
             if not c_id:
@@ -665,7 +645,7 @@ async def upload_file(
                     _record_batch_change(conn, batch_id, "job", j_id, "insert", None, {"job_title": job_title, "department": dept})
 
             if c_id and j_id:
-                sig = _iteration_signature(
+                sig = iteration_signature(
                     str(row["status"]),
                     pd.to_datetime(row["start_date"]).strftime("%Y-%m-%d"),
                     str(row["recruiter"]),
