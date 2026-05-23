@@ -59,6 +59,18 @@ from .batches import (
 )
 from .detect import _FK_ORDER, _detect_sheet_type
 from .templates import TEMPLATE_SPECS
+from .handlers import (
+    INGEST_HANDLERS,
+    _ingest_attrition,
+    _ingest_budget,
+    _ingest_candidates,
+    _ingest_diversity,
+    _ingest_headcount,
+    _ingest_hires,
+    _ingest_jobs,
+    insert_candidate,
+    merge_candidate,
+)
 
 
 __all__ = [
@@ -81,4 +93,9 @@ __all__ = [
     "_FK_ORDER", "_detect_sheet_type",
     # templates
     "TEMPLATE_SPECS",
+    # handlers
+    "INGEST_HANDLERS",
+    "_ingest_attrition", "_ingest_budget", "_ingest_candidates",
+    "_ingest_diversity", "_ingest_headcount", "_ingest_hires", "_ingest_jobs",
+    "insert_candidate", "merge_candidate",
 ]

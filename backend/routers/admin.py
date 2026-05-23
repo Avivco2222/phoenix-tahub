@@ -51,6 +51,12 @@ from auth import (
 )
 from constants import Role
 from db import db_conn
+from ingestion import (
+    DEFAULT_SCHEMA_VERSION,
+    INGEST_HANDLERS,
+    SUPPORTED_SCHEMA_VERSIONS,
+    TEMPLATE_SPECS,
+)
 from notifications import _check_inactive_recruiters
 from internal_logic import (
     build_snapshots,
@@ -68,15 +74,6 @@ def _admin_config_defaults():
     return ADMIN_CONFIG_DEFAULTS
 
 
-def _ingest_constants():
-    from main import (
-        DEFAULT_SCHEMA_VERSION,
-        SUPPORTED_SCHEMA_VERSIONS,
-        INGEST_HANDLERS,
-    )
-    return DEFAULT_SCHEMA_VERSION, SUPPORTED_SCHEMA_VERSIONS, INGEST_HANDLERS
-
-
 def _build_preflight_report(filename, content, schema_version):
     from main import _build_preflight_report as _impl
     return _impl(filename, content, schema_version)
@@ -89,9 +86,6 @@ def _build_excel_template_bytes(file_type, schema_version):
 
 
 
-def _template_specs():
-    from main import TEMPLATE_SPECS
-    return TEMPLATE_SPECS
 
 
 VALID_APP_TAGS = ("new", "update", "coming_soon", "none")
@@ -335,7 +329,6 @@ def admin_consumer_map(_: dict = Depends(require_dual_role(Role.ADMIN))):
 def admin_active_schema():
     """Returns the current active schema version. Frontend can include it as
     `X-Schema-Version` header on uploads; backend will warn if mismatch."""
-    DEFAULT_SCHEMA_VERSION, SUPPORTED_SCHEMA_VERSIONS, INGEST_HANDLERS = _ingest_constants()
     return {
         "active_schema_version": DEFAULT_SCHEMA_VERSION,
         "supported": SUPPORTED_SCHEMA_VERSIONS,
@@ -803,7 +796,6 @@ async def ingestion_preflight(
     x_schema_version: Optional[str] = Header(default=None),
     _: str = Depends(require_admin),
 ):
-    DEFAULT_SCHEMA_VERSION, SUPPORTED_SCHEMA_VERSIONS, _ihs = _ingest_constants()
     schema_version = x_schema_version or DEFAULT_SCHEMA_VERSION
     if schema_version not in SUPPORTED_SCHEMA_VERSIONS:
         raise HTTPException(status_code=400, detail=f"Unsupported schema_version: {schema_version}")
@@ -821,8 +813,6 @@ def download_ingestion_template(
     schema_version: Optional[str] = None,
     _: str = Depends(require_admin),
 ):
-    TEMPLATE_SPECS = _template_specs()
-    DEFAULT_SCHEMA_VERSION, SUPPORTED_SCHEMA_VERSIONS, _ihs = _ingest_constants()
     # Drive the allow-list from TEMPLATE_SPECS — adding a new ingest type
     # automatically enables its template download.
     valid_types = set(TEMPLATE_SPECS.keys()) | {"candidates", "jobs", "hires", "diversity", "headcount", "budget", "attrition"}

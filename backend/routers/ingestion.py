@@ -53,6 +53,7 @@ from internal_logic import (
 from rate_limit import limiter
 from ingestion import (
     DEFAULT_SCHEMA_VERSION,
+    INGEST_HANDLERS,
     INGEST_REQUIREMENTS,
     MAX_ERROR_RATE,
     SUPPORTED_SCHEMA_VERSIONS,
@@ -111,9 +112,6 @@ router = APIRouter(tags=["ingestion"])
 
 
 
-def _ingest_handlers():
-    from main import INGEST_HANDLERS
-    return INGEST_HANDLERS
 
 
 
@@ -229,7 +227,6 @@ async def ingest_preflight(
 ):
     """Dry-run: parse + validate without persisting. Lets admins preview what
     will land and what will be rejected BEFORE committing."""
-    INGEST_HANDLERS = _ingest_handlers()
 
     if file_type not in INGEST_HANDLERS:
         raise HTTPException(status_code=400, detail=f"Unknown ingest type. Allowed: {list(INGEST_HANDLERS.keys())}")
@@ -268,7 +265,6 @@ async def ingest_whatif(
     Implementation: we run the same handler, then issue ROLLBACK on the
     sqlite connection. Stats are returned identical to a real commit.
     """
-    INGEST_HANDLERS = _ingest_handlers()
     if file_type not in INGEST_HANDLERS:
         raise HTTPException(status_code=400, detail=f"Unknown ingest type. Allowed: {list(INGEST_HANDLERS.keys())}")
 
@@ -777,7 +773,6 @@ async def ingest_smart(
     user: dict = Depends(require_dual_role(Role.ADMIN, Role.HRBP)),
 ):
     """Single Excel file with multiple sheets → auto-detect type and route to each handler."""
-    INGEST_HANDLERS = _ingest_handlers()
 
     _validate_upload_file(
         file,
@@ -953,7 +948,6 @@ async def ingest_typed(
     """Unified typed ingest. Drives the full pipeline for one of the 7 sources:
     candidates / jobs / hires / diversity / headcount / budget / attrition.
     """
-    INGEST_HANDLERS = _ingest_handlers()
     if file_type not in INGEST_HANDLERS:
         raise HTTPException(status_code=400, detail=f"Unknown ingest type. Allowed: {list(INGEST_HANDLERS.keys())}")
 
