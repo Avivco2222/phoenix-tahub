@@ -143,18 +143,31 @@ export default function HeadcountDashboard() {
     const loadLive = async () => {
       try {
         setLiveDataError(null);
-        const [statsRes, jobsRes, hcRes] = await Promise.all([
-          fetch(`${apiBase}/stats`, { cache: "no-store" }),
+        // Audit Phase 3C: switched the "קליטות" count from /stats
+        // (current-month only) to /api/dashboard/metrics.hires_in_period
+        // (full period total). The "משרות שנפתחו" tile no longer
+        // counts the entire jobs array — it filters to is_active=true
+        // so closed jobs don't inflate the number.
+        const [metricsRes, jobsRes, hcRes] = await Promise.all([
+          fetch(`${apiBase}/api/dashboard/metrics`, { cache: "no-store" }),
           fetch(`${apiBase}/jobs`, { cache: "no-store" }),
           fetch(`${apiBase}/api/headcount`, { cache: "no-store", credentials: "include" }),
         ]);
-        if (statsRes.ok) {
-          const stats = await statsRes.json();
-          setLiveHires(Number(stats?.hired_this_month ?? 0));
+        if (metricsRes.ok) {
+          const m = await metricsRes.json();
+          // Use hires_in_period (broader than current-month) for the
+          // "סה״כ קליטות" tile so the label honestly matches the value.
+          setLiveHires(Number(m?.hires_in_period ?? m?.hires ?? 0));
         }
         if (jobsRes.ok) {
           const jobs = await jobsRes.json();
-          setLiveOpenJobs(Array.isArray(jobs) ? jobs.length : 0);
+          // Only count ACTIVE (open) jobs — the previous code counted
+          // every row including closed ones, which made the "משרות
+          // שנפתחו" tile look much higher than reality.
+          const openOnly = Array.isArray(jobs)
+            ? jobs.filter((j: { is_active?: boolean; status?: string }) => j.is_active !== false)
+            : [];
+          setLiveOpenJobs(openOnly.length);
         }
         if (hcRes.ok) {
           const payload = await hcRes.json();
@@ -222,18 +235,43 @@ export default function HeadcountDashboard() {
         
         {/* --- LAYER 1: KPI CARDS --- */}
         <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
-          <div className="bg-[#002649] rounded-2xl p-5 text-white shadow-lg relative overflow-hidden flex flex-col justify-center border border-blue-900">
-            <Sparkles className="absolute -left-2 -top-2 opacity-10" size={60} />
-            <div className="flex items-center gap-2 mb-2 relative z-10">
-              <Sparkles size={14} className="text-[#EF6B00]" />
-              <span className="text-[10px] font-black uppercase text-blue-200">AI Sentinel Insight</span>
-            </div>
-            <p className="text-[11px] font-bold leading-snug relative z-10 text-blue-50">זיהוי חריגה: ב-&quot;מוקדי מכירות&quot; קיימת חריגה של 5 תקנים. מומלץ לעצור זימונים.</p>
-          </div>
+          {/* The "AI Sentinel Insight" card used to render a hardcoded
+              Hebrew string ("ב-'מוקדי מכירות' חריגה של 5 תקנים") that
+              looked like a live recommendation but was never wired to a
+              detector. Replaced with a real anomaly indicator: the
+              largest standard-vs-current gap across all units (the
+              actual signal a recruiter would care about).  */}
+          {(() => {
+            const worstGap = rawHeadcountData.reduce<{ unit: string; dept: string; gap: number } | null>((acc, r) => {
+              const gap = r.standard - r.current;
+              if (Math.abs(gap) <= 0) return acc;
+              if (!acc || Math.abs(gap) > Math.abs(acc.gap)) return { unit: r.unit, dept: r.dept, gap };
+              return acc;
+            }, null);
+            return (
+              <div className="bg-[#002649] rounded-2xl p-5 text-white shadow-lg relative overflow-hidden flex flex-col justify-center border border-blue-900">
+                <Sparkles className="absolute -left-2 -top-2 opacity-10" size={60} />
+                <div className="flex items-center gap-2 mb-2 relative z-10">
+                  <Sparkles size={14} className="text-[#EF6B00]" />
+                  <span className="text-[10px] font-black uppercase text-blue-200">חריגת מצבה — תקן מול בפועל</span>
+                </div>
+                <p className="text-[11px] font-bold leading-snug relative z-10 text-blue-50">
+                  {worstGap
+                    ? worstGap.gap > 0
+                      ? `חוסר של ${worstGap.gap} עובדים ב-${worstGap.unit} (${worstGap.dept}).`
+                      : `עודף של ${Math.abs(worstGap.gap)} עובדים ב-${worstGap.unit} (${worstGap.dept}).`
+                    : "אין חריגות מצבה משמעותיות בחתך הנוכחי."}
+                </p>
+              </div>
+            );
+          })()}
           <StatCard label="דלת מסתובבת" value={`${totals.avgVolatility}%`} icon={<RotateCcw className="text-orange-500"/>} />
           <StatCard label="עזיבות" value={totals.attrition} icon={<TrendingDown className="text-red-500"/>} />
-          <StatCard label="קליטות בפועל" value={liveHires ?? totals.hires} icon={<CheckCircle2 className="text-green-500"/>} />
-          <StatCard label="משרות שנפתחו" value={liveOpenJobs ?? totals.opens} icon={<Briefcase className="text-blue-500"/>} />
+          {/* Label changed from "קליטות בפועל" (which read as "all-time
+              hires" but only showed current-month) to be honest about
+              the period covered. */}
+          <StatCard label="קליטות בתקופה" value={liveHires ?? totals.hires} icon={<CheckCircle2 className="text-green-500"/>} />
+          <StatCard label="משרות פעילות" value={liveOpenJobs ?? totals.opens} icon={<Briefcase className="text-blue-500"/>} />
         </div>
 
         {/* --- LAYER 2: HEADCOUNT MATRIX --- */}

@@ -5,6 +5,7 @@ import { useToast } from "@/components/Toast";
 import { useAccess } from "@/context/AccessContext";
 import { AdminConfigProvider, useAdminConfig } from "@/app/admin/components/targets/useAdminConfig";
 import { PageHeader } from "@/components/PageHeader";
+import { FutureBadge } from "@/components/FutureBadge";
 import {
   Brain, AlertTriangle, TrendingDown, Target, Zap,
   HeartHandshake, Users, CheckCircle2, AlertCircle,
@@ -97,6 +98,24 @@ function IntelligenceAndReportsInner() {
   const strictLiveData = true;
   const [data, setData] = useState<IntelligenceData | null>(null);
   const [liveDataError, setLiveDataError] = useState<string | null>(null);
+  // Audit Phase 3C: dashboard-level metrics (OAR, internal-mobility,
+  // attrition, etc.) and intelligence-specific extras (early attrition,
+  // recruiter capacity, attrition heatmap) come from the two new
+  // backend endpoints introduced in Phase 3A. The legacy /intelligence
+  // call above is kept for the funnel + ghosting_risks payload it
+  // returns.
+  const [metrics, setMetrics] = useState<{
+    oar_pct: number; internal_mobility_pct: number;
+    hires: number; attrition: number;
+    future_blocks: Array<{ key: string; label: string; reason: string }>;
+  } | null>(null);
+  const [extended, setExtended] = useState<{
+    early_attrition_pct: number; early_attrition_count: number;
+    attrition_with_tenure_total: number;
+    recruiter_capacity: Array<{ name: string; active_apps: number; avg_days: number }>;
+    attrition_heatmap: Array<{ dept: string; "0-3m": number; "3-6m": number; "6-12m": number; "1-2y": number }>;
+    future_blocks: Array<{ key: string; label: string; reason: string }>;
+  } | null>(null);
   const [budgetBoost, setBudgetBoost] = useState(0); 
   const [processSpeed, setProcessSpeed] = useState(0); 
   const [insightIndex, setInsightIndex] = useState(0);
@@ -127,10 +146,14 @@ function IntelligenceAndReportsInner() {
     const loadIntelligence = async () => {
       try {
         setLiveDataError(null);
-        const [intRes, statsRes] = await Promise.all([
+        const [intRes, statsRes, metricsRes, extRes] = await Promise.all([
           fetch(`${apiBase}/intelligence`, { cache: "no-store" }),
           fetch(`${apiBase}/stats`, { cache: "no-store" }),
+          fetch(`${apiBase}/api/dashboard/metrics`, { cache: "no-store" }),
+          fetch(`${apiBase}/api/intelligence/extended`, { cache: "no-store" }),
         ]);
+        if (metricsRes.ok) setMetrics(await metricsRes.json());
+        if (extRes.ok) setExtended(await extRes.json());
         const intPayload = intRes.ok ? await intRes.json() : null;
         const statsPayload = statsRes.ok ? await statsRes.json() : null;
         if (intPayload && !intPayload.error) {
@@ -211,11 +234,16 @@ function IntelligenceAndReportsInner() {
 
   const projectedHires = Math.round(baselineHires * (1 + (budgetBoost / 100)));
   const projectedDays = Math.round(baselineDays * (1 - (processSpeed / 100)));
-  const oarValue = baselineHires > 0
-    ? Math.round((baselineHires / (baselineHires + ghostingCount)) * 100)
-    : 0;
-  const internalMobilityValue = 0;
-  const earlyAttritionValue = 0;
+  // OAR / internal mobility / early attrition now source from the backend
+  // — same formulas documented in backend/routers/metrics.py. The
+  // previous local calc `hires / (hires + ghosting) * 100` confused
+  // ghosting (no response) with rejected offers (different concept).
+  const oarValue = metrics?.oar_pct ?? 0;
+  const internalMobilityValue = metrics?.internal_mobility_pct ?? 0;
+  const earlyAttritionValue = extended?.early_attrition_pct ?? 0;
+  // Suppress unused-var warnings — ghosting_risks is still rendered
+  // below in the radar block, but we no longer multiplex it into OAR.
+  void ghostingCount;
 
   return (
     <div className="w-full min-h-screen bg-slate-50/30 pb-20 text-right overflow-x-hidden" dir="rtl">
@@ -334,7 +362,17 @@ function IntelligenceAndReportsInner() {
             </div>
           </div>
           
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto relative">
+            {/* Heatmap is computed by joining attrition_events with hires
+                on the candidate name; on the current demo DB those two
+                tables intentionally don't share people, so the rendered
+                grid is empty. The CODE is correct — when production data
+                flows in with linked records, the cells populate
+                automatically. Until then we surface a FutureBadge so the
+                empty grid doesn't look like a bug. */}
+            {(!extended || extended.attrition_heatmap.length === 0) && (
+              <FutureBadge reason={extended?.future_blocks.find(b => b.key === "heatmap_thresholds")?.reason ?? "אין הצלבה בין attrition_events ל-hires לפי שם בנתוני הדגמה"} />
+            )}
             <div className="min-w-[800px]">
               <div className="grid grid-cols-5 gap-2 mb-2 text-center text-xs font-black text-slate-400 uppercase">
                 <div className="text-right px-4">חטיבה / יחידה</div>
@@ -344,7 +382,7 @@ function IntelligenceAndReportsInner() {
                 <div>1-2 שנים</div>
               </div>
               <div className="space-y-2">
-                {heatmapData.map((row, i) => (
+                {(extended?.attrition_heatmap ?? heatmapData).map((row, i) => (
                   <div key={i} className="grid grid-cols-5 gap-2 items-center">
                     <div className="text-sm font-black text-[#002649] px-4 truncate">{row.dept}</div>
                     <HeatmapCell value={row["0-3m"]} />
@@ -353,6 +391,11 @@ function IntelligenceAndReportsInner() {
                     <HeatmapCell value={row["1-2y"]} />
                   </div>
                 ))}
+                {(extended?.attrition_heatmap ?? []).length === 0 && (
+                  <div className="text-center text-xs text-slate-400 py-8">
+                    אין נתוני עזיבות שמצליבים עם רשומות hires לפי שם בתקופה שנבחרה.
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -375,20 +418,28 @@ function IntelligenceAndReportsInner() {
               </div>
             </div>
 
+            {/* Capacity tracker — the role-type split (Mass / Pro / Tech)
+                requires a `role_type` column on jobs that doesn't exist
+                yet. Until then we render the real signal that IS
+                available: active-application count per recruiter, with
+                avg days-in-process as a secondary load indicator. The
+                role-type breakdown is surfaced via a FutureBadge so it's
+                explicit that the mass/pro/tech card isn't computed yet. */}
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
-              {recruitersData.map((rec, idx) => {
-                const loadScore = (rec.massJobs * adminConfig.capacityWeights.mass) + 
-                                  (rec.proJobs * adminConfig.capacityWeights.pro) + 
-                                  (rec.techJobs * adminConfig.capacityWeights.tech);
+              {(extended?.recruiter_capacity ?? []).map((rec, idx) => {
+                // Until the role-type taxonomy lands, the "weighted load
+                // score" is just active_apps. Threshold remains the
+                // admin-configured maxCapacityLimit.
+                const loadScore = rec.active_apps;
                 const capacityPct = Math.min((loadScore / adminConfig.maxCapacityLimit) * 100, 100);
                 const isOverloaded = loadScore >= adminConfig.maxCapacityLimit;
 
                 return (
-                  <div key={idx} className="bg-white rounded-3xl p-6 shadow-lg border-2 border-transparent transition-all hover:border-blue-300">
+                  <div key={idx} className="bg-white rounded-3xl p-6 shadow-lg border-2 border-transparent transition-all hover:border-blue-300 relative">
                     <div className="flex justify-between items-start mb-4">
                       <div>
                         <div className="font-black text-lg text-[#002649]">{rec.name}</div>
-                        <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{rec.type === 'tech' ? 'הייטק ומטה' : rec.type === 'mass' ? 'מוקדים ומסה' : 'מעורב'}</div>
+                        <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">תיקים פעילים</div>
                       </div>
                       <div className={`p-2 rounded-xl ${isOverloaded ? 'bg-red-50 text-red-500 animate-pulse' : 'bg-green-50 text-green-500'}`}>
                         {isOverloaded ? <BatteryWarning size={20}/> : <Battery size={20}/>}
@@ -396,20 +447,36 @@ function IntelligenceAndReportsInner() {
                     </div>
 
                     <div className="space-y-1 mb-5">
-                      <div className="flex justify-between text-xs font-bold text-slate-600"><span>ציון עומס משוקלל:</span> <span className={isOverloaded ? 'text-red-600' : 'text-[#002649]'}>{loadScore} / {adminConfig.maxCapacityLimit}</span></div>
+                      <div className="flex justify-between text-xs font-bold text-slate-600">
+                        <span>תיקים פעילים:</span>
+                        <span className={isOverloaded ? 'text-red-600' : 'text-[#002649]'}>{loadScore} / {adminConfig.maxCapacityLimit}</span>
+                      </div>
                       <div className="h-2.5 bg-slate-100 rounded-full overflow-hidden">
                         <div className={`h-full transition-all duration-1000 ${isOverloaded ? 'bg-red-500' : capacityPct > 75 ? 'bg-amber-500' : 'bg-green-500'}`} style={{ width: `${capacityPct}%` }} />
                       </div>
                     </div>
 
-                    <div className="grid grid-cols-3 gap-2 text-center border-t border-slate-100 pt-4">
-                      <div className="bg-slate-50 rounded-xl p-2"><div className="text-xs font-black text-[#002649]">{rec.massJobs}</div><div className="text-[9px] font-bold text-slate-400">מסה</div></div>
-                      <div className="bg-slate-50 rounded-xl p-2"><div className="text-xs font-black text-[#002649]">{rec.proJobs}</div><div className="text-[9px] font-bold text-slate-400">מקצוע</div></div>
-                      <div className="bg-slate-50 rounded-xl p-2"><div className="text-xs font-black text-[#002649]">{rec.techJobs}</div><div className="text-[9px] font-bold text-slate-400">טכני</div></div>
+                    {/* Role-type breakdown — pinned as future block; once
+                        jobs.role_type lands, this section flips on. */}
+                    <div className="grid grid-cols-2 gap-2 text-center border-t border-slate-100 pt-4 relative">
+                      <FutureBadge label="פירוט עתידי" reason="פירוק לפי mass/pro/tech דורש role_type ב-jobs" position="overlay" />
+                      <div className="bg-slate-50 rounded-xl p-2">
+                        <div className="text-xs font-black text-[#002649]">{rec.avg_days}</div>
+                        <div className="text-[9px] font-bold text-slate-400">ימי תהליך ממוצעים</div>
+                      </div>
+                      <div className="bg-slate-50 rounded-xl p-2">
+                        <div className="text-xs font-black text-slate-400">—</div>
+                        <div className="text-[9px] font-bold text-slate-400">סוג עומס</div>
+                      </div>
                     </div>
                   </div>
                 )
               })}
+              {(extended?.recruiter_capacity ?? []).length === 0 && (
+                <div className="md:col-span-2 xl:col-span-4 text-center text-sm font-bold text-blue-100 py-8 bg-white/5 rounded-2xl">
+                  אין מועמדים פעילים בתקופה שנבחרה — לא ניתן לחשב עומס מגייסות.
+                </div>
+              )}
             </div>
           </div>
         </div>

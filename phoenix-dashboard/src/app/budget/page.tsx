@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, type ReactNode } from "react";
+import { useState, useEffect, useMemo, useRef, type ReactNode } from "react";
 import { 
   Receipt, UploadCloud, Edit3, Plus, 
   PieChart, FileText, BadgeDollarSign, Target, ArrowDownToLine, 
@@ -93,7 +93,15 @@ export default function UnifiedBudgetPage() {
   const [vendors, setVendors] = useState<Vendor[]>([]);
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   
-  const [budgetTarget] = useState(380000); 
+  // budgetTarget used to be hardcoded ₪380,000. It now derives from the
+  // sum of per-category targets that come back from /api/finops/data —
+  // so when an admin edits a category target in the UI, the headline
+  // KPI updates automatically. Fallback to 0 when categories haven't
+  // loaded yet (loading state, not a real zero target).
+  const budgetTarget = useMemo(
+    () => categories.reduce((sum, c) => sum + (c.target || 0), 0),
+    [categories],
+  );
   
   // Modals & States
   const [editingInvoice, setEditingInvoice] = useState<Invoice | null>(null);
