@@ -23,6 +23,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
 from utils import _nan_safe_records, mask_value, normalize_email, normalize_phone
+from pipeline import _compute_unified_stage, get_unified_data
 from typing import Optional
 
 import config as shared_config
@@ -36,14 +37,8 @@ router = APIRouter(tags=["candidates"])
 
 
 # --- Late-bound proxies to helpers still in main.py ----------------------
-def _get_unified_data(conn):
-    from main import get_unified_data as _impl
-    return _impl(conn)
 
 
-def _compute_unified_stage(stage_code, onboarding_status):
-    from main import _compute_unified_stage as _impl
-    return _impl(stage_code, onboarding_status)
 
 
 
@@ -103,7 +98,7 @@ def get_candidates(
     conn = sqlite3.connect(shared_config.DB_NAME)
 
     try:
-        df = _get_unified_data(conn)
+        df = get_unified_data(conn)
     except Exception:
         return {"data": [], "page": page, "total": 0, "total_by_stage": {s: 0 for s in UNIFIED_STAGES}}
     finally:
@@ -183,7 +178,7 @@ def get_candidate_detail(
     """
     with db_conn() as conn:
         try:
-            df = _get_unified_data(conn)
+            df = get_unified_data(conn)
         except Exception as exc:
             raise HTTPException(status_code=500, detail=f"Pipeline read failed: {exc}") from exc
 
@@ -267,7 +262,7 @@ def advance_candidate_stage(
     conn = sqlite3.connect(shared_config.DB_NAME)
     try:
         # Resolve candidate key → application row
-        df = _get_unified_data(conn)
+        df = get_unified_data(conn)
         if df.empty:
             raise HTTPException(status_code=404, detail="המועמד לא נמצא")
 

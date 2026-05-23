@@ -27,6 +27,7 @@ import sqlite3
 import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException
 from utils import _normalize_score, _safe_pct, _to_int
+from pipeline import _compute_unified_stage, _get_orphan_jobs, get_unified_data
 
 import config as shared_config
 from auth import require_admin, require_dual_role
@@ -40,19 +41,10 @@ router = APIRouter(tags=["jobs"])
 
 
 # --- Late-bound proxies to helpers still in main.py ----------------------
-def _get_unified_data(conn):
-    from main import get_unified_data as _impl
-    return _impl(conn)
 
 
-def _compute_unified_stage(stage_code, onboarding_status):
-    from main import _compute_unified_stage as _impl
-    return _impl(stage_code, onboarding_status)
 
 
-def _get_orphan_jobs():
-    from main import _get_orphan_jobs as _impl
-    return _impl()
 
 
 
@@ -106,7 +98,7 @@ def get_jobs(
     """
     conn = sqlite3.connect(shared_config.DB_NAME)
     try:
-        df = _get_unified_data(conn)
+        df = get_unified_data(conn)
     except Exception:
         return []
     finally:
@@ -266,7 +258,7 @@ def get_neglect_alerts(limit: int = 5):
         except Exception:
             pass
 
-        df = _get_unified_data(conn)
+        df = get_unified_data(conn)
         if df.empty:
             return {
                 "thresholds": thresholds,
@@ -451,7 +443,7 @@ def get_job_candidates(
     by job.id (preferred) or job.job_title (fallback)."""
     with db_conn() as conn:
         try:
-            df = _get_unified_data(conn)
+            df = get_unified_data(conn)
         except Exception as exc:
             raise HTTPException(status_code=500, detail=f"Pipeline read failed: {exc}") from exc
 

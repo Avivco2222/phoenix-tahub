@@ -20,6 +20,7 @@ import sqlite3
 
 import pandas as pd
 from fastapi import APIRouter, Depends
+from pipeline import _count_active_candidates_db, get_unified_data
 
 import config as shared_config
 from auth import verify_token
@@ -32,20 +33,6 @@ from internal_logic import (
 
 
 router = APIRouter(tags=["analytics"])
-
-
-# --- Late-bound proxies to helpers still in main.py ----------------------
-# get_unified_data and _count_active_candidates_db are shared with the
-# candidates / jobs / admin endpoints, so they stay in main.py until
-# their own extraction. Lazy imports avoid the circular load.
-def _get_unified_data(conn):
-    from main import get_unified_data as _impl
-    return _impl(conn)
-
-
-def _count_active_candidates_db() -> int:
-    from main import _count_active_candidates_db as _impl
-    return _impl()
 
 
 @router.get("/stats")
@@ -61,7 +48,7 @@ def get_stats(
         cached = get_cached_response(conn, "stats", cache_params)
         if cached is not None:
             return cached
-        df = _get_unified_data(conn)
+        df = get_unified_data(conn)
         df['start_date'] = pd.to_datetime(df['start_date'])
     except Exception:
         return {"total_candidates": 0, "hired_this_month": 0, "avg_days": 0, "sla_alerts": 0, "chart_data": []}
@@ -127,7 +114,7 @@ def get_stats(
 def get_executive_brief(_: dict = Depends(verify_token)):
     conn = sqlite3.connect(shared_config.DB_NAME)
     try:
-        df = _get_unified_data(conn)
+        df = get_unified_data(conn)
         df['start_date'] = pd.to_datetime(df['start_date'])
     except Exception:
         return {"error": "No data"}
@@ -197,7 +184,7 @@ def get_intelligence(_: dict = Depends(verify_token)):
     """מנוע הפקת תובנות, משפכים, ורדאר סיכונים מהדאטה האמיתי"""
     conn = sqlite3.connect(shared_config.DB_NAME)
     try:
-        df = _get_unified_data(conn)
+        df = get_unified_data(conn)
     except Exception:
         return {"error": "No data"}
     finally:
@@ -280,7 +267,7 @@ def get_drilldown(
         cached = get_cached_response(conn, "drilldown", cache_params)
         if cached is not None:
             return cached
-        df = _get_unified_data(conn)
+        df = get_unified_data(conn)
         df['start_date'] = pd.to_datetime(df['start_date'])
     except Exception:
         return []

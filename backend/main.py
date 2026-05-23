@@ -59,6 +59,12 @@ from utils import (
     normalize_email,
     normalize_phone,
 )
+from pipeline import (
+    _compute_unified_stage,
+    _count_active_candidates_db,
+    _get_orphan_jobs,
+    get_unified_data,
+)
 from ingestion import (
     CONTRACTS_DIR,
     DEFAULT_SCHEMA_VERSION,
@@ -815,74 +821,8 @@ init_db()
 # ==========================================
 # שאילתת תאימות ל-UI הקיים (View Pattern)
 # ==========================================
-def get_unified_data(conn):
-    """מייצר את הטבלה השטוחה של applications + candidates + jobs + onboarding.
-
-    LEFT JOIN ל-onboarding משוייך לפי השם (LOWER(name)) — זה החיבור היחיד
-    הזמין בין pipeline ל-onboarding שכן candidates.id (internal) ≠ onboarding.id.
-    onboarding_status ו-id_num מחזירים NULL כאשר אין שיוך.
-    """
-    query = '''
-        SELECT
-            c.id as candidate_id,
-            c.name as candidate_name,
-            c.email,
-            c.phone,
-            c.source,
-            j.id as job_id,
-            j.job_title,
-            j.department,
-            a.app_id,
-            a.status,
-            a.recruiter,
-            a.start_date,
-            a.days_in_process,
-            a.upload_log_id,
-            COALESCE(a.stage_code, 'ACTIVE') as stage_code,
-            o.id as onboarding_id,
-            o.id_num as id_num,
-            o.status as onboarding_status,
-            o.start_date as onboarding_start_date,
-            o.role as onboarding_role,
-            o.manager as onboarding_manager
-        FROM applications a
-        JOIN candidates c ON a.candidate_id = c.id
-        JOIN jobs j ON a.job_id = j.id
-        LEFT JOIN onboarding o ON LOWER(o.name) = LOWER(c.name)
-        WHERE COALESCE(a.is_active, 1) = 1
-          AND COALESCE(c.is_active, 1) = 1
-          AND COALESCE(j.is_active, 1) = 1
-    '''
-    return pd.read_sql(query, conn)
-
-
-def _compute_unified_stage(stage_code: str | None, onboarding_status: str | None) -> str:
-    """Maps (applications.stage_code, onboarding.status) to a single stage code
-    that drives both the /candidates chips and the /jobs breakdown.
-
-    Onboarding wins because it represents a later stage in the funnel:
-      - onboarding pending   → AWAITING_START (recruit accepted, hasn't started)
-      - onboarding completed → STARTED        (employee actively onboarding)
-      - onboarding cancelled / left_company → REJECTED (archive)
-    Otherwise: fall through to applications.stage_code.
-    """
-    if onboarding_status == "completed":
-        return "STARTED"
-    if onboarding_status == "pending":
-        return "AWAITING_START"
-    if onboarding_status in ("cancelled", "left_company"):
-        return "REJECTED"
-    return (stage_code or "ACTIVE").upper()
-
-
-# Canonical stage order — used by frontend chips and any aggregation that
-# wants a stable iteration order. Mirrors src/lib/stages.ts.
-# `ACTIVE` is the default bucket for any status that does not match the
-# lexicon (e.g. raw "חדש" / "בתהליך" / "ממתין") — keeps unmatched rows visible.
-# UNIFIED_STAGES moved to backend/constants.py; re-imported at top of this file.
-
-
-# _nan_safe_records moved to backend/utils.py (A9-fu Phase 1)
+# get_unified_data moved to backend/pipeline.py (A9-fu Phase 3)
+# _compute_unified_stage moved to backend/pipeline.py (A9-fu Phase 3)
 # =====================================================================
 # DATA PIPELINE V2 — shared helpers used by all ingest stage-handlers.
 # Phone normalisation, iteration signature, candidate match+merge, and a
@@ -1245,52 +1185,8 @@ def readyz():
 # ==========================================
 
 
-def _count_active_candidates_db() -> int:
-    """Count ALL active candidates directly from the candidates table,
-    including those without any application record. This fixes the issue
-    where get_unified_data() only sees candidates linked through applications."""
-    conn = sqlite3.connect(DB_PATH)
-    try:
-        return conn.execute(
-            "SELECT COUNT(*) FROM candidates WHERE COALESCE(is_active, 1) = 1"
-        ).fetchone()[0]
-    finally:
-        conn.close()
-
-
-def _get_orphan_jobs() -> list[dict]:
-    """Return jobs that have zero active applications (hence invisible in
-    get_unified_data which starts FROM applications). These are typically
-    newly created positions or fully-closed jobs whose applications were
-    soft-deleted."""
-    conn = sqlite3.connect(DB_PATH)
-    try:
-        rows = conn.execute(
-            """SELECT j.id, j.job_title, j.department, j.hiring_manager,
-                      j.opened_at, j.closed_at, j.close_reason, j.target_count
-               FROM jobs j
-               WHERE COALESCE(j.is_active, 1) = 1
-                 AND j.id NOT IN (
-                     SELECT DISTINCT a.job_id FROM applications a
-                     WHERE COALESCE(a.is_active, 1) = 1
-                 )"""
-        ).fetchall()
-        return [
-            {
-                "job_id": r[0], "job_title": r[1], "department": r[2] or "כללי",
-                "recruiter": "לא שויך", "is_active": True,
-                "active_candidates": 0, "total_candidates": 0,
-                "avg_days": 0, "max_days": 0, "sla_breaches": 0,
-                "health": "good",
-                "stage_breakdown": {s: 0 for s in UNIFIED_STAGES},
-                "closed_at": None, "close_reason": None,
-            }
-            for r in rows
-        ]
-    finally:
-        conn.close()
-
-
+# _count_active_candidates_db moved to backend/pipeline.py (A9-fu Phase 3)
+# _get_orphan_jobs moved to backend/pipeline.py (A9-fu Phase 3)
 @app.get("/meta")
 def get_meta(_: dict = Depends(verify_token)):
     conn = sqlite3.connect(DB_PATH)

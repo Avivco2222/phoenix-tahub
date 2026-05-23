@@ -33,6 +33,7 @@ from typing import Optional
 import pandas as pd
 from fastapi import APIRouter, Depends, File, Header, HTTPException, Request, UploadFile
 from utils import _col_letter, _empty_stats, _row_to_scalar, iteration_signature, mask_value, normalize_email, normalize_phone
+from pipeline import get_unified_data
 from fastapi.responses import StreamingResponse
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
@@ -124,9 +125,6 @@ def _ingest_handlers():
 
 
 
-def _get_unified_data(conn):
-    from main import get_unified_data as _impl
-    return _impl(conn)
 
 
 
@@ -665,7 +663,7 @@ async def upload_file(
             (rows_received, rows_loaded, rejected_rows, duplicate_rows, quality_score, json.dumps(quality_report, ensure_ascii=False), _utcnow().isoformat(), batch_id),
         )
 
-        unified_df = _get_unified_data(conn)
+        unified_df = get_unified_data(conn)
         build_snapshots(conn, unified_df)
         clear_query_cache(conn, auto_commit=False)
         _auto_scan_after_ingest(conn, batch_id)

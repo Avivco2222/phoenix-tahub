@@ -31,6 +31,7 @@ from typing import Optional
 
 import pandas as pd
 from fastapi import APIRouter, Cookie, Depends, File, HTTPException, Header, Request, Response, UploadFile
+from pipeline import get_unified_data
 from fastapi.responses import StreamingResponse
 
 import config as shared_config
@@ -100,9 +101,6 @@ def _build_excel_template_bytes(file_type, schema_version):
     return _impl(file_type=file_type, schema_version=schema_version)
 
 
-def _get_unified_data(conn):
-    from main import get_unified_data as _impl
-    return _impl(conn)
 
 
 def _bump_data_version(conn=None):
@@ -872,7 +870,7 @@ def revert_upload(log_id: str, _: str = Depends(require_admin)):
         c.execute("DELETE FROM applications WHERE upload_log_id = ?", (log_id,))
         c.execute("UPDATE data_logs SET status = 'Reverted' WHERE log_id = ?", (log_id,))
         conn.commit()
-        unified_df = _get_unified_data(conn)
+        unified_df = get_unified_data(conn)
         build_snapshots(conn, unified_df)
         clear_query_cache(conn)
         return {"message": f"Upload {log_id} has been reverted successfully."}
@@ -926,7 +924,7 @@ def revert_batch(batch_id: str, _: str = Depends(require_admin)):
         related_log = c.execute("SELECT log_id FROM ingestion_batches WHERE batch_id = ?", (batch_id,)).fetchone()
         if related_log and related_log["log_id"]:
             c.execute("UPDATE data_logs SET status = 'Reverted' WHERE log_id = ?", (related_log["log_id"],))
-        unified_df = _get_unified_data(conn)
+        unified_df = get_unified_data(conn)
         build_snapshots(conn, unified_df)
         clear_query_cache(conn, auto_commit=False)
         conn.commit()
