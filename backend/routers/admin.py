@@ -35,12 +35,14 @@ from pipeline import get_unified_data
 from fastapi.responses import StreamingResponse
 
 import config as shared_config
+from audit import bump_data_version, log_audit_action
 from auth import (
     IMPERSONATOR_COOKIE,
     SESSION_COOKIE,
     _decode_jwt,
     _hash_password,
     _make_session_token,
+    _set_session_cookie,
     _utcnow,
     get_session_user,
     require_admin,
@@ -49,6 +51,7 @@ from auth import (
 )
 from constants import Role
 from db import db_conn
+from notifications import _check_inactive_recruiters
 from internal_logic import (
     build_snapshots,
     clear_query_cache,
@@ -74,23 +77,6 @@ def _ingest_constants():
     return DEFAULT_SCHEMA_VERSION, SUPPORTED_SCHEMA_VERSIONS, INGEST_HANDLERS
 
 
-def _log_audit(action, status, details, user):
-    from main import log_audit_action as _impl
-    _impl(action=action, status=status, details=details, user=user)
-
-
-def _set_session_cookie(response, token, *, key=None):
-    from main import _set_session_cookie as _impl
-    if key is None:
-        return _impl(response, token)
-    return _impl(response, token, key=key)
-
-
-def _check_inactive_recruiters():
-    from main import _check_inactive_recruiters as _impl
-    return _impl()
-
-
 def _build_preflight_report(filename, content, schema_version):
     from main import _build_preflight_report as _impl
     return _impl(filename, content, schema_version)
@@ -101,11 +87,6 @@ def _build_excel_template_bytes(file_type, schema_version):
     return _impl(file_type=file_type, schema_version=schema_version)
 
 
-
-
-def _bump_data_version(conn=None):
-    from main import bump_data_version as _impl
-    return _impl(conn)
 
 
 def _template_specs():
@@ -290,7 +271,7 @@ async def save_admin_config(request: Request, section: str = "general", _: str =
         )
         conn.commit()
     changed_keys = list(payload.keys())
-    _log_audit(
+    log_audit_action(
         action="ADMIN_CONFIG_UPDATE",
         status="success",
         details=f"section={section} | keys_changed={changed_keys}",
@@ -494,7 +475,7 @@ async def admin_create_user(payload: dict, admin: dict = Depends(require_session
         except sqlite3.IntegrityError:
             raise HTTPException(status_code=409, detail="משתמש עם אימייל זה כבר קיים")
 
-    _log_audit("USER_CREATED", "ok", f"Created {email} as {role} (USF={employee_number})", user=admin.get("email", "admin"))
+    log_audit_action("USER_CREATED", "ok", f"Created {email} as {role} (USF={employee_number})", user=admin.get("email", "admin"))
     return {"id": user_id, "email": email, "full_name": full_name, "role": role, "employee_number": employee_number}
 
 
@@ -519,7 +500,7 @@ async def admin_update_user(user_id: str, payload: dict, admin: dict = Depends(r
         if c.rowcount == 0:
             raise HTTPException(status_code=404, detail="משתמש לא נמצא")
         conn.commit()
-    _log_audit("USER_UPDATED", "ok", f"Updated user {user_id}", user=admin.get("email", "admin"))
+    log_audit_action("USER_UPDATED", "ok", f"Updated user {user_id}", user=admin.get("email", "admin"))
     return {"status": "ok"}
 
 
@@ -535,7 +516,7 @@ async def admin_reset_password(user_id: str, admin: dict = Depends(require_sessi
         if c.rowcount == 0:
             raise HTTPException(status_code=404, detail="משתמש לא נמצא")
         conn.commit()
-    _log_audit("PASSWORD_RESET", "ok", f"Admin reset password for {user_id}", user=admin.get("email", "admin"))
+    log_audit_action("PASSWORD_RESET", "ok", f"Admin reset password for {user_id}", user=admin.get("email", "admin"))
     return {"temp_password": temp_password}
 
 
@@ -562,7 +543,7 @@ async def admin_impersonate(user_id: str, response: Response, admin: dict = Depe
     _set_session_cookie(response, impersonation_token, key=SESSION_COOKIE)
     _set_session_cookie(response, original_admin_token, key=IMPERSONATOR_COOKIE)
 
-    _log_audit("IMPERSONATION_START", "warn",
+    log_audit_action("IMPERSONATION_START", "warn",
                f"Admin {admin.get('email')} impersonating {target_email}",
                user=admin.get("email", "admin"))
     return {"id": target_id, "email": target_email, "name": target_name, "role": target_role,
@@ -596,7 +577,7 @@ async def admin_stop_impersonate(
     _set_session_cookie(response, new_token)
     response.delete_cookie(key=IMPERSONATOR_COOKIE, path="/")
 
-    _log_audit("IMPERSONATION_END", "ok",
+    log_audit_action("IMPERSONATION_END", "ok",
                f"Admin {payload.get('email')} stopped impersonating {user.get('email')}",
                user=payload.get("email", "admin"))
     return {"id": payload.get("sub"), "email": payload.get("email"),
@@ -630,7 +611,7 @@ async def set_app_override(app_id: str, payload: dict, admin: dict = Depends(req
         conn.commit()
     finally:
         conn.close()
-    _log_audit("APP_OVERRIDE", "ok", f"app={app_id} hidden={bool(hidden)} tag={tag}", user=actor)
+    log_audit_action("APP_OVERRIDE", "ok", f"app={app_id} hidden={bool(hidden)} tag={tag}", user=actor)
     return {"status": "ok", "app_id": app_id, "hidden": bool(hidden), "tag": tag}
 
 
@@ -685,7 +666,7 @@ async def admin_send_notification(payload: dict, admin: dict = Depends(require_s
     finally:
         conn.close()
 
-    _log_audit("NOTIFICATION_SENT", "ok",
+    log_audit_action("NOTIFICATION_SENT", "ok",
                f"Sent to {delivered} user(s) (severity={severity}, group={target_group or 'specific'})",
                user=admin.get("email", "admin"))
     return {"delivered": delivered, "skipped": skipped, "sent_at": sent_at}
@@ -1152,11 +1133,11 @@ def admin_revert_batch(batch_id: str, _: dict = Depends(require_dual_role(Role.A
 
         conn.execute("UPDATE ingestion_batches SET status='reverted' WHERE batch_id = ?", (batch_id,))
         conn.commit()
-        _log_audit("BATCH_REVERTED", "warn", f"batch={batch_id} reverted={reverted}", user="admin")
+        log_audit_action("BATCH_REVERTED", "warn", f"batch={batch_id} reverted={reverted}", user="admin")
     finally:
         conn.close()
 
-    _bump_data_version()
+    bump_data_version()
     return {"status": "ok", "batch_id": batch_id, "reverted_rows": reverted}
 
 

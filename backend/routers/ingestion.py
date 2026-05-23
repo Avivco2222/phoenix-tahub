@@ -40,6 +40,8 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.worksheet.datavalidation import DataValidation
 
 import config as shared_config
+from audit import bump_data_version, log_audit_action
+from notifications import _emit_notification
 from auth import _utcnow, require_dual_role
 from constants import Role
 from internal_logic import (
@@ -135,23 +137,6 @@ def _ingest_handlers():
 
 
 
-
-
-
-
-def _bump_data_version(conn=None):
-    from main import bump_data_version as _impl
-    return _impl(conn)
-
-
-def _emit_notification(conn, **kwargs):
-    from main import _emit_notification as _impl
-    return _impl(conn, **kwargs)
-
-
-def _log_audit(action, status, details, user):
-    from main import log_audit_action as _impl
-    _impl(action=action, status=status, details=details, user=user)
 
 
 
@@ -766,7 +751,7 @@ async def upload_typed_file(
     finally:
         conn.close()
 
-    _log_audit(
+    log_audit_action(
         "TYPED_UPLOAD",
         "ok",
         f"type={file_type} rows={len(rows)} batch={batch_id}",
@@ -880,7 +865,7 @@ async def ingest_smart(
                     "status": "success",
                 })
                 any_success = True
-                _log_audit(
+                log_audit_action(
                     "SMART_INGEST", "ok",
                     f"sheet={sheet_name} type={file_type} ins={stats['inserted']}",
                     user=user.get("email", "admin"),
@@ -919,7 +904,7 @@ async def ingest_smart(
         if any_success
         else "failed"
     )
-    new_ver = _bump_data_version() if any_success else None
+    new_ver = bump_data_version() if any_success else None
 
     # Single summary notification
     if any_success:
@@ -1035,8 +1020,8 @@ async def ingest_typed(
         _finalise_ingest_batch(batch_id, "committed", stats)
 
         # Stage 7: Notify.
-        new_version = _bump_data_version()
-        _log_audit(
+        new_version = bump_data_version()
+        log_audit_action(
             "INGEST_COMMITTED", "ok",
             f"type={file_type} batch={batch_id} inserted={stats['inserted']} updated={stats['updated']} rejected={stats['rejected']}",
             user=user.get("email", "admin"),
@@ -1080,5 +1065,5 @@ async def ingest_typed(
         }
     except Exception as exc:
         _finalise_ingest_batch(batch_id, "failed", _empty_stats())
-        _log_audit("INGEST_FAILED", "warn", f"type={file_type} batch={batch_id} err={exc}", user=user.get("email", "admin"))
+        log_audit_action("INGEST_FAILED", "warn", f"type={file_type} batch={batch_id} err={exc}", user=user.get("email", "admin"))
         raise HTTPException(status_code=500, detail=f"Ingest failed: {exc}") from exc

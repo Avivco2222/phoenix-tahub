@@ -106,6 +106,7 @@ from auth import (
     _is_token_revoked,
     _make_session_token,
     _revoke_token_signature,
+    _set_session_cookie,
     _utcnow,
     _verify_password,
     auth_scheme,
@@ -115,6 +116,21 @@ from auth import (
     require_session_role,
     verify_token,
 )
+from audit import (
+    _create_manual_edit_batch,
+    _record_change,
+    bump_data_version,
+    get_data_version,
+    log_audit_action,
+)
+from notifications import (
+    _INACTIVE_TAG,
+    _check_inactive_recruiters,
+    _emit_notification,
+    _is_on_cooldown,
+    _set_cooldown,
+)
+from request_context import request_ip_ctx
 from constants import Role, UNIFIED_STAGES
 from db import (
     _safe_connect,
@@ -173,7 +189,7 @@ class RequestLoggerAdapter(logging.LoggerAdapter):
 
 
 req_logger = RequestLoggerAdapter(logger, {})
-request_ip_ctx: ContextVar[str] = ContextVar("request_ip", default="-")
+# request_ip_ctx moved to backend/request_context.py (A9-fu Phase 4)
 
 
 def _extract_request_ip(request: Request) -> str:
@@ -187,7 +203,6 @@ def _extract_request_ip(request: Request) -> str:
 
 # _b64url_encode/decode, _encode_jwt/_decode_jwt, require_admin,
 # verify_token, require_dual_role moved to backend/auth.py (B4).
-
 
 
 def _ensure_jwt_ready() -> None:
@@ -287,21 +302,7 @@ class PIIScrubber:
 
         return text, stats
 
-def log_audit_action(action: str, status: str, details: str, user: str = "System"):
-    conn = sqlite3.connect(DB_PATH)
-    try:
-        c = conn.cursor()
-        log_id = f"LOG-{uuid.uuid4().hex[:6].upper()}"
-        timestamp = pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")
-        ip_address = request_ip_ctx.get("-")
-        c.execute(
-            "INSERT INTO audit_logs (id, timestamp, action, status, details, user, ip_address) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (log_id, timestamp, action, status, details, user, ip_address),
-        )
-        conn.commit()
-    finally:
-        conn.close()
-
+# log_audit_action moved to backend/audit.py (A9-fu Phase 4)
 def mask_sensitive_data(df):
     sensitive_keywords = ['ת.ז', 'תעודת זהות', 'id', 'טלפון', 'נייד', 'phone', 'כתובת']
     for col in df.columns:
@@ -915,48 +916,8 @@ def insert_candidate(conn: sqlite3.Connection, parsed: dict, batch_id: str) -> s
     return candidate_id
 
 
-def get_data_version(conn: Optional[sqlite3.Connection] = None) -> int:
-    """Read the global data_version counter."""
-    close_after = False
-    if conn is None:
-        conn = sqlite3.connect(DB_PATH)
-        close_after = True
-    try:
-        row = conn.execute("SELECT value FROM system_settings WHERE key = 'data_version'").fetchone()
-        return int(row[0]) if row and str(row[0]).isdigit() else 0
-    finally:
-        if close_after:
-            conn.close()
-
-
-def bump_data_version(conn: Optional[sqlite3.Connection] = None) -> int:
-    """Increment the global data_version. Returns the new value.
-
-    Frontend `DataVersionContext` polls this; when it sees a higher number,
-    consumer blocks (candidates, jobs, dashboard, intelligence, headcount,
-    budget) trigger a refetch automatically. Call this at the END of every
-    successful ingest commit, AFTER the rows are persisted.
-    """
-    close_after = False
-    if conn is None:
-        conn = sqlite3.connect(DB_PATH)
-        close_after = True
-    try:
-        current = get_data_version(conn)
-        new_val = current + 1
-        conn.execute(
-            "INSERT INTO system_settings (key, value) VALUES ('data_version', ?) "
-            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-            (str(new_val),),
-        )
-        if close_after:
-            conn.commit()
-        return new_val
-    finally:
-        if close_after:
-            conn.close()
-
-
+# get_data_version moved to backend/audit.py (A9-fu Phase 4)
+# bump_data_version moved to backend/audit.py (A9-fu Phase 4)
 # _normalize_upload_frame moved to backend/ingestion/ (A9-fu Phase 2)
 # _parse_xml_to_dataframe moved to backend/ingestion/ (A9-fu Phase 2)
 # _load_schema_contract moved to backend/ingestion/ (A9-fu Phase 2)
@@ -2088,14 +2049,7 @@ ADMIN_CONFIG_DEFAULTS = {
 # require_session_role moved to backend/auth.py (B4).
 
 
-def _set_session_cookie(response: Response, token: str, *, key: str = SESSION_COOKIE) -> None:
-    secure_cookie = os.getenv("COOKIE_SECURE", "true").lower() != "false"
-    response.set_cookie(
-        key=key, value=token, httponly=True, secure=secure_cookie,
-        samesite="lax", max_age=JWT_TTL_MINUTES * 60, path="/",
-    )
-
-
+# _set_session_cookie moved to backend/auth.py (A9-fu Phase 4)
 # ----- AUTH ENDPOINTS -----
 
 @app.post("/api/auth/login")
@@ -2243,70 +2197,9 @@ async def get_app_config(_: dict = Depends(get_session_user)):
 
 
 # Routes at original lines 3145-3177 moved to backend/routers/admin.py (B2.8b)
-def _is_on_cooldown(conn, user_id: str, tag: str, hours: int = 24) -> bool:
-    """Return True if this (user, tag) was already emitted within `hours` hours.
-    Uses the notification_cooldowns table — not the notifications inbox — so user
-    deletion does NOT reset the dedup clock.
-    Wrapped in try/except so a missing table (e.g. first boot before init_db
-    completes) falls back to 'not on cooldown' rather than crashing the scanner."""
-    try:
-        cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
-        row = conn.execute(
-            "SELECT last_emitted_at FROM notification_cooldowns WHERE user_id=? AND tag=? AND last_emitted_at > ?",
-            (user_id, tag, cutoff),
-        ).fetchone()
-        return row is not None
-    except Exception:
-        return False  # table missing or other transient error → allow emit
-
-
-def _set_cooldown(conn, user_id: str, tag: str) -> None:
-    """Record that (user, tag) was just emitted. Upsert into cooldowns table.
-    Non-fatal — if the table is missing we log and continue."""
-    try:
-        now = datetime.now(timezone.utc).isoformat()
-        conn.execute(
-            """INSERT INTO notification_cooldowns (user_id, tag, last_emitted_at) VALUES (?, ?, ?)
-               ON CONFLICT(user_id, tag) DO UPDATE SET last_emitted_at = excluded.last_emitted_at""",
-            (user_id, tag, now),
-        )
-    except Exception as exc:
-        logger.warning("_set_cooldown failed (non-fatal): %s", exc)
-
-
-def _emit_notification(
-    conn,
-    user_id: str,
-    message: str,
-    severity: str = "info",
-    sent_by: str | None = None,
-    category: str = "general",
-    link: str | None = None,
-    *,
-    sent_at: str | None = None,
-) -> bool:
-    """Insert a notification row, respecting the user's category preference.
-    Returns True if inserted, False if suppressed by opt-out.
-    `conn` must already be open; caller commits."""
-    if not user_id:
-        return False
-    # Check preference: if the user explicitly opted out, skip.
-    pref = conn.execute(
-        "SELECT enabled FROM user_notification_preferences WHERE user_id = ? AND category = ?",
-        (user_id, category),
-    ).fetchone()
-    if pref is not None and not pref[0]:
-        return False  # user opted out
-    _at = sent_at or datetime.now(timezone.utc).isoformat()
-    note_id = f"NTF-{uuid.uuid4().hex[:10].upper()}"
-    conn.execute(
-        "INSERT INTO notifications (id, user_id, message, severity, sent_by, sent_at, category, link) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        (note_id, user_id, message, severity, sent_by, _at, category, link),
-    )
-    return True
-
-
+# _is_on_cooldown moved to backend/notifications.py (A9-fu Phase 4)
+# _set_cooldown moved to backend/notifications.py (A9-fu Phase 4)
+# _emit_notification moved to backend/notifications.py (A9-fu Phase 4)
 # Routes at original lines 3242-3328 moved to backend/routers/admin.py (B2.8b)
 @app.get("/api/notifications/me")
 async def get_my_notifications(unread_only: bool = False, user: dict = Depends(get_session_user)):
@@ -2513,81 +2406,10 @@ def cross_module_search(q: str = "", limit: int = 10, _: dict = Depends(get_sess
 # 24 hours, so repeated calls don't spam the inbox.
 # =====================================================================
 
-_INACTIVE_TAG = "INACTIVE_RECRUITER_3D"
+# _INACTIVE_TAG moved to backend/notifications.py (A9-fu Phase 4)
 
 
-def _check_inactive_recruiters(threshold_days: int = 3, dedupe_hours: int = 24) -> dict:
-    """Scan and notify. Returns {flagged: [...], emitted: int}."""
-    threshold_iso = (datetime.now(timezone.utc) - timedelta(days=threshold_days)).isoformat()
-    dedupe_iso = (datetime.now(timezone.utc) - timedelta(hours=dedupe_hours)).isoformat()
-    sent_at = datetime.now(timezone.utc).isoformat()
-
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    flagged: list = []
-    emitted = 0
-    try:
-        c.execute(
-            "SELECT id, full_name, email, last_login_at FROM users "
-            "WHERE role='recruiter' AND is_active=1 AND (last_login_at IS NULL OR last_login_at < ?)",
-            (threshold_iso,),
-        )
-        recruiters = c.fetchall()
-
-        c.execute("SELECT id FROM users WHERE role='admin' AND is_active=1")
-        admin_ids = [row[0] for row in c.fetchall()]
-
-        for rec_id, full_name, email, last_login in recruiters:
-            recruiter_label = full_name or email
-            # Dedup: use cooldown table (not notifications inbox) so user
-            # deletion does NOT reset the 24h clock.
-            cooldown_tag = f"{_INACTIVE_TAG}:{rec_id}"
-            if _is_on_cooldown(conn, rec_id, cooldown_tag, hours=dedupe_hours):
-                continue
-
-            user_msg = (
-                "לא נכנסת למערכת מעולם — יש להתחבר כדי להתחיל לעבוד."
-                if not last_login else
-                "לא נכנסת למערכת מעל 3 ימים. נוכחותך הרציפה נדרשת כדי לעמוד ב-SLA ולשמור על חוויית מועמד."
-            )
-
-            # Notify the recruiter herself
-            _emit_notification(
-                conn, user_id=rec_id, message=user_msg,
-                severity="warning", sent_by="system:" + _INACTIVE_TAG,
-                category="inactivity", link=None, sent_at=sent_at,
-            )
-            emitted += 1
-
-            # Notify every admin (use admin-scoped cooldown key)
-            admin_link = "/admin?group=settings&sub=permissions"
-            for admin_id in admin_ids:
-                admin_cooldown_tag = f"{_INACTIVE_TAG}:{rec_id}:admin:{admin_id}"
-                if _is_on_cooldown(conn, admin_id, admin_cooldown_tag, hours=dedupe_hours):
-                    continue
-                admin_msg = (
-                    f"⚠️ {recruiter_label} (מגייסת) טרם התחברה למערכת."
-                    if not last_login else
-                    f"⚠️ {recruiter_label} (מגייסת) לא נכנסה למערכת מעל 3 ימים. כניסה אחרונה: {last_login}."
-                )
-                _emit_notification(
-                    conn, user_id=admin_id, message=admin_msg,
-                    severity="warning", sent_by="system:" + _INACTIVE_TAG,
-                    category="inactivity", link=admin_link, sent_at=sent_at,
-                )
-                _set_cooldown(conn, admin_id, admin_cooldown_tag)
-                emitted += 1
-
-            # Set cooldown AFTER emitting (so partial failures don't lock out next run)
-            _set_cooldown(conn, rec_id, cooldown_tag)
-            flagged.append({"id": rec_id, "name": recruiter_label, "last_login_at": last_login})
-
-        conn.commit()
-    finally:
-        conn.close()
-    return {"flagged": flagged, "emitted": emitted}
-
-
+# _check_inactive_recruiters moved to backend/notifications.py (A9-fu Phase 4)
 @app.get("/api/notifications/stream")
 async def notification_stream(user: dict = Depends(get_session_user)):
     """Server-Sent Events endpoint. The client opens one persistent connection
@@ -2948,7 +2770,6 @@ def delete_application(
         conn.close()
 
 
-
 # =====================================================================
 # ANOMALY DETECTION ENGINE
 # Scans the live database for suspicious data patterns and writes
@@ -3195,50 +3016,8 @@ EXTRA_HEBREW_ALIASES = TYPED_INGEST_ALIASES
 # _validate_ingest_frame moved to backend/ingestion/ (A9-fu Phase 2)
 # _create_ingest_batch moved to backend/ingestion/ (A9-fu Phase 2)
 # _finalise_ingest_batch moved to backend/ingestion/ (A9-fu Phase 2)
-def _record_change(conn: sqlite3.Connection, batch_id: str, entity_type: str,
-                   entity_id: str, change_type: str, before: Optional[dict], after: Optional[dict]) -> None:
-    """Record a single insert/update/delete row in batch_entity_changes."""
-    conn.execute(
-        """INSERT INTO batch_entity_changes
-           (batch_id, entity_type, entity_id, change_type, before_json, after_json, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?)""",
-        (
-            batch_id, entity_type, entity_id, change_type,
-            json.dumps(before, ensure_ascii=False, default=str) if before else None,
-            json.dumps(after, ensure_ascii=False, default=str) if after else None,
-            datetime.now(timezone.utc).isoformat(),
-        ),
-    )
-
-
-def _create_manual_edit_batch(entity_type: str, entity_id: str, actor: str) -> str:
-    """Creates a pseudo-batch for manual UI edits — audit trail + rollback via existing revert."""
-    batch_id = f"EDIT-{entity_type[:3].upper()}-{uuid.uuid4().hex[:8].upper()}"
-    conn = sqlite3.connect(DB_PATH)
-    try:
-        conn.execute(
-            """INSERT INTO ingestion_batches
-               (batch_id, filename, schema_version, status,
-                rows_received, rows_loaded, rows_rejected, duplicate_rows, quality_score,
-                started_at, finished_at)
-               VALUES (?, ?, ?, 'committed', 1, 1, 0, 0, 100, ?, ?)""",
-            (
-                batch_id,
-                f"manual_edit::{entity_type}::{entity_id}",
-                DEFAULT_SCHEMA_VERSION,
-                datetime.now(timezone.utc).isoformat(),
-                datetime.now(timezone.utc).isoformat(),
-            ),
-        )
-        conn.commit()
-    except Exception:
-        # If actor column or other schema mismatch, retry without optional columns
-        pass
-    finally:
-        conn.close()
-    return batch_id
-
-
+# _record_change moved to backend/audit.py (A9-fu Phase 4)
+# _create_manual_edit_batch moved to backend/audit.py (A9-fu Phase 4)
 # _empty_stats moved to backend/utils.py (A9-fu Phase 1)
 # _scalar moved to backend/utils.py (A9-fu Phase 1)
 # _row_to_scalar moved to backend/utils.py (A9-fu Phase 1)

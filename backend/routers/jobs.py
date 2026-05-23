@@ -30,6 +30,7 @@ from utils import _normalize_score, _safe_pct, _to_int
 from pipeline import _compute_unified_stage, _get_orphan_jobs, get_unified_data
 
 import config as shared_config
+from audit import _create_manual_edit_batch, _record_change, bump_data_version, log_audit_action
 from auth import require_admin, require_dual_role
 from constants import Role, UNIFIED_STAGES
 from db import db_conn
@@ -56,26 +57,6 @@ router = APIRouter(tags=["jobs"])
 def _admin_config_defaults():
     from main import ADMIN_CONFIG_DEFAULTS
     return ADMIN_CONFIG_DEFAULTS
-
-
-def _create_manual_edit_batch(entity_type, entity_id, actor):
-    from main import _create_manual_edit_batch as _impl
-    return _impl(entity_type, entity_id, actor)
-
-
-def _record_change(conn, batch_id, entity_type, entity_id, action, before, after):
-    from main import _record_change as _impl
-    return _impl(conn, batch_id, entity_type, entity_id, action, before, after)
-
-
-def _log_audit(action: str, status: str, details: str, user: str) -> None:
-    from main import log_audit_action as _impl
-    _impl(action=action, status=status, details=details, user=user)
-
-
-def _bump_data_version(conn=None) -> int:
-    from main import bump_data_version as _impl
-    return _impl(conn)
 
 
 # --- Routes ---------------------------------------------------------------
@@ -220,7 +201,7 @@ def bulk_update_jobs(payload: JobsBulkUpdatePayload, _: str = Depends(require_ad
         conn.commit()
     finally:
         conn.close()
-    _log_audit(
+    log_audit_action(
         "JOBS_BULK_UPDATE",
         "Warning",
         f"action={payload.action} | affected={affected}",
@@ -548,12 +529,12 @@ def edit_job(
         batch_id = _create_manual_edit_batch("job", job_id, user.get("email", "admin"))
         _record_change(conn, batch_id, "job", job_id, "update", before, after)
         conn.commit()
-        _log_audit(
+        log_audit_action(
             "JOB_EDIT", "ok",
             f"id={job_id} fields={list(updates.keys())}",
             user=user.get("email", "admin"),
         )
-        _bump_data_version()
+        bump_data_version()
         return {"status": "updated", "job": after}
     finally:
         conn.close()
@@ -579,12 +560,12 @@ def delete_job(
         _record_change(conn, batch_id, "job", job_id, "delete", {"id": job[0], "job_title": job[1]}, None)
         conn.commit()
 
-        _log_audit(
+        log_audit_action(
             "JOB_DELETE", "ok",
             f"id={job_id} job_title={job[1]}",
             user=user.get("email", "admin"),
         )
-        _bump_data_version()
+        bump_data_version()
         return {"status": "deleted", "job_id": job_id}
     finally:
         conn.close()

@@ -27,6 +27,7 @@ from utils import _nan_safe_records
 from typing import Optional
 
 import config as shared_config
+from audit import bump_data_version, log_audit_action
 from auth import require_dual_role
 from constants import Role
 from schemas import (
@@ -37,19 +38,6 @@ from schemas import (
 
 
 router = APIRouter(tags=["onboarding"])
-
-
-# --- Late-bound proxies to helpers still in main.py ----------------------
-def _log_audit(action: str, status: str, details: str, user: str) -> None:
-    from main import log_audit_action
-    log_audit_action(action=action, status=status, details=details, user=user)
-
-
-
-
-def _bump_data_version(conn=None) -> int:
-    from main import bump_data_version as _impl
-    return _impl(conn)
 
 
 # --- Onboarding-only helpers (moved here from main.py) -------------------
@@ -122,7 +110,7 @@ async def create_onboarding_wizard(
     """
     ob_id = _persist_onboarding_record(payload)
     full_name = _normalize_onboarding_payload(payload)["name"] or "עובד חדש"
-    _log_audit("Onboarding Wizard", "Success", f"קליטה מקיפה שוגרה עבור {full_name}", "Recruiter")
+    log_audit_action("Onboarding Wizard", "Success", f"קליטה מקיפה שוגרה עבור {full_name}", "Recruiter")
     return {"status": "success", "id": ob_id, "message": "Onboarding wizard completed"}
 
 
@@ -171,7 +159,7 @@ def bulk_update_onboarding(
         conn.commit()
     finally:
         conn.close()
-    _log_audit(
+    log_audit_action(
         "ONBOARDING_BULK_UPDATE",
         "Warning",
         f"status={payload.status} | affected={affected}",
@@ -207,7 +195,7 @@ def update_onboarding(
                 params.append(ob_id)
                 c.execute(f"UPDATE onboarding SET " + ", ".join(updates) + " WHERE id = ?", params)
         conn.commit()
-        _bump_data_version()
+        bump_data_version()
         return {"status": "success"}
     finally:
         conn.close()

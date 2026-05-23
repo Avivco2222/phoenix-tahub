@@ -23,19 +23,13 @@ import sqlite3
 from fastapi import APIRouter, Depends, HTTPException
 
 import config as shared_config
+from audit import log_audit_action
 from auth import _utcnow, require_dual_role
 from constants import Role
 from schemas import AnomalyReviewPayload
 
 
 router = APIRouter(tags=["anomalies"])
-
-
-def _log_audit(action: str, status: str, details: str, user: str) -> None:
-    """Late-bound proxy to main.log_audit_action — avoids a circular import."""
-    from main import log_audit_action  # noqa: imported lazily on purpose
-
-    log_audit_action(action=action, status=status, details=details, user=user)
 
 
 def _run_anomaly_scan(conn: sqlite3.Connection, batch_id=None):
@@ -60,7 +54,7 @@ def trigger_anomaly_scan(
     try:
         summary = _run_anomaly_scan(conn, batch_id=None)
         total = sum(summary.values())
-        _log_audit(
+        log_audit_action(
             "ANOMALY_SCAN",
             "ok",
             f"new={total} breakdown={summary}",
@@ -167,7 +161,7 @@ def review_anomaly(
             (payload.status, user.get("email", "admin"), _utcnow().isoformat(), anomaly_id),
         )
         conn.commit()
-        _log_audit(
+        log_audit_action(
             "ANOMALY_REVIEW",
             "ok",
             f"id={anomaly_id} status={payload.status} note={payload.note}",

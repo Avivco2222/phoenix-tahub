@@ -27,6 +27,7 @@ from pipeline import _compute_unified_stage, get_unified_data
 from typing import Optional
 
 import config as shared_config
+from audit import _create_manual_edit_batch, _record_change, bump_data_version, log_audit_action
 from auth import require_dual_role
 from constants import Role, UNIFIED_STAGES
 from db import db_conn
@@ -47,26 +48,6 @@ router = APIRouter(tags=["candidates"])
 
 
 
-
-
-def _create_manual_edit_batch(entity_type: str, entity_id: str, actor: str) -> str:
-    from main import _create_manual_edit_batch as _impl
-    return _impl(entity_type, entity_id, actor)
-
-
-def _record_change(conn, batch_id, entity_type, entity_id, action, before, after):
-    from main import _record_change as _impl
-    return _impl(conn, batch_id, entity_type, entity_id, action, before, after)
-
-
-def _log_audit(action: str, status: str, details: str, user: str) -> None:
-    from main import log_audit_action as _impl
-    _impl(action=action, status=status, details=details, user=user)
-
-
-def _bump_data_version(conn=None) -> int:
-    from main import bump_data_version as _impl
-    return _impl(conn)
 
 
 # --- Routes ---------------------------------------------------------------
@@ -337,7 +318,7 @@ def advance_candidate_stage(
     finally:
         conn.close()
 
-    _log_audit("STAGE_CHANGE", "info", f"{candidate_name}: {old_stage}→{stage_code}", user.get("email"))
+    log_audit_action("STAGE_CHANGE", "info", f"{candidate_name}: {old_stage}→{stage_code}", user.get("email"))
     return {
         "status": "ok",
         "candidate": candidate_key,
@@ -424,12 +405,12 @@ def edit_candidate(
         batch_id = _create_manual_edit_batch("candidate", candidate_id, user.get("email", "admin"))
         _record_change(conn, batch_id, "candidate", candidate_id, "update", before, after)
         conn.commit()
-        _log_audit(
+        log_audit_action(
             "CANDIDATE_EDIT", "ok",
             f"id={candidate_id} fields={list(updates.keys())}",
             user=user.get("email", "admin"),
         )
-        _bump_data_version()
+        bump_data_version()
         return {"status": "updated", "candidate": after}
     finally:
         conn.close()
@@ -455,12 +436,12 @@ def delete_candidate(
         _record_change(conn, batch_id, "candidate", candidate_id, "delete", {"id": cand[0], "name": cand[1]}, None)
         conn.commit()
 
-        _log_audit(
+        log_audit_action(
             "CANDIDATE_DELETE", "ok",
             f"id={candidate_id} name={cand[1]}",
             user=user.get("email", "admin"),
         )
-        _bump_data_version()
+        bump_data_version()
         return {"status": "deleted", "candidate_id": candidate_id}
     finally:
         conn.close()

@@ -33,7 +33,7 @@ import sqlite3
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import Cookie, Depends, Header, HTTPException, status
+from fastapi import Cookie, Depends, Header, HTTPException, Response, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
 import config as shared_config
@@ -281,3 +281,22 @@ def require_session_role(*allowed_roles: str):
             raise HTTPException(status_code=403, detail="Insufficient permissions")
         return user
     return _checker
+
+
+# ----- Cookie helpers ---------------------------------------------------------
+
+
+def _set_session_cookie(response: Response, token: str, *, key: str = SESSION_COOKIE) -> None:
+    """Attach a session JWT to the response as an httponly cookie.
+
+    ``COOKIE_SECURE`` env flag toggles the ``Secure`` attribute — set
+    to ``false`` only in local dev (HTTP). ``samesite=lax`` is enough
+    for the same-origin frontend; ``max_age`` mirrors the JWT's own
+    lifetime so the browser stops sending the cookie at roughly the
+    moment the token expires.
+    """
+    secure_cookie = os.getenv("COOKIE_SECURE", "true").lower() != "false"
+    response.set_cookie(
+        key=key, value=token, httponly=True, secure=secure_cookie,
+        samesite="lax", max_age=JWT_TTL_MINUTES * 60, path="/",
+    )
