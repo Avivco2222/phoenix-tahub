@@ -31,6 +31,42 @@ const nextConfig: NextConfig = {
     ];
   },
   async headers() {
+    const isProd = process.env.NODE_ENV === "production";
+
+    // Content Security Policy
+    //
+    // Dev: keep `'unsafe-eval'` so Next.js Fast Refresh / Webpack hot reload
+    // can transform modules at runtime, and keep `connect-src` permissive so
+    // the dev server's websockets work cross-origin during local testing.
+    //
+    // Production: drop `'unsafe-eval'` (built bundles never need it),
+    // restrict `connect-src` to same-origin (everything is proxied through
+    // /api/* via the rewrites above), and add explicit `object-src 'none'`
+    // / `frame-src 'none'` to deny plugin embeds.
+    //
+    // `'unsafe-inline'` for script-src stays in both modes — Next.js inlines
+    // hydration scripts without nonces. Moving to a nonce-based policy would
+    // require a custom middleware injection and is a separate change.
+    const cspDirectives = [
+      "default-src 'self'",
+      isProd
+        ? "script-src 'self' 'unsafe-inline'"
+        : "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+      "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+      "img-src 'self' data: blob:",
+      "font-src 'self' data: https://fonts.gstatic.com",
+      isProd ? "connect-src 'self'" : "connect-src 'self' http: https: ws: wss:",
+      "object-src 'none'",
+      "frame-src 'none'",
+      "frame-ancestors 'none'",
+      "base-uri 'self'",
+      "form-action 'self'",
+    ];
+    if (isProd) {
+      // Force any accidentally-http subresource to upgrade to https.
+      cspDirectives.push("upgrade-insecure-requests");
+    }
+
     return [
       {
         source: "/(.*)",
@@ -39,20 +75,7 @@ const nextConfig: NextConfig = {
           { key: "X-Content-Type-Options", value: "nosniff" },
           { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
           { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=()" },
-          {
-            key: "Content-Security-Policy",
-            value: [
-              "default-src 'self'",
-              "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
-              "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
-              "img-src 'self' data: blob:",
-              "font-src 'self' data: https://fonts.gstatic.com",
-              "connect-src 'self' http: https:",
-              "frame-ancestors 'none'",
-              "base-uri 'self'",
-              "form-action 'self'",
-            ].join("; "),
-          },
+          { key: "Content-Security-Policy", value: cspDirectives.join("; ") },
           {
             key: "Strict-Transport-Security",
             value: "max-age=31536000; includeSubDomains; preload",

@@ -23,6 +23,7 @@ from main.py — same auth gates, same SQL, same return shapes.
 
 import io
 import json
+import os
 import secrets
 import sqlite3
 import uuid
@@ -736,6 +737,27 @@ def revert_upload(log_id: str, _: str = Depends(require_admin)):
 
 @router.post("/admin/reset-for-final-test")
 def reset_for_final_test(_: str = Depends(require_admin)):
+    """Wipe 14 tables down to zero rows — destructive, irrecoverable.
+
+    Production guard: this endpoint exists for the test/demo workflow that
+    needs to seed a clean DB before a verification run. Calling it against
+    real customer data would erase candidates / jobs / applications /
+    ingestion batches with no way back. The ``ENV`` env var must NOT be
+    set to ``production`` for the call to succeed; if it is, we return
+    410 Gone so the route still exists in the OpenAPI schema (no info
+    leak from a 404) but no work happens.
+
+    Set ``ENV=dev`` / ``ENV=test`` (or leave it unset) to allow the wipe.
+    The pytest conftest binds the route to an isolated temp DB anyway,
+    so test behaviour is unchanged.
+    """
+    env = (os.getenv("ENV") or "").strip().lower()
+    if env == "production":
+        raise HTTPException(
+            status_code=410,
+            detail="reset-for-final-test is disabled in production (set ENV != production to re-enable)",
+        )
+
     conn = sqlite3.connect(shared_config.DB_NAME)
     c = conn.cursor()
     purge_tables = [

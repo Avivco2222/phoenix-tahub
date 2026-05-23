@@ -133,3 +133,12 @@ def test_reset_for_final_test_returns_purge_report():
     assert "reset_at" in body
 
 
+def test_reset_for_final_test_blocked_when_env_production(monkeypatch):
+    """Production guard: setting ENV=production must turn the destructive
+    reset into a 410 Gone rather than wiping 14 tables."""
+    monkeypatch.setenv("ENV", "production")
+    res = client.post("/admin/reset-for-final-test", headers={"X-Admin-Token": "test-admin-token"})
+    assert res.status_code == 410
+    assert "production" in res.json()["detail"].lower()
+
+
