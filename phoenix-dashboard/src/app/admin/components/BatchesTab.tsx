@@ -1,7 +1,8 @@
 "use client";
 
 import React, { useCallback, useEffect, useState } from "react";
-import { History, Loader2, Undo2, RotateCcw, AlertTriangle } from "lucide-react";
+import { History, Loader2, Undo2, RotateCcw, AlertTriangle, Activity } from "lucide-react";
+import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { useToast } from "@/components/Toast";
 
 interface Batch {
@@ -39,6 +40,20 @@ const STATUS_STYLES: Record<string, string> = {
 };
 
 export function BatchesTab({ onRefresh }: BatchesTabProps) {
+  const router = useRouter();
+  const pathname = usePathname();
+  const search = useSearchParams();
+
+  /** Open the new AuditLogTab pre-filtered to this batch's activity.
+   *  audit_logs.details holds the batch_id mention, so the server-side
+   *  filter on /api/security/audit-logs?batch_id=<id> picks it up. */
+  const openAuditForBatch = (batchId: string) => {
+    const params = new URLSearchParams(search.toString());
+    params.set("group", "settings");
+    params.set("sub", "audit-log");
+    params.set("audit_batch", batchId);
+    router.replace(`${pathname}?${params.toString()}`);
+  };
   const { showToast } = useToast();
   const [batches, setBatches] = useState<Batch[]>([]);
   const [loading, setLoading] = useState(true);
@@ -193,19 +208,28 @@ export function BatchesTab({ onRefresh }: BatchesTabProps) {
                       <td className="px-4 py-3 text-center font-mono font-bold text-[#002649]">{b.quality_score}%</td>
                       <td className="px-4 py-3 text-[10px] text-slate-500 font-mono">{(b.finished_at || b.started_at).slice(0, 19).replace("T", " ")}</td>
                       <td className="px-4 py-3 text-center">
-                        {b.status === "committed" && (
+                        <div className="inline-flex items-center gap-1">
                           <button
-                            onClick={() => void handleRevert(b.batch_id)}
-                            disabled={reverting === b.batch_id}
-                            className="p-1.5 text-rose-600 hover:bg-rose-50 rounded-lg transition-colors disabled:opacity-50"
-                            title="בטל אצווה — מוחק/מחזיר כל השורות"
+                            onClick={() => openAuditForBatch(b.batch_id)}
+                            className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                            title="הצג ביומן הביקורת — סנן אוטומטית ל-batch_id זה"
                           >
-                            {reverting === b.batch_id ? <Loader2 size={16} className="animate-spin" /> : <Undo2 size={16} />}
+                            <Activity size={16} />
                           </button>
-                        )}
-                        {b.status === "reverted" && (
-                          <span className="text-[10px] text-slate-400">בוטל</span>
-                        )}
+                          {b.status === "committed" && (
+                            <button
+                              onClick={() => void handleRevert(b.batch_id)}
+                              disabled={reverting === b.batch_id}
+                              className="p-1.5 text-rose-600 hover:bg-rose-50 rounded-lg transition-colors disabled:opacity-50"
+                              title="בטל אצווה — מוחק/מחזיר כל השורות"
+                            >
+                              {reverting === b.batch_id ? <Loader2 size={16} className="animate-spin" /> : <Undo2 size={16} />}
+                            </button>
+                          )}
+                          {b.status === "reverted" && (
+                            <span className="text-[10px] text-slate-400">בוטל</span>
+                          )}
+                        </div>
                       </td>
                     </tr>
                     {isExpanded && (

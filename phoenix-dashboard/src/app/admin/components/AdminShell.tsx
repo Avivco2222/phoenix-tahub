@@ -19,13 +19,13 @@ import { useSearchParams, useRouter, usePathname } from "next/navigation";
 import {
   Database, Settings as SettingsIcon,
   Upload, History, ShieldCheck, Target, Filter, Users,
-  LayoutGrid, Bell,
+  LayoutGrid, Bell, Activity,
 } from "lucide-react";
 
 export type GroupId = "data" | "settings";
 export type SubTabId =
-  | "ingest" | "batches" | "quality"                                // data
-  | "targets" | "rules" | "permissions" | "apps" | "notifications"; // settings
+  | "ingest" | "batches" | "quality"                                                // data
+  | "targets" | "rules" | "permissions" | "apps" | "notifications" | "audit-log";   // settings
 
 interface GroupDef {
   id: GroupId;
@@ -67,6 +67,7 @@ export const GROUPS: GroupDef[] = [
       { id: "permissions",   label: "הרשאות ומשתמשים",  icon: <Users size={16}/> },
       { id: "apps",          label: "ניהול אפליקציות",   icon: <LayoutGrid size={16}/> },
       { id: "notifications", label: "ניהול התראות",      icon: <Bell size={16}/> },
+      { id: "audit-log",     label: "יומן ביקורת",        icon: <Activity size={16}/> },
     ],
   },
   // "Performance" group (AI Inbox + Consumer Map) removed in A9-FU UX

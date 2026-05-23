@@ -17,6 +17,7 @@ import { BatchesTab } from "./components/BatchesTab";
 import { QualityTab } from "./components/QualityTab";
 import AdminShell from "./components/AdminShell";
 import AppsManagementTab from "./components/AppsManagementTab";
+import AuditLogTab from "./components/AuditLogTab";
 import NotificationsTab from "./components/NotificationsTab";
 import SmartIngestPanel from "./components/SmartIngestPanel";
 
@@ -452,6 +453,7 @@ function AdminCommandCenter() {
             ingest: "data", batches: "batches", quality: "quality",
             targets: "targets", rules: "rules", permissions: "permissions",
             apps: "apps", notifications: "notifications",
+            "audit-log": "audit-log",
           };
           const mapped = subToTab[sub] ?? "data";
           if (mapped !== activeTab) setActiveTab(mapped);
@@ -464,6 +466,11 @@ function AdminCommandCenter() {
 
       {/* NOTIFICATIONS sub-tab — send manual notifications + view history. */}
       {activeTab === "notifications" && <NotificationsTab />}
+
+      {/* AUDIT-LOG sub-tab (A9-FU UX wave 2) — server-side filterable view
+          over audit_logs, no password gate. BatchesTab links here via
+          ?audit_batch=<batch_id> to deep-link to a single batch's activity. */}
+      {activeTab === "audit-log" && <AuditLogTab />}
 
       {/* PERMISSIONS sub-tab — link out to dedicated page (kept separate
           because it has its own RBAC checks + heavy state). */}

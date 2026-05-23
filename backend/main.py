@@ -1113,10 +1113,70 @@ def get_meta(_: dict = Depends(verify_token)):
 # ==========================================
 
 @app.get("/api/security/audit-logs")
-def get_audit_logs(_: str = Depends(require_admin)):
+def get_audit_logs(
+    action: Optional[str] = None,
+    user: Optional[str] = None,
+    batch_id: Optional[str] = None,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    q: Optional[str] = None,
+    limit: int = 50,
+    offset: int = 0,
+    _: str = Depends(require_admin),
+):
+    """Paginated, filterable audit-log view.
+
+    Query params:
+      * action / user — case-insensitive substring match on those columns
+      * batch_id      — substring match on ``details`` (audit rows mention the
+                        originating batch in their details blob); lets the
+                        BatchesTab deep-link straight to its own activity.
+      * date_from / date_to — inclusive date bounds (YYYY-MM-DD); applied to
+                        the ``timestamp`` column.
+      * q             — free-text search across action / user / ip_address /
+                        details (the old client-side filter, now server-side).
+      * limit / offset — pagination (default 50/0).
+
+    Default behaviour (no params) preserves the historical "last 50 rows"
+    response, so the existing /admin/security page keeps working unchanged.
+    """
+    where: list[str] = []
+    params: list = []
+    if action:
+        where.append("LOWER(action) LIKE LOWER(?)")
+        params.append(f"%{action}%")
+    if user:
+        where.append("LOWER(user) LIKE LOWER(?)")
+        params.append(f"%{user}%")
+    if batch_id:
+        where.append("details LIKE ?")
+        params.append(f"%{batch_id}%")
+    if date_from:
+        where.append("timestamp >= ?")
+        params.append(date_from)
+    if date_to:
+        # Inclusive end-of-day: append a trailing space so a "YYYY-MM-DD"
+        # bound matches rows on that date.
+        where.append("timestamp <= ?")
+        params.append(f"{date_to} 23:59:59")
+    if q:
+        where.append(
+            "(LOWER(action) LIKE LOWER(?) OR LOWER(user) LIKE LOWER(?) "
+            "OR LOWER(IFNULL(ip_address,'')) LIKE LOWER(?) "
+            "OR LOWER(IFNULL(details,'')) LIKE LOWER(?))"
+        )
+        like = f"%{q}%"
+        params.extend([like, like, like, like])
+
+    sql = "SELECT * FROM audit_logs"
+    if where:
+        sql += " WHERE " + " AND ".join(where)
+    sql += " ORDER BY timestamp DESC LIMIT ? OFFSET ?"
+    params.extend([max(1, min(int(limit), 500)), max(0, int(offset))])
+
     conn = sqlite3.connect(DB_PATH)
     try:
-        logs_df = pd.read_sql("SELECT * FROM audit_logs ORDER BY timestamp DESC LIMIT 50", conn)
+        logs_df = pd.read_sql(sql, conn, params=params)
         logs = []
         for _, row in logs_df.iterrows():
             timestamp_text = str(row.get("timestamp", ""))
