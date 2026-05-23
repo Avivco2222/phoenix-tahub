@@ -87,8 +87,11 @@ def test_batch_rollback_endpoint_reverts_committed_batch():
     )
     assert upload.status_code == 200
     batch_id = upload.json()["batch_id"]
+    # Was /admin/revert-batch/{batch_id} (deleted as a duplicate in A9-FU
+    # UX cleanup); the canonical generic implementation lives under
+    # /api/admin/batches/{batch_id}/revert.
     revert = client.post(
-        f"/admin/revert-batch/{batch_id}",
+        f"/api/admin/batches/{batch_id}/revert",
         headers={"X-Admin-Token": "test-admin-token"},
     )
     assert revert.status_code == 200

@@ -132,32 +132,9 @@ def get_data_health(_: dict = Depends(require_dual_role(Role.ADMIN, Role.HRBP)))
         conn.close()
 
 
-@router.get("/admin/costs")
-def get_costs(_: dict = Depends(require_dual_role(Role.ADMIN, Role.HRBP))):
-    """סימולציה של נתוני כספים, הסכמים ועלויות גיוס (CPH)"""
-    return {
-        "is_demo": True,
-        "demo_note": "Demo payload - replace with live FinOps integration",
-        "cph_average": "₪7,820",
-        "total_spend_ytd": "₪265,000",
-        "agencies": [
-            {"name": "חברות השמה (טכנולוגיה)", "type": "עמלה", "value": "100%", "active": 45, "hired": 12, "est_cost": "₪180,000", "roi": "גבוה"},
-            {"name": "LinkedIn Recruiter", "type": "רישיון שנתי", "value": "₪45,000", "active": 120, "hired": 8, "est_cost": "₪45,000", "roi": "בינוני"},
-            {"name": "חבר מביא חבר (Referral)", "type": "בונוס הוקרה", "value": "₪3,000", "active": 80, "hired": 14, "est_cost": "₪42,000", "roi": "גבוה מאוד"},
-            {"name": "קמפיינים ממומנים (Facebook/IG)", "type": "תקציב חודשי", "value": "₪2,500", "active": 210, "hired": 3, "est_cost": "₪12,500", "roi": "נמוך"}
-        ]
-    }
-
-
-@router.get("/admin/automations")
-def get_automations(_: dict = Depends(require_dual_role(Role.ADMIN, Role.HRBP))):
-    """שליפת חוקי האוטומציה שמוגדרים במערכת"""
-    return [
-        {"id": 1, "trigger": "סטטוס = 'הצעת שכר'", "condition": "מעל 3 ימים", "action": "שלח התראה אדומה למנהל המגייס", "status": "פעיל", "is_demo": True},
-        {"id": 2, "trigger": "מקור = 'חבר מביא חבר'", "condition": "מעבר לסטטוס 'קליטה'", "action": "הוצא מייל למדור שכר לתשלום בונוס", "status": "פעיל", "is_demo": True},
-        {"id": 3, "trigger": "תגית 'טאלנט' נוספה", "condition": "אין אינטראקציה 14 יום", "action": "הקפץ למגייסת תזכורת (Nudge)", "status": "פעיל", "is_demo": True},
-        {"id": 4, "trigger": "חטיבת טכנולוגיה", "condition": "מעל 60 ימים ב'ראיון מקצועי'", "action": "דווח כחריגת SLA חמורה", "status": "מושהה", "is_demo": True}
-    ]
+# /admin/costs and /admin/automations removed (A9-FU UX cleanup):
+# both returned is_demo:True hard-coded payloads; no real FinOps or rules
+# engine was wired up. Remove with the "Performance" admin group.
 
 
 @router.get("/api/admin/rules")
@@ -212,31 +189,8 @@ def delete_etl_rule(rule_id: str, _: str = Depends(require_admin)):
         conn.close()
 
 
-@router.get("/api/admin/inbox-analytics")
-def get_inbox_analytics(_: str = Depends(require_admin)):
-    """מחזיר נתונים אמיתיים על ביצועי המגייסים בטיפול במשימות שהמערכת ייצרה"""
-    return {
-        "is_demo": True,
-        "demo_note": "Demo analytics payload - replace with DB aggregation",
-        "stats": {
-            "total_tasks": 1240, "avg_close_rate": 92, "median_response_hours": 3.8, "urgent_sla_breaches": 14
-        },
-        "hourly_trend": [
-            {"hour": '08:00', "tasks": 12}, {"hour": '10:00', "tasks": 45}, {"hour": '12:00', "tasks": 38},
-            {"hour": '14:00', "tasks": 62}, {"hour": '16:00', "tasks": 55}, {"hour": '18:00', "tasks": 20}
-        ],
-        "task_types": [
-            {"label": "סורסינג (נפח קו״ח)", "pct": 45, "count": 558, "color": "bg-orange-400"},
-            {"label": "חריגות SLA (מנהלים)", "pct": 30, "count": 372, "color": "bg-blue-400"},
-            {"label": "נטישה (Ghosting)", "pct": 15, "count": 186, "color": "bg-red-400"},
-            {"label": "אדמיניסטרציה / Onboarding", "pct": 10, "count": 124, "color": "bg-green-400"}
-        ],
-        "recruiters": [
-            {"name": "גיא רג'ואן", "dominant": "סורסינג ולינקדאין", "time": "1.2 שעות", "rate": "98%", "insight": "מצטיין תפעולית. זקוק לתקציב פרסום.", "color": "green"},
-            {"name": "ליטל גולדפרב", "dominant": "SLA מנהלים", "time": "14.5 שעות", "rate": "62%", "insight": "חולשה בניהול ממשקים מול מנהלים.", "color": "red"},
-            {"name": "מור אהרון", "dominant": "Ghosting", "time": "4.1 שעות", "rate": "89%", "insight": "עומס יתר. מנהלת 35 משרות במקביל.", "color": "orange"}
-        ]
-    }
+# /api/admin/inbox-analytics removed (A9-FU UX cleanup): returned an
+# is_demo:True hardcoded payload; no DB aggregation was wired up.
 
 
 @router.get("/api/admin/config")
@@ -665,42 +619,9 @@ async def admin_send_notification(payload: dict, admin: dict = Depends(require_s
     return {"delivered": delivered, "skipped": skipped, "sent_at": sent_at}
 
 
-# NOTE: Two /api/admin/notifications/history endpoints existed in main.py
-# (lines ~3300 and ~3467). FastAPI registered both but the later one shadowed
-# the earlier — only the detailed version was actually reachable. Preserving
-# that exact behaviour: register both, with the more detailed one second so
-# it wins via APIRouter's last-wins routing. The legacy first version
-# remains as documented dead code for parity with main.py.
-
-
-@router.get("/api/admin/notifications/history")
-async def admin_notifications_history_legacy(
-    limit: int = 50,
-    category: Optional[str] = None,
-    admin: dict = Depends(require_session_role(Role.ADMIN)),
-):
-    """Legacy notification-history view. Shadowed by the detailed handler below.
-    Kept for parity with the duplicate registration that lived in main.py."""
-    conn = sqlite3.connect(shared_config.DB_NAME)
-    conn.row_factory = sqlite3.Row
-    try:
-        sql = (
-            "SELECT n.id, n.user_id, u.full_name, u.email, n.message, n.severity, "
-            "n.category, n.sent_by, n.sent_at, n.read_at "
-            "FROM notifications n LEFT JOIN users u ON n.user_id = u.id "
-        )
-        params: list = []
-        if category:
-            sql += "WHERE n.category = ? "
-            params.append(category)
-        sql += "ORDER BY n.sent_at DESC LIMIT ?"
-        params.append(limit)
-        rows = conn.execute(sql, params).fetchall()
-        return [dict(r) for r in rows]
-    except sqlite3.OperationalError:
-        return []
-    finally:
-        conn.close()
+# The legacy /api/admin/notifications/history handler that historically
+# shadowed this one (registered twice in main.py) has been deleted in
+# the A9-FU UX cleanup — only the detailed version below remains.
 
 
 @router.get("/api/admin/notifications/history")
@@ -851,60 +772,11 @@ def revert_upload(log_id: str, _: str = Depends(require_admin)):
         conn.close()
 
 
-@router.post("/admin/revert-batch/{batch_id}")
-def revert_batch(batch_id: str, _: str = Depends(require_admin)):
-    conn = sqlite3.connect(shared_config.DB_NAME)
-    conn.row_factory = sqlite3.Row
-    c = conn.cursor()
-    try:
-        c.execute("BEGIN")
-        app_changes = c.execute(
-            """SELECT entity_id, change_type, before_json FROM batch_entity_changes
-               WHERE batch_id = ? AND entity_type = 'application'
-               ORDER BY id DESC""",
-            (batch_id,),
-        ).fetchall()
-        for ch in app_changes:
-            entity_id = ch["entity_id"]
-            if ch["change_type"] == "insert":
-                c.execute("DELETE FROM applications WHERE app_id = ?", (entity_id,))
-            else:
-                before_obj = json.loads(ch["before_json"]) if ch["before_json"] else {}
-                c.execute(
-                    """UPDATE applications SET status = ?, recruiter = ?, days_in_process = ?, upload_log_id = ?, stage_code = ?
-                       WHERE app_id = ?""",
-                    (
-                        before_obj.get("status"),
-                        before_obj.get("recruiter"),
-                        before_obj.get("days_in_process"),
-                        before_obj.get("upload_log_id"),
-                        before_obj.get("stage_code"),
-                        entity_id,
-                    ),
-                )
-
-        for entity_type, table_name, pk in [("candidate", "candidates", "id"), ("job", "jobs", "id")]:
-            inserts = c.execute(
-                "SELECT entity_id FROM batch_entity_changes WHERE batch_id = ? AND entity_type = ? AND change_type = 'insert' ORDER BY id DESC",
-                (batch_id, entity_type),
-            ).fetchall()
-            for row in inserts:
-                c.execute(f"DELETE FROM {table_name} WHERE {pk} = ?", (row["entity_id"],))
-
-        c.execute("UPDATE ingestion_batches SET status = 'reverted', finished_at = ? WHERE batch_id = ?", (_utcnow().isoformat(), batch_id))
-        related_log = c.execute("SELECT log_id FROM ingestion_batches WHERE batch_id = ?", (batch_id,)).fetchone()
-        if related_log and related_log["log_id"]:
-            c.execute("UPDATE data_logs SET status = 'Reverted' WHERE log_id = ?", (related_log["log_id"],))
-        unified_df = get_unified_data(conn)
-        build_snapshots(conn, unified_df)
-        clear_query_cache(conn, auto_commit=False)
-        conn.commit()
-        return {"message": f"Batch {batch_id} reverted successfully"}
-    except Exception as e:
-        conn.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        conn.close()
+# Legacy /admin/revert-batch/{batch_id} removed (A9-FU UX cleanup):
+# duplicated /api/admin/batches/{batch_id}/revert (defined below). The legacy
+# version only handled candidates/jobs/applications; the canonical generic
+# implementation covers all 8 entity types and is what BatchesTab actually
+# calls. No frontend code referenced the deleted path.
 
 
 @router.post("/admin/reset-for-final-test")

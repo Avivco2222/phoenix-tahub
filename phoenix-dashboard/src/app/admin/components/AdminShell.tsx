@@ -17,16 +17,15 @@
 import React, { useEffect, useMemo } from "react";
 import { useSearchParams, useRouter, usePathname } from "next/navigation";
 import {
-  Database, Settings as SettingsIcon, Activity,
-  Upload, History, ShieldCheck, Target, Filter, Users, BarChart3, Network,
+  Database, Settings as SettingsIcon,
+  Upload, History, ShieldCheck, Target, Filter, Users,
   LayoutGrid, Bell,
 } from "lucide-react";
 
-export type GroupId = "data" | "settings" | "performance";
+export type GroupId = "data" | "settings";
 export type SubTabId =
-  | "ingest" | "batches" | "quality"                             // data
-  | "targets" | "rules" | "permissions" | "apps" | "notifications" // settings
-  | "inbox" | "consumer-map";                                    // performance
+  | "ingest" | "batches" | "quality"                                // data
+  | "targets" | "rules" | "permissions" | "apps" | "notifications"; // settings
 
 interface GroupDef {
   id: GroupId;
@@ -70,26 +69,19 @@ export const GROUPS: GroupDef[] = [
       { id: "notifications", label: "ניהול התראות",      icon: <Bell size={16}/> },
     ],
   },
-  {
-    id: "performance",
-    icon: <Activity size={28} />,
-    title: "ביצועים",
-    subtitle: "AI Inbox • מפת צריכה",
-    accent: "#10B981",
-    subs: [
-      { id: "inbox",         label: "מעקב ביצועים (AI Inbox)", icon: <BarChart3 size={16}/> },
-      { id: "consumer-map",  label: "מפת צריכת נתונים",        icon: <Network size={16}/> },
-    ],
-  },
+  // "Performance" group (AI Inbox + Consumer Map) removed in A9-FU UX
+  // cleanup — both panels rendered hard-coded demo payloads (is_demo: True
+  // on the backend) and were not wired to real data.
 ];
 
 const DEFAULT_SUB: Record<GroupId, SubTabId> = {
   data: "ingest",
   settings: "targets",
-  performance: "inbox",
 };
 
-/** Map legacy ?tab= values to (group, sub) so older bookmarks keep working. */
+/** Map legacy ?tab= values to (group, sub) so older bookmarks keep working.
+ *  "analytics" / "consumer-map" / "performance" → redirected to the canonical
+ *  data-ingest landing since the Performance group was retired. */
 const LEGACY_TAB_MAP: Record<string, [GroupId, SubTabId]> = {
   data:           ["data", "ingest"],
   batches:        ["data", "batches"],
@@ -97,8 +89,9 @@ const LEGACY_TAB_MAP: Record<string, [GroupId, SubTabId]> = {
   targets:        ["settings", "targets"],
   rules:          ["settings", "rules"],
   permissions:    ["settings", "permissions"],
-  analytics:      ["performance", "inbox"],
-  "consumer-map": ["performance", "consumer-map"],
+  analytics:      ["data", "ingest"],
+  "consumer-map": ["data", "ingest"],
+  performance:    ["data", "ingest"],
 };
 
 export interface AdminShellState {
@@ -124,7 +117,9 @@ export default function AdminShell({ badges, onChange }: Props) {
       const [g, s] = LEGACY_TAB_MAP[legacyTab];
       return { group: g, sub: s };
     }
-    const g = (search.get("group") as GroupId) || "data";
+    const rawGroup = (search.get("group") as string | null) || "data";
+    // Retired "performance" group falls back to data/ingest so old links don't 404.
+    const g: GroupId = rawGroup === "data" || rawGroup === "settings" ? rawGroup : "data";
     const groupDef = GROUPS.find(x => x.id === g);
     const requestedSub = search.get("sub") as SubTabId | null;
     const sub =

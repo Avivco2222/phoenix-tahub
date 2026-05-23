@@ -5,19 +5,16 @@ import Link from "next/link";
 import {
   Users, Building2, Receipt, Target, Clock, FileText, Loader2,
   CheckCircle2, Plus, HeartHandshake, Power, Briefcase, Calculator, Sparkles,
-  UserMinus, X, Zap, Scale, Save, BarChart3, Layers, ShieldCheck, AlertOctagon, RefreshCw, Trash2, Edit3,
-  Filter, Download, History, Network, AlertTriangle, Undo2
+  UserMinus, X, Zap, Scale, Save, Layers, ShieldCheck, AlertOctagon, RefreshCw, Trash2, Edit3,
+  Filter, Download, History, AlertTriangle, Undo2
 } from "lucide-react";
-import { XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line } from "recharts";
-import { AdminConfigProvider, useAdminConfig, evalFormula } from "./components/targets/useAdminConfig";
+import { AdminConfigProvider, useAdminConfig } from "./components/targets/useAdminConfig";
 import TargetsTab from "./components/targets/TargetsTab";
 import { getAdminAuthHeader, getAdminHeaders, getApiBaseUrl } from "@/lib/api";
 import { useToast } from "@/components/Toast";
-import { DemoBadge } from "@/components/DemoBadge";
 import { useDataVersionRefresh } from "@/context/DataVersionContext";
 import { BatchesTab } from "./components/BatchesTab";
 import { QualityTab } from "./components/QualityTab";
-import { ConsumerMapTab } from "./components/ConsumerMapTab";
 import AdminShell from "./components/AdminShell";
 import AppsManagementTab from "./components/AppsManagementTab";
 import NotificationsTab from "./components/NotificationsTab";
@@ -62,54 +59,14 @@ interface SystemHealthData {
   total_records: number;
 }
 
-interface AnalyticsTaskType {
-  label: string;
-  pct: number;
-  count: number;
-  color: string;
-}
-
-interface AnalyticsRecruiter {
-  name: string;
-  dominant: string;
-  time: string;
-  rate: string;
-  insight: string;
-  color: string;
-}
-
-interface AnalyticsData {
-  task_types: AnalyticsTaskType[];
-  recruiters: AnalyticsRecruiter[];
-  stats: {
-    total_tasks: number;
-    avg_close_rate: number;
-    median_response_hours: number;
-    urgent_sla_breaches: number;
-  };
-  hourly_trend: { hour: string; tasks: number }[];
-}
+// Inbox-analytics interfaces (AnalyticsTaskType / AnalyticsRecruiter /
+// AnalyticsData / TypeBar / RecruiterRow) removed in A9-FU UX cleanup
+// along with the demo backend endpoint at /api/admin/inbox-analytics.
 
 interface StatMiniCardProps {
   label: string;
   value: string | number;
   sub: string;
-  color: string;
-}
-
-interface TypeBarProps {
-  label: string;
-  pct: number;
-  count: number;
-  color: string;
-}
-
-interface RecruiterRowProps {
-  name: string;
-  dominant: string;
-  time: string;
-  rate: string;
-  insight: string;
   color: string;
 }
 
@@ -207,7 +164,6 @@ function AdminCommandCenter() {
   const [isUploading, setIsUploading] = useState<string | null>(null);
   const [systemHealth, setSystemHealth] = useState<SystemHealthData | null>(null);
   const [etlRules, setEtlRules] = useState<EtlRule[]>([]);
-  const [analyticsData, setAnalyticsData] = useState<AnalyticsData | null>(null);
   const [batchBoard, setBatchBoard] = useState<BatchStatusRow[]>([]);
   const [showDiffMode, setShowDiffMode] = useState(false);
   const [lastPreflight, setLastPreflight] = useState<PreflightReport | null>(null);
@@ -226,7 +182,6 @@ function AdminCommandCenter() {
   useEffect(() => {
     fetchSystemHealth();
     fetchEtlRules();
-    fetchAnalytics();
     fetchBatchBoard();
   }, []);
 
@@ -260,13 +215,6 @@ function AdminCommandCenter() {
       const res = await fetch(`${getApiBaseUrl()}/api/admin/rules`, { headers: getAdminHeaders() });
       if (res.ok) setEtlRules(await res.json());
     } catch (e) { console.error("Error fetching rules", e); }
-  };
-
-  const fetchAnalytics = async () => {
-    try {
-      const res = await fetch(`${getApiBaseUrl()}/api/admin/inbox-analytics`, { headers: getAdminHeaders() });
-      if (res.ok) setAnalyticsData(await res.json());
-    } catch (e) { console.error("Error fetching analytics", e); }
   };
 
   const fetchBatchBoard = async () => {
@@ -504,7 +452,6 @@ function AdminCommandCenter() {
             ingest: "data", batches: "batches", quality: "quality",
             targets: "targets", rules: "rules", permissions: "permissions",
             apps: "apps", notifications: "notifications",
-            inbox: "analytics", "consumer-map": "consumer-map",
           };
           const mapped = subToTab[sub] ?? "data";
           if (mapped !== activeTab) setActiveTab(mapped);
@@ -753,90 +700,16 @@ function AdminCommandCenter() {
         </div>
       )}
 
-      {/* TAB 3: AI INBOX ANALYTICS */}
-      {activeTab === "analytics" && analyticsData && (
-        <div className="space-y-8 animate-in slide-in-from-right-4">
-          {/* Demo flag — backend currently returns is_demo:true (see /api/admin/inbox-analytics).
-              The DemoBadge makes that explicit to admins so they don't act on synthetic numbers. */}
-          {(analyticsData as { is_demo?: boolean }).is_demo && (
-            <DemoBadge tooltip="הנתונים בתצוגה זו הם הדגמה — אנליטיקה מצטברת תופעל ב-v1.1." />
-          )}
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-            <StatMiniCard label="משימות AI שנוצרו" value={analyticsData.stats.total_tasks} sub="החודש" color="text-[#002649]" />
-            {(() => {
-              const convFormula = adminConfig.formulas.find(f => f.id === "conv_rate");
-              return (
-                <StatMiniCard
-                  label={convFormula?.label ?? "Conversion Rate %"}
-                  value={convFormula ? `${evalFormula(convFormula, {
-                    hires: Number(systemHealth?.candidate_count ?? 0),
-                    offers: Number(analyticsData?.stats?.total_tasks ?? 0),
-                    interviews: Number(analyticsData?.stats?.total_tasks ?? 0),
-                    avg_days_open: Number(analyticsData?.stats?.median_response_hours ?? 0),
-                    applications: Number(systemHealth?.total_records ?? 0),
-                  }).toFixed(1)}%` : "—"}
-                  sub="מחושב לפי נוסחת ה-Admin"
-                  color="text-green-600"
-                />
-              );
-            })()}
-            <StatMiniCard label="זמן תגובה (חציוני)" value={analyticsData.stats.median_response_hours} sub="שעות" color="text-blue-600" />
-            <StatMiniCard label="חריגות SLA חוזרות" value={analyticsData.stats.urgent_sla_breaches} sub="דחופות" color="text-red-500" />
-          </div>
+      {/* AI INBOX ANALYTICS + CONSUMER MAP removed (A9-FU UX cleanup):
+          the backend endpoints returned is_demo:true placeholder payloads
+          with no real aggregation behind them. The "ביצועים" admin group
+          was retired in AdminShell at the same time. */}
 
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-            <div className="lg:col-span-2 bg-white p-8 rounded-3xl border border-slate-200 shadow-sm">
-              <div className="flex justify-between items-center mb-8">
-                <h3 className="font-black text-[#002649] flex items-center gap-2"><Clock size={20} className="text-[#EF6B00]"/> עומס משימות לפי שעות היממה</h3>
-              </div>
-              <div className="h-[300px]">
-                <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={analyticsData.hourly_trend}>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                    <XAxis dataKey="hour" axisLine={false} tickLine={false} tick={{fontSize: 12, fontWeight: 'bold'}} />
-                    <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: "#94a3b8" }} />
-                    <Tooltip contentStyle={{borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)'}} />
-                    <Line type="monotone" dataKey="tasks" stroke="#EF6B00" strokeWidth={4} dot={{r: 6, fill: '#EF6B00'}} />
-                  </LineChart>
-                </ResponsiveContainer>
-              </div>
-            </div>
-
-            <div className="bg-[#002649] p-8 rounded-3xl text-white shadow-xl">
-              <h3 className="font-black mb-6 flex items-center gap-2"><Layers size={20} className="text-[#EF6B00]"/> התפלגות נושאי המשימות</h3>
-              <div className="space-y-5">
-                {analyticsData.task_types.map((t: AnalyticsTaskType, i: number) => (
-                  <TypeBar key={i} label={t.label} pct={t.pct} color={t.color} count={t.count} />
-                ))}
-              </div>
-            </div>
-          </div>
-
-          <div className="bg-white p-8 rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
-            <h3 className="font-black text-[#002649] flex items-center gap-2 text-xl mb-8"><ShieldCheck size={24} className="text-green-500"/> Personal Performance</h3>
-            <table className="w-full text-right">
-              <thead><tr className="text-slate-400 font-black text-[10px] uppercase bg-slate-50"><th className="p-4 rounded-r-2xl">מגייס.ת</th><th className="p-4">משימה דומיננטית</th><th className="p-4">זמן תגובה</th><th className="p-4">אחוז סגירה</th><th className="p-4 rounded-l-2xl">תובנת AI למנהל</th></tr></thead>
-              <tbody className="divide-y divide-slate-50">
-                {analyticsData.recruiters.map((r: AnalyticsRecruiter, i: number) => (
-                  <RecruiterRow key={i} {...r} />
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-
-      {/* TAB 4: TARGETS & AUTOMATIONS */}
       {activeTab === "targets" && <TargetsTab />}
 
-      {/* TAB 5: BATCHES HISTORY — Sprint 4 */}
       {activeTab === "batches" && <BatchesTab onRefresh={async () => { await refreshDataVersion(); fetchBatchBoard(); }} />}
 
-      {/* TAB 6: QUALITY CONTROL — Sprint 4 */}
       {activeTab === "quality" && <QualityTab />}
-
-      {/* TAB 7: CONSUMER MAP — Sprint 4 */}
-      {activeTab === "consumer-map" && <ConsumerMapTab />}
 
       {confirmDialog && (
         <div className="fixed inset-0 z-[200] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
@@ -858,8 +731,7 @@ function AdminCommandCenter() {
 
 // --- SUB-COMPONENTS ---
 function StatMiniCard({ label, value, sub, color }: StatMiniCardProps) { return ( <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm"><p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{label}</p><div className={`text-3xl font-black ${color} mt-1`}>{value}</div><p className="text-[10px] font-bold text-slate-400 mt-1">{sub}</p></div> ); }
-function TypeBar({ label, pct, color, count }: TypeBarProps) { return ( <div className="space-y-1.5"><div className="flex justify-between text-[11px] font-bold"><span>{label}</span><span className="opacity-60">{count} ({pct}%)</span></div><div className="h-1.5 bg-white/10 rounded-full overflow-hidden"><div className={`h-full ${color}`} style={{ width: `${pct}%` }} /></div></div> ); }
-function RecruiterRow({ name, dominant, time, rate, insight, color }: RecruiterRowProps) { const dotColor = color === "green" ? "bg-green-500" : color === "red" ? "bg-red-500" : "bg-orange-500"; return ( <tr className="hover:bg-slate-50 transition-colors group"><td className="p-4 font-black text-[#002649] flex items-center gap-3"><div className={`w-2 h-2 rounded-full ${dotColor}`} /> {name}</td><td className="p-4 font-bold text-slate-600 text-xs">{dominant}</td><td className="p-4 font-black text-[#002649]">{time}</td><td className="p-4"><span className={`px-2 py-1 rounded-lg font-bold text-[10px] ${color === 'red' ? 'bg-red-50 text-red-600' : 'bg-green-50 text-green-700'}`}>{rate}</span></td><td className="p-4 text-xs font-medium text-slate-500 italic max-w-xs">{insight}</td></tr> ); }
+// TypeBar / RecruiterRow removed alongside the inbox-analytics view (A9-FU UX cleanup).
 const DROPZONE_COLOR_MAP: Record<string, string> = { blue: "border-blue-200 bg-blue-50/50 hover:border-blue-500", orange: "border-orange-200 bg-orange-50/50 hover:border-orange-500", green: "border-green-200 bg-green-50/50 hover:border-green-500", pink: "border-pink-200 bg-pink-50/50 hover:border-pink-500", purple: "border-purple-200 bg-purple-50/50 hover:border-purple-500", emerald: "border-emerald-200 bg-emerald-50/50 hover:border-emerald-500", red: "border-red-200 bg-red-50/50 hover:border-red-500" };
 function DropzoneBox({ fileType, title, icon, color, status, inputRef, onUpload, onDownloadTemplate, uploading, downloadingTemplate }: DropzoneBoxProps) { const isError = status.status === "error"; return ( <div className={`border-2 border-dashed rounded-3xl p-6 transition-all flex flex-col items-center text-center relative group w-full ${isError ? 'border-red-500 bg-red-50' : DROPZONE_COLOR_MAP[color]}`}> <button type="button" className="w-full text-inherit" onClick={() => inputRef.current?.click()} > <input type="file" ref={inputRef} className="hidden" onChange={onUpload} accept=".csv, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/vnd.ms-excel" /> <div className={`w-14 h-14 rounded-full flex items-center justify-center shadow-sm mb-4 transition-transform mx-auto ${isError ? 'bg-red-500 text-white' : 'bg-white text-[#002649] group-hover:scale-110'}`}> {uploading ? <Loader2 size={24} className="animate-spin text-slate-400"/> : isError ? <X size={24} /> : icon} </div> <h3 className="font-black text-[#002649] text-sm mb-1">{title}</h3> <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-4">גרור/לחץ להעלאה</div> {isError ? ( <div className="w-full bg-red-100/80 p-3 rounded-2xl text-[10px] font-bold text-red-800 text-right border border-red-200"> שגיאה: {String(status.errorMsg ?? "שגיאת קריאת קובץ")} </div> ) : ( <div className="w-full bg-white p-3 rounded-2xl text-[10px] space-y-1.5 text-right text-slate-600 shadow-sm border border-slate-100"> <div className="flex justify-between items-center border-b border-slate-100 pb-1.5"><span className="font-bold opacity-50">קובץ:</span><span className="font-black text-[#002649] truncate max-w-[100px]">{status.name}</span></div> <div className="flex justify-between items-center"><span className="font-bold opacity-50">רשומות תקינות:</span><span className="font-black text-green-600">{status.rows}</span></div> </div> )} </button> <button type="button" className="mt-3 w-full bg-white/90 hover:bg-white border border-slate-200 rounded-xl py-2 px-3 text-xs font-black text-[#002649] flex items-center justify-center gap-2 transition-colors" onClick={(e) => { e.stopPropagation(); void onDownloadTemplate(fileType); }} disabled={downloadingTemplate}> {downloadingTemplate ? <Loader2 size={14} className="animate-spin text-slate-500" /> : <Download size={14} />} {downloadingTemplate ? "מוריד תבנית..." : "הורד תבנית מאסטר (.xlsx)"} </button> </div> ); }
 function TabNav({ id, active, setter, icon, label }: TabNavProps) { const isActive = active === id; return ( <button onClick={() => setter(id)} className={`flex items-center gap-2 px-6 py-2.5 rounded-xl font-black text-sm transition-all ${isActive ? 'bg-[#002649] text-white shadow-md' : 'text-slate-500 hover:text-[#002649] hover:bg-slate-200/50'}`}> {icon} {label} </button> ); }
