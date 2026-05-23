@@ -21,6 +21,7 @@ plumbing is verified here. Endpoint bodies are reproduced verbatim
 from main.py — same auth gates, same SQL, same return shapes.
 """
 
+import io
 import json
 import secrets
 import sqlite3
@@ -29,7 +30,8 @@ from datetime import datetime, timezone
 from typing import Optional
 
 import pandas as pd
-from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, Cookie, Depends, File, HTTPException, Header, Request, Response, UploadFile
+from fastapi.responses import StreamingResponse
 
 import config as shared_config
 from auth import (
@@ -46,6 +48,11 @@ from auth import (
 )
 from constants import Role
 from db import db_conn
+from internal_logic import (
+    build_snapshots,
+    clear_query_cache,
+    get_data_version,
+)
 
 
 router = APIRouter(tags=["admin"])
@@ -81,6 +88,31 @@ def _set_session_cookie(response, token, *, key=None):
 def _check_inactive_recruiters():
     from main import _check_inactive_recruiters as _impl
     return _impl()
+
+
+def _build_preflight_report(filename, content, schema_version):
+    from main import _build_preflight_report as _impl
+    return _impl(filename, content, schema_version)
+
+
+def _build_excel_template_bytes(file_type, schema_version):
+    from main import _build_excel_template_bytes as _impl
+    return _impl(file_type=file_type, schema_version=schema_version)
+
+
+def _get_unified_data(conn):
+    from main import get_unified_data as _impl
+    return _impl(conn)
+
+
+def _bump_data_version(conn=None):
+    from main import bump_data_version as _impl
+    return _impl(conn)
+
+
+def _template_specs():
+    from main import TEMPLATE_SPECS
+    return TEMPLATE_SPECS
 
 
 VALID_APP_TAGS = ("new", "update", "coming_soon", "none")
@@ -750,3 +782,521 @@ async def admin_notification_history(
 async def check_inactive_recruiters_endpoint(_: dict = Depends(require_session_role(Role.ADMIN))):
     """Admin-triggered scan. Safe to call repeatedly — dedupes within 24h."""
     return _check_inactive_recruiters()
+
+
+# =====================================================================
+# B2.8c — Ingestion observability + batches + quality
+# =====================================================================
+
+
+@router.get("/admin/ingestion/schema-versions")
+def get_schema_versions(_: str = Depends(require_admin)):
+    conn = sqlite3.connect(shared_config.DB_NAME)
+    try:
+        df = pd.read_sql(
+            "SELECT schema_version, is_active, deprecated, sunset_date, created_at FROM ingestion_schema_versions ORDER BY created_at DESC",
+            conn,
+        )
+        return df.to_dict(orient="records")
+    finally:
+        conn.close()
+
+
+@router.get("/admin/ingestion/batches")
+def get_ingestion_batches(limit: int = 20, _: str = Depends(require_admin)):
+    conn = sqlite3.connect(shared_config.DB_NAME)
+    try:
+        df = pd.read_sql(
+            """SELECT batch_id, filename, schema_version, status, rows_received, rows_loaded, rows_rejected, duplicate_rows,
+                      quality_score, started_at, finished_at
+               FROM ingestion_batches ORDER BY started_at DESC LIMIT ?""",
+            conn,
+            params=(max(1, min(limit, 200)),),
+        )
+        return df.to_dict(orient="records")
+    finally:
+        conn.close()
+
+
+@router.post("/admin/ingestion/preflight")
+async def ingestion_preflight(
+    file: UploadFile = File(...),
+    x_schema_version: Optional[str] = Header(default=None),
+    _: str = Depends(require_admin),
+):
+    DEFAULT_SCHEMA_VERSION, SUPPORTED_SCHEMA_VERSIONS, _ihs = _ingest_constants()
+    schema_version = x_schema_version or DEFAULT_SCHEMA_VERSION
+    if schema_version not in SUPPORTED_SCHEMA_VERSIONS:
+        raise HTTPException(status_code=400, detail=f"Unsupported schema_version: {schema_version}")
+    try:
+        content = await file.read()
+        report = _build_preflight_report(file.filename or "upload", content, schema_version)
+        return report
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/admin/ingestion/template/{file_type}")
+def download_ingestion_template(
+    file_type: str,
+    schema_version: Optional[str] = None,
+    _: str = Depends(require_admin),
+):
+    TEMPLATE_SPECS = _template_specs()
+    DEFAULT_SCHEMA_VERSION, SUPPORTED_SCHEMA_VERSIONS, _ihs = _ingest_constants()
+    # Drive the allow-list from TEMPLATE_SPECS — adding a new ingest type
+    # automatically enables its template download.
+    valid_types = set(TEMPLATE_SPECS.keys()) | {"candidates", "jobs", "hires", "diversity", "headcount", "budget", "attrition"}
+    if file_type not in valid_types:
+        raise HTTPException(status_code=400, detail=f"Invalid file type: {file_type}")
+
+    requested_schema = schema_version or DEFAULT_SCHEMA_VERSION
+    if requested_schema not in SUPPORTED_SCHEMA_VERSIONS:
+        raise HTTPException(status_code=400, detail=f"Unsupported schema_version: {requested_schema}")
+
+    payload = _build_excel_template_bytes(file_type=file_type, schema_version=requested_schema)
+    filename = f"Phoenix_Template_{file_type}_v{requested_schema.replace('.', '_')}.xlsx"
+    return StreamingResponse(
+        io.BytesIO(payload),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.post("/admin/revert/{log_id}")
+def revert_upload(log_id: str, _: str = Depends(require_admin)):
+    """מחיקת כל הנתונים שנוצרו על ידי קובץ מסוים (Rollback)"""
+    conn = sqlite3.connect(shared_config.DB_NAME)
+    c = conn.cursor()
+    try:
+        c.execute("DELETE FROM applications WHERE upload_log_id = ?", (log_id,))
+        c.execute("UPDATE data_logs SET status = 'Reverted' WHERE log_id = ?", (log_id,))
+        conn.commit()
+        unified_df = _get_unified_data(conn)
+        build_snapshots(conn, unified_df)
+        clear_query_cache(conn)
+        return {"message": f"Upload {log_id} has been reverted successfully."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        conn.close()
+
+
+@router.post("/admin/revert-batch/{batch_id}")
+def revert_batch(batch_id: str, _: str = Depends(require_admin)):
+    conn = sqlite3.connect(shared_config.DB_NAME)
+    conn.row_factory = sqlite3.Row
+    c = conn.cursor()
+    try:
+        c.execute("BEGIN")
+        app_changes = c.execute(
+            """SELECT entity_id, change_type, before_json FROM batch_entity_changes
+               WHERE batch_id = ? AND entity_type = 'application'
+               ORDER BY id DESC""",
+            (batch_id,),
+        ).fetchall()
+        for ch in app_changes:
+            entity_id = ch["entity_id"]
+            if ch["change_type"] == "insert":
+                c.execute("DELETE FROM applications WHERE app_id = ?", (entity_id,))
+            else:
+                before_obj = json.loads(ch["before_json"]) if ch["before_json"] else {}
+                c.execute(
+                    """UPDATE applications SET status = ?, recruiter = ?, days_in_process = ?, upload_log_id = ?, stage_code = ?
+                       WHERE app_id = ?""",
+                    (
+                        before_obj.get("status"),
+                        before_obj.get("recruiter"),
+                        before_obj.get("days_in_process"),
+                        before_obj.get("upload_log_id"),
+                        before_obj.get("stage_code"),
+                        entity_id,
+                    ),
+                )
+
+        for entity_type, table_name, pk in [("candidate", "candidates", "id"), ("job", "jobs", "id")]:
+            inserts = c.execute(
+                "SELECT entity_id FROM batch_entity_changes WHERE batch_id = ? AND entity_type = ? AND change_type = 'insert' ORDER BY id DESC",
+                (batch_id, entity_type),
+            ).fetchall()
+            for row in inserts:
+                c.execute(f"DELETE FROM {table_name} WHERE {pk} = ?", (row["entity_id"],))
+
+        c.execute("UPDATE ingestion_batches SET status = 'reverted', finished_at = ? WHERE batch_id = ?", (_utcnow().isoformat(), batch_id))
+        related_log = c.execute("SELECT log_id FROM ingestion_batches WHERE batch_id = ?", (batch_id,)).fetchone()
+        if related_log and related_log["log_id"]:
+            c.execute("UPDATE data_logs SET status = 'Reverted' WHERE log_id = ?", (related_log["log_id"],))
+        unified_df = _get_unified_data(conn)
+        build_snapshots(conn, unified_df)
+        clear_query_cache(conn, auto_commit=False)
+        conn.commit()
+        return {"message": f"Batch {batch_id} reverted successfully"}
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        conn.close()
+
+
+@router.post("/admin/reset-for-final-test")
+def reset_for_final_test(_: str = Depends(require_admin)):
+    conn = sqlite3.connect(shared_config.DB_NAME)
+    c = conn.cursor()
+    purge_tables = [
+        "applications",
+        "candidates",
+        "jobs",
+        "data_logs",
+        "ingestion_batches",
+        "rejected_rows",
+        "batch_entity_changes",
+        "batch_snapshots_state",
+        "stg_applications",
+        "etl_rule_audit",
+        "kpi_snapshot",
+        "funnel_snapshot",
+        "job_health_snapshot",
+        "query_cache",
+    ]
+    report = {"purged": {}, "reset_at": _utcnow().isoformat()}
+    try:
+        c.execute("BEGIN")
+        for table in purge_tables:
+            try:
+                cnt = c.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+                c.execute(f"DELETE FROM {table}")
+                report["purged"][table] = int(cnt)
+            except sqlite3.OperationalError:
+                report["purged"][table] = 0
+        conn.commit()
+        return report
+    except Exception as exc:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=f"reset failed: {exc}") from exc
+    finally:
+        conn.close()
+
+
+@router.get("/api/admin/ingestion/batches")
+def list_ingestion_batches_diff(limit: int = 20, _: dict = Depends(require_session_role(Role.ADMIN))):
+    """Aggregates batch_entity_changes — gives insert/update/delete counts per batch."""
+    cap = max(1, min(int(limit or 20), 100))
+    conn = sqlite3.connect(shared_config.DB_NAME)
+    c = conn.cursor()
+    try:
+        c.execute(
+            """SELECT batch_id, MIN(created_at), MAX(created_at),
+                      SUM(CASE WHEN change_type='insert' THEN 1 ELSE 0 END),
+                      SUM(CASE WHEN change_type='update' THEN 1 ELSE 0 END),
+                      SUM(CASE WHEN change_type='delete' THEN 1 ELSE 0 END)
+               FROM batch_entity_changes GROUP BY batch_id ORDER BY MAX(created_at) DESC LIMIT ?""",
+            (cap,),
+        )
+        return [
+            {"batch_id": r[0], "started_at": r[1], "ended_at": r[2],
+             "inserts": r[3] or 0, "updates": r[4] or 0, "deletes": r[5] or 0}
+            for r in c.fetchall()
+        ]
+    except sqlite3.OperationalError:
+        return []
+    finally:
+        conn.close()
+
+
+@router.get("/api/admin/ingestion/batch/{batch_id}/changes")
+def get_batch_changes(
+    batch_id: str, type: Optional[str] = None, limit: int = 50, offset: int = 0,
+    _: dict = Depends(require_session_role(Role.ADMIN)),
+):
+    cap = max(1, min(int(limit or 50), 200))
+    skip = max(0, int(offset or 0))
+    conn = sqlite3.connect(shared_config.DB_NAME)
+    c = conn.cursor()
+    try:
+        c.execute(
+            "SELECT change_type, COUNT(*) FROM batch_entity_changes WHERE batch_id = ? GROUP BY change_type",
+            (batch_id,),
+        )
+        counts = {"insert": 0, "update": 0, "delete": 0}
+        for change_type, n in c.fetchall():
+            if change_type in counts:
+                counts[change_type] = n
+        if sum(counts.values()) == 0:
+            return {"batch_id": batch_id, "counts": counts, "rows": [], "total": 0}
+
+        params: list = [batch_id]
+        sql = "SELECT id, entity_type, entity_id, change_type, before_json, after_json, created_at FROM batch_entity_changes WHERE batch_id = ?"
+        if type and type in ("insert", "update", "delete"):
+            sql += " AND change_type = ?"; params.append(type)
+        sql += " ORDER BY id ASC LIMIT ? OFFSET ?"
+        params.extend([cap, skip])
+        c.execute(sql, params)
+        rows = [{
+            "id": r[0], "entity_type": r[1], "entity_id": r[2], "change_type": r[3],
+            "before": json.loads(r[4]) if r[4] else None,
+            "after":  json.loads(r[5]) if r[5] else None,
+            "created_at": r[6],
+        } for r in c.fetchall()]
+        return {"batch_id": batch_id, "counts": counts, "rows": rows, "total": sum(counts.values())}
+    finally:
+        conn.close()
+
+
+@router.get("/api/admin/ingestion/batch/{batch_id}/rejected")
+def get_batch_rejected_rows(
+    batch_id: str,
+    limit: int = 100,
+    offset: int = 0,
+    _: dict = Depends(require_dual_role(Role.ADMIN, Role.HRBP)),
+):
+    """Return rows that were rejected during ingestion for a given batch."""
+    conn = sqlite3.connect(shared_config.DB_NAME)
+    conn.row_factory = sqlite3.Row
+    try:
+        total = conn.execute(
+            "SELECT COUNT(*) FROM rejected_rows WHERE batch_id = ?", (batch_id,)
+        ).fetchone()[0]
+        rows = conn.execute(
+            """SELECT id, row_index, reason_code, reason_detail, raw_row, created_at
+               FROM rejected_rows WHERE batch_id = ? ORDER BY id LIMIT ? OFFSET ?""",
+            (batch_id, max(1, min(limit, 200)), max(0, offset)),
+        ).fetchall()
+        return {"batch_id": batch_id, "total": total, "rows": [dict(r) for r in rows]}
+    finally:
+        conn.close()
+
+
+@router.get("/api/admin/batches")
+def admin_list_batches(
+    limit: int = 50,
+    file_type: Optional[str] = None,
+    status: Optional[str] = None,
+    _: dict = Depends(require_dual_role(Role.ADMIN)),
+):
+    """List ingest batches (newest first). Optional filters by file_type and status.
+    Returns the full row + a derived `file_type` extracted from filename prefix
+    (we encode it as `{type}::{filename}` in /api/ingest)."""
+    cap = max(1, min(int(limit or 50), 500))
+    conn = sqlite3.connect(shared_config.DB_NAME)
+    try:
+        q = ("SELECT batch_id, filename, schema_version, status, rows_received, rows_loaded, "
+             "rows_rejected, duplicate_rows, quality_score, started_at, finished_at "
+             "FROM ingestion_batches WHERE 1=1")
+        params: list = []
+        if status:
+            q += " AND status = ?"; params.append(status)
+        if file_type:
+            q += " AND filename LIKE ?"; params.append(f"{file_type}::%")
+        q += " ORDER BY started_at DESC LIMIT ?"; params.append(cap)
+        rows = conn.execute(q, params).fetchall()
+        out = []
+        for r in rows:
+            filename = r[1] or ""
+            ftype = ""
+            real_name = filename
+            if "::" in filename:
+                ftype, _, real_name = filename.partition("::")
+            out.append({
+                "batch_id": r[0], "file_type": ftype, "filename": real_name,
+                "schema_version": r[2], "status": r[3],
+                "rows_received": r[4], "rows_loaded": r[5], "rows_rejected": r[6],
+                "duplicate_rows": r[7], "quality_score": r[8],
+                "started_at": r[9], "finished_at": r[10],
+            })
+        return out
+    finally:
+        conn.close()
+
+
+@router.post("/api/admin/batches/{batch_id}/revert")
+def admin_revert_batch(batch_id: str, _: dict = Depends(require_dual_role(Role.ADMIN))):
+    """Revert a single batch by walking batch_entity_changes in reverse:
+       - insert → DELETE
+       - update → UPDATE back to `before_json`
+    Marks the batch as 'reverted'. Refuses already-reverted batches.
+    """
+    conn = sqlite3.connect(shared_config.DB_NAME)
+    try:
+        st = conn.execute("SELECT status FROM ingestion_batches WHERE batch_id = ?", (batch_id,)).fetchone()
+        if not st:
+            raise HTTPException(status_code=404, detail="Batch not found")
+        if st[0] == "reverted":
+            raise HTTPException(status_code=400, detail="Batch already reverted")
+
+        changes = conn.execute(
+            "SELECT id, entity_type, entity_id, change_type, before_json, after_json "
+            "FROM batch_entity_changes WHERE batch_id = ? ORDER BY id DESC",
+            (batch_id,),
+        ).fetchall()
+        reverted = 0
+        for _id, etype, eid, ctype, before, after in changes:
+            table = {"candidate": "candidates", "job": "jobs", "application": "applications",
+                     "hire": "hires", "diversity": "diversity_snapshots",
+                     "headcount": "headcount_snapshots", "attrition": "attrition_events",
+                     "invoice": "finops_invoices"}.get(etype)
+            if not table:
+                continue
+            pk_col = {"applications": "app_id", "diversity_snapshots": "id",
+                      "headcount_snapshots": "id"}.get(table, "id")
+            if ctype == "insert":
+                conn.execute(f"DELETE FROM {table} WHERE {pk_col} = ?", (eid,))
+                reverted += 1
+            elif ctype == "update" and before:
+                try:
+                    before_dict = json.loads(before)
+                    if before_dict:
+                        sets = ", ".join(f"{k} = ?" for k in before_dict.keys())
+                        vals = list(before_dict.values()) + [eid]
+                        conn.execute(f"UPDATE {table} SET {sets} WHERE {pk_col} = ?", vals)
+                        reverted += 1
+                except Exception:
+                    pass
+
+        conn.execute("UPDATE ingestion_batches SET status='reverted' WHERE batch_id = ?", (batch_id,))
+        conn.commit()
+        _log_audit("BATCH_REVERTED", "warn", f"batch={batch_id} reverted={reverted}", user="admin")
+    finally:
+        conn.close()
+
+    _bump_data_version()
+    return {"status": "ok", "batch_id": batch_id, "reverted_rows": reverted}
+
+
+@router.get("/api/admin/quality/summary")
+def admin_quality_summary(_: dict = Depends(require_dual_role(Role.ADMIN))):
+    """Top-level KPIs for the Quality tab."""
+    conn = sqlite3.connect(shared_config.DB_NAME)
+    try:
+        c = conn.cursor()
+        total_candidates = c.execute("SELECT COUNT(*) FROM candidates").fetchone()[0]
+        no_keys = c.execute(
+            "SELECT COUNT(*) FROM candidates WHERE (phone_norm IS NULL OR phone_norm='') AND (email_norm IS NULL OR email_norm='')"
+        ).fetchone()[0]
+        suspected = c.execute(
+            "SELECT COUNT(*) FROM (SELECT LOWER(name) FROM candidates WHERE name IS NOT NULL GROUP BY LOWER(name) HAVING COUNT(*) > 1)"
+        ).fetchone()[0]
+        last_q = c.execute(
+            "SELECT quality_score, started_at FROM ingestion_batches WHERE status IN ('committed','reverted') ORDER BY started_at DESC LIMIT 1"
+        ).fetchone()
+        total_batches = c.execute("SELECT COUNT(*) FROM ingestion_batches").fetchone()[0]
+        return {
+            "total_candidates": total_candidates,
+            "candidates_without_dedup_key": no_keys,
+            "name_based_duplicate_groups": suspected,
+            "last_quality_score": last_q[0] if last_q else None,
+            "last_quality_at": last_q[1] if last_q else None,
+            "total_batches": total_batches,
+        }
+    finally:
+        conn.close()
+
+
+@router.get("/api/admin/quality/duplicates")
+def admin_quality_duplicates(limit: int = 50, _: dict = Depends(require_dual_role(Role.ADMIN))):
+    """Groups of candidates sharing the same lower-cased name but stored as
+    separate rows (because phone/email didn't match). Admin can use this to
+    merge manually."""
+    conn = sqlite3.connect(shared_config.DB_NAME)
+    try:
+        rows = conn.execute(
+            """SELECT LOWER(name) AS k, GROUP_CONCAT(id) AS ids, GROUP_CONCAT(IFNULL(phone_norm,'-')) AS phones,
+                      GROUP_CONCAT(IFNULL(email_norm,'-')) AS emails, COUNT(*) AS n
+               FROM candidates WHERE name IS NOT NULL
+               GROUP BY LOWER(name) HAVING n > 1
+               ORDER BY n DESC LIMIT ?""",
+            (max(1, min(int(limit or 50), 500)),),
+        ).fetchall()
+        return [{"name": r[0], "ids": (r[1] or "").split(","), "phones": (r[2] or "").split(","),
+                 "emails": (r[3] or "").split(","), "count": r[4]} for r in rows]
+    finally:
+        conn.close()
+
+
+@router.get("/api/admin/quality/missing")
+def admin_quality_missing(_: dict = Depends(require_dual_role(Role.ADMIN))):
+    """Candidates whose row lacks any contact dedup key — admin needs to
+    enrich them manually or they'll keep getting re-inserted on each upload."""
+    conn = sqlite3.connect(shared_config.DB_NAME)
+    try:
+        rows = conn.execute(
+            """SELECT id, name, email, phone, source, last_seen_at
+               FROM candidates
+               WHERE (phone_norm IS NULL OR phone_norm='') AND (email_norm IS NULL OR email_norm='')
+               ORDER BY last_seen_at DESC NULLS LAST LIMIT 200"""
+        ).fetchall()
+        return [{"id": r[0], "name": r[1], "email": r[2], "phone": r[3], "source": r[4], "last_seen_at": r[5]} for r in rows]
+    finally:
+        conn.close()
+
+
+@router.get("/api/admin/quality/sanity")
+def admin_quality_sanity(_: dict = Depends(require_dual_role(Role.ADMIN))):
+    """Cross-type sanity checks — flags inconsistencies between related tables
+    so the admin can spot data drift quickly. Each check returns {ok, message, value}."""
+    conn = sqlite3.connect(shared_config.DB_NAME)
+    checks = []
+    try:
+        orphan_cands = conn.execute(
+            "SELECT COUNT(*) FROM candidates c LEFT JOIN applications a ON a.candidate_id=c.id WHERE a.app_id IS NULL"
+        ).fetchone()[0]
+        checks.append({
+            "key": "orphan_candidates",
+            "title": "מועמדים ללא שיוך למשרה",
+            "value": orphan_cands,
+            "ok": orphan_cands == 0,
+            "hint": "מועמדים שאינם משויכים לאף משרה. אם רב — בדוק את כללי הניקוי.",
+        })
+        broken_apps = conn.execute(
+            "SELECT COUNT(*) FROM applications a LEFT JOIN candidates c ON c.id=a.candidate_id "
+            "LEFT JOIN jobs j ON j.id=a.job_id WHERE c.id IS NULL OR j.id IS NULL"
+        ).fetchone()[0]
+        checks.append({
+            "key": "broken_application_refs",
+            "title": "applications עם FK שבור",
+            "value": broken_apps,
+            "ok": broken_apps == 0,
+            "hint": "applications שמצביעים על candidate/job שלא קיים. שורות אלו לא יופיעו בתצוגה האחודה.",
+        })
+        hires_no_cand = conn.execute(
+            "SELECT COUNT(*) FROM hires WHERE candidate_id IS NULL"
+        ).fetchone()[0]
+        total_hires = conn.execute("SELECT COUNT(*) FROM hires").fetchone()[0]
+        checks.append({
+            "key": "hires_without_candidate",
+            "title": "קליטות לא משויכות למועמד",
+            "value": hires_no_cand,
+            "total": total_hires,
+            "ok": hires_no_cand == 0,
+            "hint": "קליטות שלא הצליחו להיקשר למועמד קיים בעת ההעלאה. אפשר לקשר ידנית או לשפר את כללי ה-matching.",
+        })
+        latest_month = conn.execute(
+            "SELECT snapshot_month FROM headcount_snapshots ORDER BY snapshot_month DESC LIMIT 1"
+        ).fetchone()
+        if latest_month:
+            month = latest_month[0]
+            hc_attrition = conn.execute(
+                "SELECT IFNULL(SUM(attrition_ytd),0) FROM headcount_snapshots WHERE snapshot_month = ?",
+                (month,),
+            ).fetchone()[0]
+            real_attrition = conn.execute(
+                "SELECT COUNT(*) FROM attrition_events WHERE substr(leave_date,1,7) <= ?", (month,),
+            ).fetchone()[0]
+            diff = abs(hc_attrition - real_attrition)
+            checks.append({
+                "key": "headcount_vs_attrition_drift",
+                "title": "פער בין attrition_ytd ב-headcount לאירועי עזיבה",
+                "value": diff,
+                "ok": diff <= 1,
+                "hint": f"בחודש {month}: headcount={hc_attrition}, attrition_events={real_attrition}. אם הפער גדול, אחת הטבלאות פג תוקף.",
+            })
+        ver = get_data_version(conn)
+        checks.append({
+            "key": "data_version_active",
+            "title": "data_version פעיל",
+            "value": ver,
+            "ok": bool(ver and ver != "none::0"),
+            "hint": "המונה צריך לעלות כל פעם שאצווה מקובעת. אם 0 — שום אצווה לא נטענה דרך ה-pipeline החדש.",
+        })
+    finally:
+        conn.close()
+    return {"checks": checks}
