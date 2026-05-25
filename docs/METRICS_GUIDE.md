@@ -17,7 +17,7 @@
    10. [משפך המרות (Funnel)](#110-משפך-המרות-funnel)
    11. [מקורות אסטרטגיים (Strategic Sources)](#111-מקורות-אסטרטגיים-strategic-sources)
    12. [סיבות עזיבת עובדים](#112-סיבות-עזיבת-עובדים)
-   13. [סיבות דחיית מועמדים / הסרת מועמדות ⏳ עתידי](#113-סיבות-דחיית-מועמדים-הסרת-מועמדות--עתידי)
+   13. [סיבות דחיית מועמדים / הסרת מועמדות](#113-סיבות-דחיית-מועמדים-הסרת-מועמדות)
 2. [תובנות ותחזיות — Intelligence (`/intelligence`)](#2-תובנות-ותחזיות-intelligence)
    1. [זמן איוש ממוצע (TTF)](#21-זמן-איוש-ממוצע-ttf)
    2. [שיעור קיבול הצעות (OAR)](#22-שיעור-קיבול-הצעות-oar)
@@ -170,11 +170,50 @@
   ```
 - **קוד:** `backend/routers/metrics.py:185-194` (`attrition_reasons`)
 
-### 1.13 סיבות דחיית מועמדים / הסרת מועמדות ⏳ עתידי
-- **למה ⏳:** ה-schema הנוכחי מחזיק רק status, לא reason. דורש:
-  - הוספת שדה `rejection_reason` / `withdrawal_reason` ל-`applications`.
-  - עדכון מסך עריכת מועמד שיכריח את המגייסת לתייג סיבה בעת שינוי סטטוס.
-- **קוד (FutureBadge):** `phoenix-dashboard/src/app/page.tsx:801-811`
+### 1.13 סיבות דחיית מועמדים / הסרת מועמדות
+**Status:** ✅ ☑️ מומשו במלואם ב-Audit Phase 4 / Waves A-D. הבלוקים האלה
+כבר לא "עתידי" — הם נשאבים מ-`applications.closure_reason_code`
+שמיובא בעת שינוי סטטוס.
+
+#### תיאור המבנה
+- **מה הם מודדים:**
+  - "סיבות דחיית מועמדים" — Top-8 סיבות שהארגון דחה מועמדים (closure_type=`rejected`).
+  - "סיבות הסרת מועמדות" — Top-8 סיבות שמועמדים פרשו בעצמם (closure_type=`withdrawn`).
+- **למה זה חשוב לך:**
+  - דחיות חוזרות בסיבת "התאמה אישיותית" → לבדוק קריטריוני סינון.
+  - הסרות חוזרות בסיבת "ציפיות שכר" → לעבוד מול comp & ben.
+  - "BOT - מיקום משרה" עולה? → לדייק את ה-chatbot לסנן יותר מוקדם בתהליך.
+
+#### מקור נתונים + נוסחה
+```sql
+-- rejection_reasons:
+SELECT t.label_he, COUNT(*) FROM applications a
+JOIN closure_taxonomy t ON t.code = a.closure_reason_code
+WHERE a.closure_type = 'rejected'
+GROUP BY t.label_he
+ORDER BY COUNT(*) DESC LIMIT 8
+
+-- withdrawal_reasons: same with closure_type='withdrawn'
+```
+
+#### Schema (מומש ב-Wave A)
+- `applications.closure_type` ∈ {`rejected`, `withdrawn`, NULL}
+- `applications.closure_stage` — שלב בתהליך בו נסגרה המועמדות (UNIFIED_STAGES code)
+- `applications.closure_reason_code` — FK ל-`closure_taxonomy.code`
+- `applications.captured_by` — `recruiter` / `bot` / `system`
+- `closure_taxonomy` — טבלה ניתנת לעריכה ע"י admin עם 23 שורות seed (13 דחיה + 10 הסרה כולל 3 BOT)
+
+#### Enforcement (מומש ב-Wave D)
+- `PATCH /api/candidates/{key}/stage` עם `stage_code=REJECTED` או `WITHDRAWN` חייב לכלול `closure_reason_code` תקף.
+- ה-server מאמת: קוד קיים, פעיל, closure_type מתאים לשלב.
+- אם המגייסת מנסה לסגור בלי לבחור סיבה — 400 `CLOSURE_REASON_REQUIRED`.
+- UI: `phoenix-dashboard/src/components/StageChangeModal.tsx` — dialog ייעודי שמכריח dropdown סיבה.
+
+#### קבצים בקוד
+- Backend handler: `backend/routers/metrics.py` (חישוב הקבוצות)
+- Frontend pies: `phoenix-dashboard/src/app/page.tsx` (קליינט)
+- Endpoint שמשרת dropdown: `backend/routers/candidates.py::list_closure_reasons` (`GET /api/taxonomy/closure-reasons`)
+- Stage-change UI: `phoenix-dashboard/src/components/StageChangeModal.tsx`
 
 ---
 
@@ -326,16 +365,47 @@
 
 ---
 
-## נספח: בלוקים שמוגדרים "עתידי" — מה דרוש להפעלתם
+## נספח A: בלוקים שמוגדרים "עתידי" — מה דרוש להפעלתם
 
 | בלוק | מה חסר | פיתוח נדרש |
 |---|---|---|
 | Quality of Hire (§1.9) | אינטגרציית HRIS | join `candidates.id` ↔ HRIS `employee_id` + טבלת `performance_reviews` |
-| סיבות דחיה (§1.13) | שדה `rejection_reason` | להוסיף עמודה ל-`applications` + UI שמכריח תיוג בעת שינוי סטטוס ל"נדחה" |
-| סיבות הסרת מועמדות (§1.13) | שדה `withdrawal_reason` | אותו רעיון; עמודה נוספת + UI |
 | מפת חום עזיבות (§2.5) — אדום/ירוק | סף השוואה היסטורי | חישוב ממוצע חברה לשנים קודמות = בנצ'מארק לתאים |
-| Capacity Tracker — פירוק mass/pro/tech (§2.6) | טאקסונומיית `role_type` ב-`jobs` | להוסיף enum + מילון מיפוי משם המשרה לקטגוריה |
+| Capacity Tracker — פירוק mass/pro/tech (§2.6) | יישום ב-frontend | ה-schema כבר תומך (`jobs.role_type` נטען מ-`גזרה` באימפורט). דורש רק עדכון UI ב-`/intelligence` להציג פירוק לפי `role_type` |
+
+## נספח B: בלוקים שגרודאו מ"עתידי" → אמיתי (Audit Phase 4)
+
+| בלוק | סטטוס קודם | מקור הנתונים החדש |
+|---|---|---|
+| סיבות דחיית מועמדים (§1.13) | ⏳ עתידי | `applications.closure_reason_code` (closure_type='rejected') JOIN `closure_taxonomy` |
+| סיבות הסרת מועמדות (§1.13) | ⏳ עתידי | `applications.closure_reason_code` (closure_type='withdrawn') JOIN `closure_taxonomy` |
+| ניוד פנימי (§2.3) | hardcoded 0 | `candidates.source = 'Internal'` |
+| Capacity Tracker - תיקים פעילים (§2.6) | empty array | `applications` GROUP BY recruiter (active rows) |
+| `role_type` ב-jobs | hardcoded null | יובא מ-`גזרה` ב-Wave C (`מטה / קו / טכנולוגי / מוקדים`) |
+
+## נספח C: schema migrations שהוחלו ב-Audit Phase 4
+
+### Wave A — Schema additions (idempotent ALTER TABLE)
+- `applications.closure_type` TEXT (`rejected` / `withdrawn` / NULL)
+- `applications.closure_stage` TEXT (UNIFIED_STAGES code)
+- `applications.closure_reason_code` TEXT (FK ל-`closure_taxonomy.code`)
+- `applications.captured_by` TEXT (`recruiter` / `bot` / `system`)
+- `jobs.role_type` TEXT
+- טבלה חדשה: `closure_taxonomy` עם 23 שורות seed
+
+### Wave B — UNIFIED_STAGES expansion (8 → 16 codes)
+codes חדשים: `SOURCING`, `PHONE_INTERVIEW`, `HR_INTERVIEW`, `MANAGER_INTERVIEW`, `TESTS`, `REFERENCES`, `WITHDRAWN`, `NO_RESPONSE`. ה-`INTERVIEW` הישן נשמר כ-legacy fallback.
+
+### Wave C — Live data replacement
+- backup ל-`backend/backups/phoenix_enterprise.pre-xls-import.<timestamp>.db`
+- ייבוא של 6,148 שורות אמיתיות (3,099 candidates, 93 jobs)
+- כל candidate בלי טלפון/אימייל מופיע במסך **"בקרת איכות"** ע"י admin להזנה ידנית.
+
+### Wave D — Closure enforcement
+- `PATCH /api/candidates/{key}/stage` דורש `closure_reason_code` כש-`stage_code` ∈ {REJECTED, WITHDRAWN}.
+- `GET /api/taxonomy/closure-reasons` — endpoint חדש שמשרת dropdowns ב-frontend.
+- `StageChangeModal` — UI ייעודי עם dropdown סיבה מאומת.
 
 ---
 
-**עדכון אחרון:** Phase 3D של מסע ה-audit. כל בלוק עבר verification של פורמולה + מקור נתונים. בעיות תוויתיות (כמו "חציוני" → "ממוצע") תוקנו. מספרים שדורשים מקור חיצוני סומנו במפורש בכתום (`עתידי`).
+**עדכון אחרון:** Audit Phase 4 / Wave E. כל הבלוקים תוקנו, schema הורחב, נתונים אמיתיים יובאו. החריגים היחידים שעדיין "עתידי" — Quality of Hire (דורש HRIS) ו-2 ניואנסים של הdashboard (ספי heatmap + פירוק role_type ב-Capacity Tracker שזמין ב-DB אך עוד לא חוווט ל-UI).
