@@ -388,16 +388,29 @@ def advance_candidate_stage(
 
         c = conn.cursor()
 
-        # Map UNIFIED_STAGES back to a Hebrew status label for display
+        # Map UNIFIED_STAGES back to a Hebrew status label for display.
+        # Updated in Audit Phase 4 / Wave B to cover the 7 new stages that
+        # mirror the real ATS terminology (PHONE_INTERVIEW, HR_INTERVIEW,
+        # MANAGER_INTERVIEW, TESTS, REFERENCES, WITHDRAWN, NO_RESPONSE,
+        # SOURCING). Unknown codes fall back to the stage_code itself via
+        # the .get(stage_code, stage_code) lookup below.
         STAGE_TO_STATUS = {
-            "ACTIVE": "פעיל",
-            "SCREEN": "סינון",
-            "INTERVIEW": "ראיון",
-            "OFFER": "הצעה",
-            "HIRED": "גיוס",
-            "AWAITING_START": "ממתין לקליטה",
-            "STARTED": "קליטה",
-            "REJECTED": "דחייה",
+            "ACTIVE":            "פעיל",
+            "SOURCING":          "הגיש מועמדות",
+            "SCREEN":            "סינון",
+            "PHONE_INTERVIEW":   "ראיון טלפוני",
+            "HR_INTERVIEW":      "ראיון HR",
+            "MANAGER_INTERVIEW": "ראיון מנהל מקצועי",
+            "INTERVIEW":         "ראיון",
+            "TESTS":             "מבדקים",
+            "REFERENCES":        "בדיקת ממליצים",
+            "OFFER":             "הצעה",
+            "HIRED":             "גיוס",
+            "AWAITING_START":    "ממתין לקליטה",
+            "STARTED":           "קליטה",
+            "REJECTED":          "דחייה",
+            "WITHDRAWN":         "הסרת מועמדות",
+            "NO_RESPONSE":       "אין מענה",
         }
         new_status = STAGE_TO_STATUS.get(stage_code, stage_code)
         now_iso = datetime.now(timezone.utc).isoformat()

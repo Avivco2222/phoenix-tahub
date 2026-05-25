@@ -22,9 +22,16 @@ import {
   type UnifiedStage,
 } from "./stages";
 
+// Audit Phase 4 / Wave B expanded this from 8 to 16 stages so the codes
+// map 1:1 onto the real Phoenix ATS terminology (PHONE_INTERVIEW,
+// HR_INTERVIEW, MANAGER_INTERVIEW, TESTS, REFERENCES, SOURCING,
+// WITHDRAWN, NO_RESPONSE) — see backend/constants.py.
 const ALL_STAGES: UnifiedStage[] = [
-  "ACTIVE", "SCREEN", "INTERVIEW", "OFFER",
-  "HIRED", "AWAITING_START", "STARTED", "REJECTED",
+  "ACTIVE", "SOURCING", "SCREEN",
+  "PHONE_INTERVIEW", "HR_INTERVIEW", "MANAGER_INTERVIEW", "INTERVIEW",
+  "TESTS", "REFERENCES", "OFFER",
+  "HIRED", "AWAITING_START", "STARTED",
+  "REJECTED", "WITHDRAWN", "NO_RESPONSE",
 ];
 
 describe("STAGE_ORDER", () => {
@@ -33,9 +40,11 @@ describe("STAGE_ORDER", () => {
     expect(STAGE_ORDER.length).toBe(ALL_STAGES.length);
   });
 
-  it("starts with ACTIVE (top of funnel) and ends with REJECTED (terminal)", () => {
+  it("starts with ACTIVE (top of funnel) and ends with a terminal stage", () => {
     expect(STAGE_ORDER[0]).toBe("ACTIVE");
-    expect(STAGE_ORDER.at(-1)).toBe("REJECTED");
+    // After Wave B the terminal slot is NO_RESPONSE; REJECTED / WITHDRAWN
+    // sit immediately before it so the funnel reads naturally LTR/RTL.
+    expect(["REJECTED", "WITHDRAWN", "NO_RESPONSE"]).toContain(STAGE_ORDER.at(-1)!);
   });
 });
 
