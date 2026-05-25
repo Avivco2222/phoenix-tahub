@@ -344,6 +344,44 @@ def create_candidate(
     }
 
 
+@router.get("/api/taxonomy/closure-reasons")
+def list_closure_reasons(
+    closure_type: str | None = None,
+    _: dict = Depends(require_dual_role(Role.ADMIN, Role.HRBP, Role.RECRUITER, Role.HIRING_MANAGER)),
+):
+    """Return the active closure-reason taxonomy.
+
+    The stage-change UI calls this to populate the dropdown a recruiter
+    sees when she moves a candidate into REJECTED or WITHDRAWN. Filter
+    by ``closure_type=rejected|withdrawn`` to get just the half you
+    need for one dropdown.
+
+    Inactive rows (``is_active=0``) are never returned — admin can hide
+    a reason without code changes by flipping that flag, and existing
+    PATCH requests carrying the old code will be rejected with
+    ``CLOSURE_REASON_INACTIVE``.
+    """
+    conn = sqlite3.connect(shared_config.DB_NAME)
+    try:
+        sql = ("SELECT code, label_he, closure_type, sort_order, captured_by_default "
+               "FROM closure_taxonomy WHERE is_active = 1")
+        params: list = []
+        if closure_type:
+            sql += " AND closure_type = ?"
+            params.append(closure_type.strip().lower())
+        sql += " ORDER BY closure_type, sort_order"
+        rows = conn.execute(sql, params).fetchall()
+        return [
+            {
+                "code": r[0], "label_he": r[1], "closure_type": r[2],
+                "sort_order": r[3], "captured_by_default": r[4],
+            }
+            for r in rows
+        ]
+    finally:
+        conn.close()
+
+
 @router.patch("/api/candidates/{candidate_key}/stage")
 def advance_candidate_stage(
     candidate_key: str,
@@ -353,17 +391,81 @@ def advance_candidate_stage(
     """Advance (or change) a candidate's stage.
 
     Body:
-        stage_code  (str)  — new UNIFIED_STAGES value e.g. "INTERVIEW", "OFFER"
-        notes       (str, optional) — reason / free-text
+        stage_code           (str)  — new UNIFIED_STAGES value
+        notes                (str, optional) — free-text reason / comment
+        closure_reason_code  (str)  — REQUIRED when stage_code is REJECTED
+                                       or WITHDRAWN; one of
+                                       closure_taxonomy.code
+        closure_stage        (str, optional) — funnel stage at which the
+                                       closure happened (defaults to the
+                                       current stage if omitted)
+        captured_by          (str, optional) — 'recruiter' / 'bot' /
+                                       'system'; auto-defaulted from the
+                                       taxonomy entry's
+                                       captured_by_default when omitted
+
+    Audit Phase 4 / Wave D enforces that closures carry a structured
+    reason — the dashboard pies + the בקרת איכות screen depend on it.
     """
     stage_code = (payload.get("stage_code") or "").strip().upper()
     notes = (payload.get("notes") or "").strip()
+    closure_reason_code = (payload.get("closure_reason_code") or "").strip().upper()
+    closure_stage = (payload.get("closure_stage") or "").strip().upper() or None
+    captured_by = (payload.get("captured_by") or "").strip().lower() or None
 
     if stage_code not in UNIFIED_STAGES:
         raise HTTPException(
             status_code=400,
             detail=f"stage_code חייב להיות אחד מ: {', '.join(UNIFIED_STAGES)}"
         )
+
+    # Closure enforcement: rejecting or withdrawing requires a reason.
+    # Validate against the live taxonomy so the frontend can edit /
+    # add reasons without a code change here.
+    closure_type: str | None = None
+    if stage_code in {"REJECTED", "WITHDRAWN"}:
+        if not closure_reason_code:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "code": "CLOSURE_REASON_REQUIRED",
+                    "message": "מעבר ל-REJECTED או WITHDRAWN דורש closure_reason_code מתוך closure_taxonomy.",
+                    "stage_code": stage_code,
+                },
+            )
+        # Look up the taxonomy entry so we can fill closure_type +
+        # captured_by_default authoritatively, and to reject codes that
+        # don't match the closure_type implied by the stage.
+        expected_closure_type = "rejected" if stage_code == "REJECTED" else "withdrawn"
+        check_conn = sqlite3.connect(shared_config.DB_NAME)
+        try:
+            row = check_conn.execute(
+                "SELECT closure_type, captured_by_default, is_active FROM closure_taxonomy WHERE code = ?",
+                (closure_reason_code,),
+            ).fetchone()
+        finally:
+            check_conn.close()
+        if not row:
+            raise HTTPException(
+                status_code=400,
+                detail={"code": "CLOSURE_REASON_NOT_FOUND",
+                        "message": f"closure_reason_code '{closure_reason_code}' לא קיים ב-closure_taxonomy."},
+            )
+        if int(row[2] or 0) == 0:
+            raise HTTPException(
+                status_code=400,
+                detail={"code": "CLOSURE_REASON_INACTIVE",
+                        "message": f"closure_reason_code '{closure_reason_code}' מסומן כלא פעיל."},
+            )
+        if row[0] != expected_closure_type:
+            raise HTTPException(
+                status_code=400,
+                detail={"code": "CLOSURE_REASON_TYPE_MISMATCH",
+                        "message": f"הסיבה '{closure_reason_code}' היא מסוג '{row[0]}' אבל השלב {stage_code} דורש מסוג '{expected_closure_type}'."},
+            )
+        closure_type = expected_closure_type
+        if not captured_by:
+            captured_by = row[1] or "recruiter"  # default captured_by from the taxonomy
 
     conn = sqlite3.connect(shared_config.DB_NAME)
     try:
@@ -415,23 +517,49 @@ def advance_candidate_stage(
         new_status = STAGE_TO_STATUS.get(stage_code, stage_code)
         now_iso = datetime.now(timezone.utc).isoformat()
 
-        # Try updating applications table first
+        # When the transition is a closure, also persist the structured
+        # closure fields. When it's NOT a closure (e.g. moving from
+        # REJECTED back to ACTIVE — happens when an admin un-archives a
+        # candidate), clear those columns so we don't keep stale data.
+        if closure_type:
+            effective_closure_stage = closure_stage or old_stage or "ACTIVE"
+        else:
+            effective_closure_stage = None
+
+        # Try updating applications table first.
+        # Note: `applications` doesn't have an `updated_at` column —
+        # the previous version of this UPDATE included it and was
+        # silently failing every call (caught by the bare except).
+        # Audit Phase 4 / Wave D removes the phantom column and adds a
+        # passing test that pins this behaviour.
         updated = 0
         try:
             c.execute(
-                "UPDATE applications SET stage_code = ?, status = ?, updated_at = ? WHERE app_id = ?",
-                (stage_code, new_status, now_iso, str(app_id))
+                """UPDATE applications
+                   SET stage_code = ?, status = ?,
+                       closure_type = ?, closure_stage = ?,
+                       closure_reason_code = ?, captured_by = ?
+                   WHERE app_id = ?""",
+                (
+                    stage_code, new_status,
+                    closure_type, effective_closure_stage,
+                    closure_reason_code or None, captured_by,
+                    str(app_id),
+                ),
             )
             updated = c.rowcount
         except Exception:
             pass
 
         # Fallback: update candidates table if applications didn't work
+        # (older rows / candidate-level stage tracking). The closure
+        # columns live only on applications, so we don't try to set
+        # them here.
         if not updated:
             try:
                 c.execute(
-                    "UPDATE candidates SET stage_code = ?, status = ?, updated_at = ? WHERE id = ?",
-                    (stage_code, new_status, now_iso, str(app_id))
+                    "UPDATE candidates SET stage_code = ?, status = ? WHERE id = ?",
+                    (stage_code, new_status, str(app_id))
                 )
                 updated = c.rowcount
             except Exception:

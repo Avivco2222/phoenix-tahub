@@ -1,12 +1,13 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import { Mail, Phone, Briefcase, User, Calendar, Building2, Activity, ExternalLink, Loader2, Pencil } from "lucide-react";
+import { Mail, Phone, Briefcase, User, Calendar, Building2, Activity, ExternalLink, Loader2, Pencil, ArrowRight } from "lucide-react";
 import { SidePanel } from "@/components/SidePanel";
 import { StageBadge } from "@/components/StageBadge";
 import { getApiBaseUrl } from "@/lib/api";
 import { STAGE_ORDER, getStageMeta, type UnifiedStage } from "@/lib/stages";
 import RecordEditModal from "@/components/RecordEditModal";
+import StageChangeModal from "@/components/StageChangeModal";
 
 interface CandidateRow {
   candidate_id?: string;
@@ -70,6 +71,12 @@ export function CandidateSidePanel({ open, candidateKey, onClose }: CandidateSid
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [editOpen, setEditOpen] = useState(false);
+  // Audit Phase 4 / Wave D: dedicated workflow modal for stage
+  // transitions. Triggered from the timeline section below.
+  const [stageChangeOpen, setStageChangeOpen] = useState(false);
+  // Bumped on every successful stage change so the candidate-detail
+  // fetch effect below re-runs and the timeline reflects the new stage.
+  const [refreshTick, setRefreshTick] = useState(0);
 
   useEffect(() => {
     if (!open || !candidateKey) {
@@ -92,7 +99,7 @@ export function CandidateSidePanel({ open, candidateKey, onClose }: CandidateSid
       .catch(err => { if (!cancelled) setError(err instanceof Error ? err.message : "שגיאה לא ידועה"); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [open, candidateKey]);
+  }, [open, candidateKey, refreshTick]);
 
   const candidate = data?.candidate;
   const stage = (candidate?.unified_stage || "ACTIVE") as UnifiedStage;
@@ -161,7 +168,17 @@ export function CandidateSidePanel({ open, candidateKey, onClose }: CandidateSid
         <div className="space-y-6 pb-8">
           {/* Stage timeline */}
           <section>
-            <h3 className="text-xs font-black uppercase tracking-wider text-slate-500 mb-3">ציר שלבים</h3>
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-xs font-black uppercase tracking-wider text-slate-500">ציר שלבים</h3>
+              <button
+                type="button"
+                onClick={() => setStageChangeOpen(true)}
+                className="text-xs font-black text-[#EF6B00] hover:underline flex items-center gap-1"
+                title="העברה לשלב חדש בתהליך"
+              >
+                <ArrowRight size={12} /> שנה שלב
+              </button>
+            </div>
             <div className="flex items-center gap-1">
               {STAGE_ORDER.map((s, i) => {
                 const meta = getStageMeta(s);
@@ -258,6 +275,16 @@ export function CandidateSidePanel({ open, candidateKey, onClose }: CandidateSid
           setEditOpen(false);
         }}
         onClose={() => setEditOpen(false)}
+      />
+    )}
+    {stageChangeOpen && candidate?.candidate_id && (
+      <StageChangeModal
+        open={stageChangeOpen}
+        onClose={() => setStageChangeOpen(false)}
+        candidateKey={candidate.candidate_id}
+        candidateName={candidate.candidate_name}
+        currentStage={stage}
+        onChanged={() => setRefreshTick(t => t + 1)}
       />
     )}
     </>
