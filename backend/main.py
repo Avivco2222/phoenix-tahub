@@ -478,6 +478,102 @@ def init_db():
         """CREATE TABLE IF NOT EXISTS etl_rules
            (id TEXT PRIMARY KEY, col_name TEXT, condition TEXT, action TEXT, active BOOLEAN)"""
     )
+
+    # ──────────────────────────────────────────────────────────────────
+    # Closure-tracking schema (Audit Phase 4: pipeline rejection/withdrawal)
+    # ──────────────────────────────────────────────────────────────────
+    # Each application gains four closure-tracking columns. ALTER TABLE
+    # … ADD COLUMN is wrapped in try/except because SQLite raises when the
+    # column already exists; this is the same pattern used by the
+    # audit_logs.ip_address migration above. We don't run a separate
+    # migrations framework — init_db is idempotent and self-healing.
+    #
+    # closure_type        — 'rejected' | 'withdrawn' | NULL
+    #                       'rejected' = the organisation rejected the candidate
+    #                       'withdrawn' = the candidate self-removed
+    # closure_stage       — the funnel stage where the closure happened
+    #                       (one of UNIFIED_STAGES). Distinct from `stage_code`
+    #                       so we can answer "where in the funnel are we
+    #                       losing people?" independently of the final status.
+    # closure_reason_code — FK to closure_taxonomy.code, the structured reason.
+    # captured_by         — 'recruiter' | 'bot' | 'system' | NULL
+    #                       How the closure was logged. BOT-prefixed reasons
+    #                       in the source ATS file map to captured_by='bot'.
+    for col, ddl in [
+        ("closure_type", "ALTER TABLE applications ADD COLUMN closure_type TEXT"),
+        ("closure_stage", "ALTER TABLE applications ADD COLUMN closure_stage TEXT"),
+        ("closure_reason_code", "ALTER TABLE applications ADD COLUMN closure_reason_code TEXT"),
+        ("captured_by", "ALTER TABLE applications ADD COLUMN captured_by TEXT"),
+    ]:
+        try:
+            c.execute(ddl)
+        except sqlite3.OperationalError:
+            pass  # column already exists from a prior init
+
+    # Job-level role classification ("גזרה" in the source ATS file).
+    # One of {מטה, קו, מוקדים, טכנולוגי}; populated by the import script for
+    # historical rows, and by the create-job UI going forward. Powers the
+    # Capacity Tracker's per-role-type breakdown on the intelligence screen.
+    try:
+        c.execute("ALTER TABLE jobs ADD COLUMN role_type TEXT")
+    except sqlite3.OperationalError:
+        pass
+
+    # The editable taxonomy. Stored in a table rather than a Python enum so
+    # the admin UI can add/disable reasons without a deploy. Seeded below
+    # with the real reason codes mined from the May 2026 ATS export.
+    c.execute(
+        """CREATE TABLE IF NOT EXISTS closure_taxonomy
+           (code TEXT PRIMARY KEY,
+            label_he TEXT NOT NULL,
+            closure_type TEXT NOT NULL CHECK (closure_type IN ('rejected', 'withdrawn')),
+            sort_order INTEGER NOT NULL DEFAULT 100,
+            is_active INTEGER NOT NULL DEFAULT 1,
+            captured_by_default TEXT)"""
+    )
+    # Seed canonical entries. Uses INSERT OR IGNORE so re-running init_db
+    # never overwrites admin edits. Reason codes mirror what the source
+    # ATS uses verbatim — including the "BOT-" prefixed variants which the
+    # user explicitly asked to keep separate (so we can later analyse
+    # "what fraction of withdrawals are caught by the bot vs by the
+    # recruiter on the call").
+    _closure_seed: list[tuple[str, str, str, int, str | None]] = [
+        # ---------- REJECTED (organisation initiated) ----------
+        ("UQ",                       "UQ — Under-Qualified",            "rejected",  10,  None),
+        ("OQ",                       "OQ — Over-Qualified",             "rejected",  20,  None),
+        ("PROCESS_HISTORY",          "היסטוריה תהליכית",                  "rejected",  30,  None),
+        ("TECH_ROUTED_OTHER",        "טכני — ניתוב לתפקיד אחר",         "rejected",  40,  None),
+        ("PERSONALITY_FIT",          "התאמה אישיותית",                   "rejected",  50,  None),
+        ("JOB_STABILITY",            "יציבות תעסוקתית",                  "rejected",  60,  None),
+        ("SKILLS_GAP",               "פער כישורים",                       "rejected",  70,  None),
+        ("FAMILY_PROXIMITY_POLICY",  "מדיניות קרבה משפחתית",            "rejected",  80,  None),
+        ("TECH_JOB_CLOSED",          "טכני — משרה נסגרה / בוטלה",     "rejected",  90,  None),
+        ("NO_SHOW",                  "אי הגעה לראיון",                    "rejected", 100,  None),
+        ("BAD_REFERENCE",            "המלצה שלילית",                      "rejected", 110,  None),
+        ("NO_REFERENCES",            "המועמד לא הציג ממליצים",           "rejected", 120,  None),
+        ("REJECTED_OTHER",           "אחר",                               "rejected", 999,  None),
+        # ---------- WITHDRAWN (candidate initiated) ----------
+        ("SALARY_EXPECTATIONS",      "ציפיות שכר",                        "withdrawn", 10,  None),
+        ("NOT_INTERESTED",           "לא מעוניין/ת בתפקיד",              "withdrawn", 20,  None),
+        ("ANOTHER_OFFER",            "קבלה למשרה אחרת",                  "withdrawn", 30,  None),
+        ("JOB_LOCATION",             "מיקום המשרה",                       "withdrawn", 40,  None),
+        ("JOB_SCOPE",                "היקף המשרה",                        "withdrawn", 50,  None),
+        ("WORK_CONDITIONS",          "תנאי העסקה",                       "withdrawn", 60,  None),
+        # ---------- BOT-prefixed (chatbot/automation captured) ----------
+        # Kept as distinct codes (user decision) so we can answer
+        # "what fraction did the bot catch?" independently of the human
+        # taxonomy. They share the candidate-initiated semantics.
+        ("BOT_JOB_LOCATION",         "BOT — מיקום משרה",                "withdrawn", 410, "bot"),
+        ("BOT_JOB_SCOPE",            "BOT — היקף משרה",                  "withdrawn", 420, "bot"),
+        ("BOT_NO_ORIENTATION",       "BOT — חוסר מוכוונות",              "withdrawn", 430, "bot"),
+        ("WITHDRAWN_OTHER",          "אחר",                               "withdrawn", 999, None),
+    ]
+    c.executemany(
+        "INSERT OR IGNORE INTO closure_taxonomy (code, label_he, closure_type, sort_order, captured_by_default) "
+        "VALUES (?, ?, ?, ?, ?)",
+        _closure_seed,
+    )
+
     c.execute(
         """CREATE TABLE IF NOT EXISTS onboarding
            (id TEXT PRIMARY KEY, name TEXT, id_num TEXT, role TEXT, department TEXT, manager TEXT,
