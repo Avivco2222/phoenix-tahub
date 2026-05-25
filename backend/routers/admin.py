@@ -1031,18 +1031,134 @@ def admin_quality_duplicates(limit: int = 50, _: dict = Depends(require_dual_rol
 
 
 @router.get("/api/admin/quality/missing")
-def admin_quality_missing(_: dict = Depends(require_dual_role(Role.ADMIN))):
+def admin_quality_missing(
+    limit: int = 500,
+    offset: int = 0,
+    _: dict = Depends(require_dual_role(Role.ADMIN)),
+):
     """Candidates whose row lacks any contact dedup key — admin needs to
-    enrich them manually or they'll keep getting re-inserted on each upload."""
+    enrich them manually or they'll keep getting re-inserted on each
+    upload.
+
+    Phase 4 / Wave C: after importing the 6,149-row May 2026 ATS export
+    every candidate from that source has no phone+email (the source
+    didn't capture them), inflating this list to ~3K rows. Returns the
+    `total` count up-front so the frontend can show "displaying N of
+    Total" and an explicit pagination affordance. ``limit`` is clamped
+    to [1, 2000] so a typo can't pull 50K rows in one call.
+    """
+    limit = max(1, min(int(limit), 2000))
+    offset = max(0, int(offset))
     conn = sqlite3.connect(shared_config.DB_NAME)
     try:
+        total = conn.execute(
+            "SELECT COUNT(*) FROM candidates "
+            "WHERE (phone_norm IS NULL OR phone_norm='') AND (email_norm IS NULL OR email_norm='')"
+        ).fetchone()[0]
         rows = conn.execute(
             """SELECT id, name, email, phone, source, last_seen_at
                FROM candidates
                WHERE (phone_norm IS NULL OR phone_norm='') AND (email_norm IS NULL OR email_norm='')
-               ORDER BY last_seen_at DESC NULLS LAST LIMIT 200"""
+               ORDER BY last_seen_at DESC NULLS LAST LIMIT ? OFFSET ?""",
+            (limit, offset),
         ).fetchall()
-        return [{"id": r[0], "name": r[1], "email": r[2], "phone": r[3], "source": r[4], "last_seen_at": r[5]} for r in rows]
+        return {
+            "total": int(total),
+            "limit": limit,
+            "offset": offset,
+            "items": [
+                {"id": r[0], "name": r[1], "email": r[2], "phone": r[3], "source": r[4], "last_seen_at": r[5]}
+                for r in rows
+            ],
+        }
+    finally:
+        conn.close()
+
+
+@router.get("/api/admin/quality/jobs-without-role-type")
+def admin_quality_jobs_without_role_type(
+    limit: int = 500,
+    _: dict = Depends(require_dual_role(Role.ADMIN)),
+):
+    """Jobs missing the `role_type` classification (מטה / קו / טכנולוגי /
+    מוקדים). Added in Phase 4 / Wave C — the Capacity Tracker on the
+    intelligence screen breaks down recruiter load by role_type, so a
+    job with no classification slips out of that view entirely.
+
+    Surface this list on the בקרת איכות screen so admin can quickly
+    backfill via the inline-edit modal.
+    """
+    limit = max(1, min(int(limit), 2000))
+    conn = sqlite3.connect(shared_config.DB_NAME)
+    try:
+        total = conn.execute(
+            "SELECT COUNT(*) FROM jobs WHERE role_type IS NULL OR role_type=''"
+        ).fetchone()[0]
+        rows = conn.execute(
+            """SELECT id, job_title, department, hiring_manager, opened_at
+               FROM jobs
+               WHERE role_type IS NULL OR role_type=''
+               ORDER BY opened_at DESC NULLS LAST LIMIT ?""",
+            (limit,),
+        ).fetchall()
+        return {
+            "total": int(total),
+            "limit": limit,
+            "items": [
+                {"id": r[0], "job_title": r[1], "department": r[2], "hiring_manager": r[3], "opened_at": r[4]}
+                for r in rows
+            ],
+        }
+    finally:
+        conn.close()
+
+
+@router.get("/api/admin/quality/closures-without-reason")
+def admin_quality_closures_without_reason(
+    limit: int = 500,
+    _: dict = Depends(require_dual_role(Role.ADMIN)),
+):
+    """Applications whose stage_code is REJECTED / WITHDRAWN but whose
+    closure_reason_code is NULL. Two ways this can happen:
+      1. Legacy rows from before the closure schema landed (Phase 4 /
+         Wave A) — these need a one-time backfill.
+      2. New closures created without the recruiter selecting a reason —
+         the UI should make this impossible (Wave D enforcement) but if
+         someone bypasses the form / calls the API directly, we want it
+         visible here.
+    """
+    limit = max(1, min(int(limit), 2000))
+    conn = sqlite3.connect(shared_config.DB_NAME)
+    try:
+        total = conn.execute(
+            """SELECT COUNT(*) FROM applications
+               WHERE stage_code IN ('REJECTED', 'WITHDRAWN')
+                 AND (closure_reason_code IS NULL OR closure_reason_code='')"""
+        ).fetchone()[0]
+        rows = conn.execute(
+            """SELECT a.app_id, a.stage_code, a.closure_type, a.closure_stage,
+                      c.name AS candidate_name, j.job_title, a.start_date
+               FROM applications a
+               LEFT JOIN candidates c ON c.id = a.candidate_id
+               LEFT JOIN jobs j ON j.id = a.job_id
+               WHERE a.stage_code IN ('REJECTED', 'WITHDRAWN')
+                 AND (a.closure_reason_code IS NULL OR a.closure_reason_code='')
+               ORDER BY a.start_date DESC NULLS LAST LIMIT ?""",
+            (limit,),
+        ).fetchall()
+        return {
+            "total": int(total),
+            "limit": limit,
+            "items": [
+                {
+                    "app_id": r[0], "stage_code": r[1],
+                    "closure_type": r[2], "closure_stage": r[3],
+                    "candidate_name": r[4], "job_title": r[5],
+                    "start_date": r[6],
+                }
+                for r in rows
+            ],
+        }
     finally:
         conn.close()
 

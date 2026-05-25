@@ -91,6 +91,11 @@ interface DashboardMetrics {
   total_recruitment_spend: number;
   sources_breakdown: Array<{ name: string; cvs: number; hires: number }>;
   attrition_reasons: Array<{ name: string; value: number }>;
+  // Audit Phase 4 / Wave C — closure-reason group-bys for the
+  // rejection + withdrawal pies. Empty array when no closures exist
+  // yet in the period.
+  rejection_reasons: Array<{ name: string; value: number }>;
+  withdrawal_reasons: Array<{ name: string; value: number }>;
   funnel: Array<{ stage: string; count: number; percentage: number }>;
   chart_data: Array<{ name: string; candidates: number }>;
   hires_yoy_pct: number | null;
@@ -811,20 +816,30 @@ export default function DashboardPage() {
         {/* ROW 5: REASONS BREAKDOWN (3 PIES) */}
         {(currentRole === "admin" || currentRole === "hrbp") && (
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6 animate-in slide-in-from-bottom-8">
-            {/* Two of these need a `rejection_reason` / `withdrawal_reason`
-                field on applications that doesn't exist yet — they get an
-                honest "future" badge instead of an empty pie. The third
-                (attrition reasons) IS computable: it's a group-by on
-                attrition_events.reason, surfaced via metrics.attrition_reasons. */}
-            <div className="relative">
-              <FutureBadge reason={metrics?.future_blocks.find(b => b.key === "rejection_reasons")?.reason} />
-              <PieBreakdownCard title="סיבות דחיית מועמדים" icon={<UserMinus size={18} className="text-orange-500"/>} data={rejectReasons} info="מדוע אנחנו דחינו מועמדים? עוזר לדייק דרישות משרה. דורש שדה rejection_reason ב-applications + תיוג ע״י המגייסת." />
-            </div>
-            <div className="relative">
-              <FutureBadge reason={metrics?.future_blocks.find(b => b.key === "withdrawal_reasons")?.reason} />
-              <PieBreakdownCard title="סיבות הסרת מועמדות" icon={<AlertTriangle size={18} className="text-red-500"/>} data={withdrawReasons} info="מדוע מועמדים פרשו מהתהליך בעצמם? חיוני לזיהוי בעיות שכר. דורש שדה withdrawal_reason ב-applications." />
-            </div>
-            <PieBreakdownCard title="סיבות עזיבת עובדים" icon={<ArrowDownToLine size={18} className="text-purple-500"/>} data={metrics?.attrition_reasons ?? attritionReasons} info="מדוע עובדים עזבו בשנה הראשונה. נשאב מ-attrition_events.reason (top 5 לפי התקופה שנבחרה)." />
+            {/* Audit Phase 4 / Wave C — all three pies now render real
+                data. Rejection + withdrawal reasons are sourced from
+                applications.closure_reason_code joined to the structured
+                closure_taxonomy; the FutureBadge that previously sat over
+                these blocks is removed. Attrition reasons remain from
+                attrition_events.reason. */}
+            <PieBreakdownCard
+              title="סיבות דחיית מועמדים"
+              icon={<UserMinus size={18} className="text-orange-500"/>}
+              data={metrics?.rejection_reasons ?? rejectReasons}
+              info="מדוע אנחנו דחינו מועמדים? Top 8 מתוך closure_taxonomy.label_he, מסונן ע״י closure_type='rejected'. עוזר לדייק דרישות משרה."
+            />
+            <PieBreakdownCard
+              title="סיבות הסרת מועמדות"
+              icon={<AlertTriangle size={18} className="text-red-500"/>}
+              data={metrics?.withdrawal_reasons ?? withdrawReasons}
+              info="מדוע מועמדים פרשו מהתהליך בעצמם? Top 8 מתוך closure_taxonomy.label_he, מסונן ע״י closure_type='withdrawn'. חיוני לזיהוי בעיות שכר/מיקום/היקף."
+            />
+            <PieBreakdownCard
+              title="סיבות עזיבת עובדים"
+              icon={<ArrowDownToLine size={18} className="text-purple-500"/>}
+              data={metrics?.attrition_reasons ?? attritionReasons}
+              info="מדוע עובדים עזבו בשנה הראשונה. נשאב מ-attrition_events.reason (top 5 לפי התקופה שנבחרה)."
+            />
           </div>
         )}
 

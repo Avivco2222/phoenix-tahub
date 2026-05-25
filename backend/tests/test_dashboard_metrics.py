@@ -87,12 +87,32 @@ def test_dashboard_metrics_percentages_are_bounded():
 
 
 def test_dashboard_metrics_future_blocks_are_declared():
-    """The three blocks we KNOW we can't compute right now must surface
-    via `future_blocks` so the frontend can render an honest 'coming
-    soon' badge instead of a zero."""
+    """The remaining blocks we KNOW we can't compute right now must
+    surface via `future_blocks` so the frontend can render an honest
+    'coming soon' badge instead of a zero.
+
+    Audit Phase 4 / Wave C: rejection_reasons + withdrawal_reasons
+    graduated out of this set once the closure_taxonomy + import wired
+    real codes onto each closed application. Quality_of_Hire remains
+    deferred — it needs HRIS integration."""
     body = _get("/api/dashboard/metrics")
     keys = {b["key"] for b in body["future_blocks"]}
-    assert {"quality_of_hire", "rejection_reasons", "withdrawal_reasons"} <= keys
+    assert "quality_of_hire" in keys
+    # The two reason pies must NOT be in future_blocks anymore —
+    # the schema and data now support them.
+    assert "rejection_reasons" not in keys
+    assert "withdrawal_reasons" not in keys
+
+
+def test_dashboard_metrics_includes_closure_reason_breakdowns():
+    """rejection_reasons + withdrawal_reasons must appear in the
+    payload (possibly as empty arrays when there's no closure data).
+    The shape contract is what the frontend pies depend on."""
+    body = _get("/api/dashboard/metrics")
+    assert "rejection_reasons" in body
+    assert "withdrawal_reasons" in body
+    assert isinstance(body["rejection_reasons"], list)
+    assert isinstance(body["withdrawal_reasons"], list)
 
 
 def test_intelligence_extended_response_shape():

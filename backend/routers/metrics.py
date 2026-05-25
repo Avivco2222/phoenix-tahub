@@ -53,6 +53,23 @@ from pipeline import get_unified_data
 router = APIRouter(tags=["metrics"])
 
 
+# Stage-based matchers (Audit Phase 4 / Wave C) — superseded the
+# free-text regex matchers below. After the May 2026 ATS import,
+# every application has a clean `stage_code` from the expanded
+# UNIFIED_STAGES taxonomy, so we can match by canonical code instead
+# of by Hebrew-text regex. The regex approach false-positived
+# "ראיון גיוס HR" as a hire (because the status contained "גיוס"),
+# inflating the headline hires KPI by 10×. Stage-code matching is
+# unambiguous.
+_HIRED_STAGES = {"HIRED", "AWAITING_START", "STARTED"}
+_OFFER_STAGES = {"OFFER"}
+_REJECTED_STAGES = {"REJECTED"}
+_WITHDRAWN_STAGES = {"WITHDRAWN"}
+_CLOSED_STAGES = _HIRED_STAGES | _REJECTED_STAGES | _WITHDRAWN_STAGES | {"NO_RESPONSE"}
+
+# Legacy regex fallbacks — retained so old DBs without stage_code set
+# still produce sensible (if approximate) numbers. New code should
+# prefer the *_STAGES sets above.
 _CLOSED_STATUSES = ['קליטה', 'גיוס', 'התקבל', 'דחייה', 'הסרה', 'ויתור', 'הקפאה', 'נדחה']
 _HIRED_PATTERN = 'קליטה|גיוס|התקבל'
 _OFFER_PATTERN = 'הצעה|חוזה|ממתין לחתימה'
@@ -130,13 +147,26 @@ def get_dashboard_metrics(
         if df.empty:
             return _empty_metrics_payload()
 
-        df['is_active'] = ~df['status'].astype(str).str.contains('|'.join(_CLOSED_STATUSES), case=False, na=False)
+        # Audit Phase 4 / Wave C: prefer stage_code-based cohorts over
+        # status-text regex now that every application has a clean stage
+        # code from the imported ATS data. Stage codes are unambiguous;
+        # the Hebrew status field still contains source-side phrasing
+        # (e.g. "ראיון גיוס HR") which the legacy `קליטה|גיוס|התקבל`
+        # regex would mis-classify as a hire.
+        stage_series = df['stage_code'].astype(str).str.upper() if 'stage_code' in df.columns else pd.Series([], dtype=str)
+
+        df['is_active'] = ~stage_series.isin(_CLOSED_STAGES) if len(stage_series) else \
+                          ~df['status'].astype(str).str.contains('|'.join(_CLOSED_STATUSES), case=False, na=False)
 
         total = len(df)
-        hired_df = df[df['status'].astype(str).str.contains(_HIRED_PATTERN, case=False, na=False)]
-        offer_df = df[df['status'].astype(str).str.contains(_OFFER_PATTERN, case=False, na=False)]
-        rejected_df = df[df['status'].astype(str).str.contains(_REJECTED_PATTERN, case=False, na=False)]
-        withdrawn_df = df[df['status'].astype(str).str.contains(_WITHDRAWN_PATTERN, case=False, na=False)]
+        hired_df = df[stage_series.isin(_HIRED_STAGES)] if len(stage_series) else \
+                   df[df['status'].astype(str).str.contains(_HIRED_PATTERN, case=False, na=False)]
+        offer_df = df[stage_series.isin(_OFFER_STAGES)] if len(stage_series) else \
+                   df[df['status'].astype(str).str.contains(_OFFER_PATTERN, case=False, na=False)]
+        rejected_df = df[stage_series.isin(_REJECTED_STAGES)] if len(stage_series) else \
+                      df[df['status'].astype(str).str.contains(_REJECTED_PATTERN, case=False, na=False)]
+        withdrawn_df = df[stage_series.isin(_WITHDRAWN_STAGES)] if len(stage_series) else \
+                       df[df['status'].astype(str).str.contains(_WITHDRAWN_PATTERN, case=False, na=False)]
         active_df = df[df['is_active']]
 
         hired_count = len(hired_df)
@@ -204,13 +234,24 @@ def get_dashboard_metrics(
                 })
             sources_breakdown.sort(key=lambda x: x['cvs'], reverse=True)
 
-        # ---- Funnel — real counts per stage ----
-        screen_count = int(df['status'].astype(str).str.contains('סינון', case=False, na=False).sum())
-        interview_count = int(df['status'].astype(str).str.contains('ראיון', case=False, na=False).sum())
+        # ---- Funnel — real counts per UNIFIED_STAGES bucket ----
+        # Stage-based bucketing replaces the previous Hebrew-text regex
+        # ("סינון" / "ראיון") which double-counted rows. SOURCING covers
+        # both the active "applied" stage and rows that haven't yet been
+        # routed; SCREEN is the CV-review step; INTERVIEW aggregates the
+        # 3 specific interview codes so the funnel UI stays readable.
+        if len(stage_series):
+            sourcing_count = int(stage_series.eq("SOURCING").sum()) + int(stage_series.eq("ACTIVE").sum())
+            screen_count = int(stage_series.eq("SCREEN").sum())
+            interview_count = int(stage_series.isin({"PHONE_INTERVIEW", "HR_INTERVIEW", "MANAGER_INTERVIEW", "INTERVIEW"}).sum())
+        else:
+            sourcing_count = total
+            screen_count = int(df['status'].astype(str).str.contains('סינון', case=False, na=False).sum())
+            interview_count = int(df['status'].astype(str).str.contains('ראיון', case=False, na=False).sum())
         funnel = [
             {"stage": "קורות חיים (Sourcing)", "count": total},
-            {"stage": "סינון ראשוני", "count": screen_count},
-            {"stage": "ראיונות", "count": interview_count},
+            {"stage": "סינון קוח", "count": screen_count},
+            {"stage": "ראיונות (טלפוני / HR / מנהל)", "count": interview_count},
             {"stage": "הצעות שכר", "count": offer_count},
             {"stage": "קליטות בארגון", "count": hired_count},
         ]
@@ -266,6 +307,32 @@ def get_dashboard_metrics(
         except sqlite3.OperationalError:
             attrition_reasons = []
 
+        # ---- Rejection + withdrawal reasons (Audit Phase 4 / Wave C) ----
+        # These graduated out of the "future" set once the closure
+        # taxonomy and the import wired real codes onto each closed
+        # application. The pies on the home dashboard now render
+        # off these two arrays directly.
+        try:
+            rejection_reason_rows = conn.execute(
+                """SELECT t.label_he, COUNT(*) FROM applications a
+                   JOIN closure_taxonomy t ON t.code = a.closure_reason_code
+                   WHERE a.closure_type = 'rejected'
+                   GROUP BY t.label_he ORDER BY COUNT(*) DESC LIMIT 8"""
+            ).fetchall()
+            rejection_reasons = [{"name": r[0], "value": int(r[1])} for r in rejection_reason_rows]
+        except sqlite3.OperationalError:
+            rejection_reasons = []
+        try:
+            withdrawal_reason_rows = conn.execute(
+                """SELECT t.label_he, COUNT(*) FROM applications a
+                   JOIN closure_taxonomy t ON t.code = a.closure_reason_code
+                   WHERE a.closure_type = 'withdrawn'
+                   GROUP BY t.label_he ORDER BY COUNT(*) DESC LIMIT 8"""
+            ).fetchall()
+            withdrawal_reasons = [{"name": r[0], "value": int(r[1])} for r in withdrawal_reason_rows]
+        except sqlite3.OperationalError:
+            withdrawal_reasons = []
+
         # ---- YoY delta (current period vs same period last year) ----
         # Skip entirely when the current period is "all" — comparing an
         # unbounded window to itself shifted by 365d returns ~0 noise, not
@@ -320,6 +387,11 @@ def get_dashboard_metrics(
             # distributions
             "sources_breakdown": sources_breakdown,
             "attrition_reasons": attrition_reasons,
+            # Wave C: rejection/withdrawal reasons graduated from
+            # future_blocks. Driven off applications.closure_reason_code
+            # joined to closure_taxonomy.
+            "rejection_reasons": rejection_reasons,
+            "withdrawal_reasons": withdrawal_reasons,
             # funnel + chart
             "funnel": funnel,
             "chart_data": chart_data,
@@ -470,14 +542,19 @@ def _future_intelligence() -> list[dict]:
 def _future_dashboard_blocks() -> list[dict]:
     """The blocks we KNOW we can't compute from the current schema —
     declared once so both the populated and empty payloads agree on
-    what's intentionally deferred."""
+    what's intentionally deferred.
+
+    Audit Phase 4 / Wave C: rejection_reasons + withdrawal_reasons
+    graduated out of this list. The closure_taxonomy table + the
+    closure_type / closure_reason_code columns + the xls importer
+    together provide structured reasons end-to-end, so both pies on
+    the home dashboard now render real numbers and no longer need a
+    FutureBadge. Quality_of_Hire stays here — it depends on HRIS
+    integration which is not yet wired up.
+    """
     return [
         {"key": "quality_of_hire", "label": "איכות הגיוס",
          "reason": "דורש מקור חיצוני (HRIS) — ביצועי עובד חדש לאחר 6/12 חודשים"},
-        {"key": "rejection_reasons", "label": "סיבות דחיית מועמדים",
-         "reason": "דורש שדה rejection_reason ב-applications + תיוג ע\"י המגייסת בעת הדחייה"},
-        {"key": "withdrawal_reasons", "label": "סיבות הסרת מועמדות",
-         "reason": "דורש שדה withdrawal_reason ב-applications + תיוג ע\"י המגייסת בעת ההסרה"},
     ]
 
 
@@ -495,6 +572,7 @@ def _empty_metrics_payload() -> dict:
         "internal_mobility_pct": 0.0, "internal_hires": 0, "internal_candidates": 0,
         "avg_days_to_hire": 0, "cph": 0, "total_recruitment_spend": 0.0,
         "sources_breakdown": [], "attrition_reasons": [],
+        "rejection_reasons": [], "withdrawal_reasons": [],
         "funnel": [], "chart_data": [],
         "hires_yoy_pct": None, "attrition_yoy_pct": None,
         "future_blocks": _future_dashboard_blocks(),
